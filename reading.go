@@ -12,7 +12,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/overfin/server/msfp/wire"
+	"github.com/msfp-io/msfp-go/wire"
 )
 
 // The catalog, on the reading side (MSFP catalog sections 2.2, 3.2 and

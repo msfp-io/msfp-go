@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/overfin/server/msfp"
-	"github.com/overfin/server/msfp/wire"
+	"github.com/msfp-io/msfp-go"
+	"github.com/msfp-io/msfp-go/wire"
 )
 
 // A moves from A1 to A2 (MSFP core section 13). It reaches itself at A2

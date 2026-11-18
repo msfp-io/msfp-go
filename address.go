@@ -9,7 +9,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/overfin/server/msfp/wire"
+	"github.com/msfp-io/msfp-go/wire"
 )
 
 // Changes of address (MSFP core section 13), this server's and its

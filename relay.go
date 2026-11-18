@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/overfin/server/msfp/wire"
+	"github.com/msfp-io/msfp-go/wire"
 )
 
 // Media, on the viewer's side (MSFP media sections 2 and 3, video section

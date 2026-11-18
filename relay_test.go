@@ -14,7 +14,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/overfin/server/msfp"
+	"github.com/msfp-io/msfp-go"
 )
 
 // The relay against a hostile peer: everything a peer sends is checked

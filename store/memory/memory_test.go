@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/overfin/server/msfp"
-	"github.com/overfin/server/msfp/store/memory"
+	"github.com/msfp-io/msfp-go"
+	"github.com/msfp-io/msfp-go/store/memory"
 )
 
 // A transaction that fails keeps nothing; one that succeeds keeps all;

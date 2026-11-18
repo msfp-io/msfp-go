@@ -47,8 +47,8 @@
 // change (SetAddress), servers that can't be called (SetUncallable), the
 // discovery document (DiscoveryHandler) and certificate pins are all
 // handled here; the host only calls the method its operator chose.
-// msfp/wire holds the protocol's pieces (keys, codes, signatures, strict
-// JSON, statements); msfp/store/jsonfile and msfp/store/memory are ready
+// Package wire holds the protocol's pieces (keys, codes, signatures,
+// strict JSON, statements); store/jsonfile and store/memory are ready
 // stores. Neither package imports anything but the standard library and
 // filippo.io/edwards25519.
 //

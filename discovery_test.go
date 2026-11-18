@@ -11,8 +11,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/overfin/server/msfp"
-	"github.com/overfin/server/msfp/store/memory"
+	"github.com/msfp-io/msfp-go"
+	"github.com/msfp-io/msfp-go/store/memory"
 )
 
 // A is hosted under a path, and serves its discovery document: B finds

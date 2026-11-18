@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/overfin/server/msfp/wire"
+	"github.com/msfp-io/msfp-go/wire"
 )
 
 // This server's own certificate pins (MSFP core section 3.2), named in

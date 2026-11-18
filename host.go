@@ -10,7 +10,7 @@ import (
 // What the host implements for the engine: its storage, its catalog, its
 // playback and media, sealing, and optionally a clock, a dialer, a
 // notifier and a sheet encoder. Only Store is required: the shipped
-// stores (msfp/store/memory, msfp/store/jsonfile) bring their own
+// stores (store/memory, store/jsonfile) bring their own
 // Sealer, and everything else has a default or may be left out.
 //
 // A host that leaves out Catalog, Playback and Media offers nothing and

@@ -9,7 +9,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/overfin/server/msfp/wire"
+	"github.com/msfp-io/msfp-go/wire"
 )
 
 // Peers' changes of key, here (MSFP core sections 9.3, 9.4, 12.3 and

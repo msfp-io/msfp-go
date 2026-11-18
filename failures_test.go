@@ -11,9 +11,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/overfin/server/msfp"
-	"github.com/overfin/server/msfp/store/memory"
-	"github.com/overfin/server/msfp/wire"
+	"github.com/msfp-io/msfp-go"
+	"github.com/msfp-io/msfp-go/store/memory"
+	"github.com/msfp-io/msfp-go/wire"
 )
 
 // Codes that aren't, or no longer are, good.

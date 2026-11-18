@@ -3,7 +3,7 @@ package msfp
 import (
 	"net/url"
 
-	"github.com/overfin/server/msfp/wire"
+	"github.com/msfp-io/msfp-go/wire"
 )
 
 // maxName caps a name, in code points (MSFP core section 9.1).

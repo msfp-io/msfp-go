@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/overfin/server/msfp"
+	"github.com/msfp-io/msfp-go"
 )
 
 // Playback both ways: play, the choice of the copy and the tracks, the

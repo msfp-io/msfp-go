@@ -14,9 +14,9 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/overfin/server/msfp"
-	"github.com/overfin/server/msfp/store/memory"
-	"github.com/overfin/server/msfp/wire"
+	"github.com/msfp-io/msfp-go"
+	"github.com/msfp-io/msfp-go/store/memory"
+	"github.com/msfp-io/msfp-go/wire"
 )
 
 // The vectors of MSFP core section 17 (vectors/v1/, copied in

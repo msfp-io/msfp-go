@@ -10,7 +10,7 @@ import (
 	"slices"
 	"time"
 
-	"github.com/overfin/server/msfp/wire"
+	"github.com/msfp-io/msfp-go/wire"
 )
 
 // hello, both ways (MSFP core section 9.2), and what moves a pairing

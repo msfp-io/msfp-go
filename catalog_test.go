@@ -10,7 +10,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/overfin/server/msfp"
+	"github.com/msfp-io/msfp-go"
 )
 
 // The catalog both ways: libraries offered by public IDs, titles paged,

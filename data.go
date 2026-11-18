@@ -5,7 +5,7 @@ import (
 	"errors"
 	"time"
 
-	"github.com/overfin/server/msfp/wire"
+	"github.com/msfp-io/msfp-go/wire"
 )
 
 // The data objects of the host interfaces (engine.md section 7).

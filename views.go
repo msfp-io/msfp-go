@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/overfin/server/msfp/wire"
+	"github.com/msfp-io/msfp-go/wire"
 )
 
 // The queries (engine.md section 2.2): copies the host may keep. They

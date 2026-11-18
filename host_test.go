@@ -11,7 +11,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/overfin/server/msfp"
+	"github.com/msfp-io/msfp-go"
 )
 
 // fakeHost is a host's catalog, playback and media, in memory, for the

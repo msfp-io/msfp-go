@@ -41,9 +41,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/overfin/server/msfp"
-	"github.com/overfin/server/msfp/store/jsonfile"
-	"github.com/overfin/server/msfp/wire"
+	"github.com/msfp-io/msfp-go"
+	"github.com/msfp-io/msfp-go/store/jsonfile"
+	"github.com/msfp-io/msfp-go/wire"
 )
 
 func main() {

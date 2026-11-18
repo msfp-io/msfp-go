@@ -6,8 +6,8 @@ package memory
 import (
 	"context"
 
-	"github.com/overfin/server/msfp"
-	"github.com/overfin/server/msfp/store/internal/state"
+	"github.com/msfp-io/msfp-go"
+	"github.com/msfp-io/msfp-go/store/internal/state"
 )
 
 // Store is an msfp.Store in memory. Its zero value isn't usable: use New.

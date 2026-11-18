@@ -13,7 +13,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/overfin/server/msfp/wire"
+	"github.com/msfp-io/msfp-go/wire"
 )
 
 // Playback, on the owning side (MSFP playback sections 2 to 6, video

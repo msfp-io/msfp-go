@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/overfin/server/msfp/wire"
+	"github.com/msfp-io/msfp-go/wire"
 )
 
 // Servers that can't be called (MSFP core section 7.5), this one and its

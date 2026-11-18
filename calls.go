@@ -15,7 +15,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/overfin/server/msfp/wire"
+	"github.com/msfp-io/msfp-go/wire"
 )
 
 // This server's calls to its peers (MSFP core sections 3, 6 and 8):

@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/overfin/server/msfp/wire"
+	"github.com/msfp-io/msfp-go/wire"
 )
 
 // The discovery document (MSFP core section 11): where this server's

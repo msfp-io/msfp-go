@@ -11,8 +11,8 @@ import (
 )
 
 // The engine, its stores, its toolkit and its examples are the module
-// that will become github.com/msfp-io/msfp-go: no file of them, tests
-// included, imports Overfin, nor any module but the standard library and
+// github.com/msfp-io/msfp-go: no file of them, tests included, imports
+// any module but this one, the standard library and
 // filippo.io/edwards25519.
 func TestImportsNoServer(t *testing.T) {
 	fset := token.NewFileSet()
@@ -30,7 +30,7 @@ func TestImportsNoServer(t *testing.T) {
 			p, _ := strconv.Unquote(imp.Path.Value)
 			first, _, _ := strings.Cut(p, "/")
 			ok := !strings.Contains(first, ".") || p == "filippo.io/edwards25519" ||
-				p == "github.com/overfin/server/msfp" || strings.HasPrefix(p, "github.com/overfin/server/msfp/")
+				p == "github.com/msfp-io/msfp-go" || strings.HasPrefix(p, "github.com/msfp-io/msfp-go/")
 			if !ok {
 				t.Errorf("%s imports %s", path, p)
 			}

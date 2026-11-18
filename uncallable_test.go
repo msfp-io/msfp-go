@@ -18,8 +18,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/overfin/server/msfp"
-	"github.com/overfin/server/msfp/wire"
+	"github.com/msfp-io/msfp-go"
+	"github.com/msfp-io/msfp-go/wire"
 )
 
 // U can't be called (MSFP core section 7.5): it redeems A's code, is

@@ -3,7 +3,7 @@ package msfp
 import (
 	"time"
 
-	"github.com/overfin/server/msfp/wire"
+	"github.com/msfp-io/msfp-go/wire"
 )
 
 // The records a Store keeps (host.md section 1). The engine fills every

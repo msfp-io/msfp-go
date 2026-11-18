@@ -10,8 +10,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/overfin/server/msfp"
-	"github.com/overfin/server/msfp/store/jsonfile"
+	"github.com/msfp-io/msfp-go"
+	"github.com/msfp-io/msfp-go/store/jsonfile"
 )
 
 // An engine on the JSON file store pairs, and after a restart it is the

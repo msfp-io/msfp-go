@@ -19,7 +19,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/overfin/server/msfp"
+	"github.com/msfp-io/msfp-go"
 )
 
 // State is everything a store holds.

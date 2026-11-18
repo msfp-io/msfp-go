@@ -22,8 +22,8 @@ type Config struct {
 	// no address of its own then, until it can be called again
 	// (SetAddress first).
 	Address string
-	// Store keeps the engine's records: msfp/store/jsonfile for a small
-	// host, msfp/store/memory for tests, or the host's own database.
+	// Store keeps the engine's records: store/jsonfile for a small
+	// host, store/memory for tests, or the host's own database.
 	Store Store
 
 	// Name is the name peers show for this server, read at each pair and

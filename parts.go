@@ -3,7 +3,7 @@ package msfp
 import (
 	"slices"
 
-	"github.com/overfin/server/msfp/wire"
+	"github.com/msfp-io/msfp-go/wire"
 )
 
 // The parts this engine speaks (MSFP core section 10), as Config.Parts

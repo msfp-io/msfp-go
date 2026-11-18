@@ -9,7 +9,7 @@ import (
 	"slices"
 	"time"
 
-	"github.com/overfin/server/msfp/wire"
+	"github.com/msfp-io/msfp-go/wire"
 )
 
 // Pairing codes (MSFP core sections 5 and 7.1): this server's operator

@@ -12,7 +12,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/overfin/server/msfp/wire"
+	"github.com/msfp-io/msfp-go/wire"
 )
 
 // The routes peers call (MSFP core sections 6 and 8): every request is

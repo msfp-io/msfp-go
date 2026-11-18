@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/overfin/server/msfp"
+	"github.com/msfp-io/msfp-go"
 )
 
 // Two engines pair over TLS: A makes a code, B reads and redeems it (A is

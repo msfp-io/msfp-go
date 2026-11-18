@@ -34,8 +34,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/overfin/server/msfp"
-	"github.com/overfin/server/msfp/store/internal/state"
+	"github.com/msfp-io/msfp-go"
+	"github.com/msfp-io/msfp-go/store/internal/state"
 )
 
 // Options are the store's settings; the zero value is the default.

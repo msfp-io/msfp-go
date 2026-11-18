@@ -17,8 +17,8 @@
 // when their operators pair them, and from then on every request between
 // them is signed by the sender, and every answer by the server answering.
 //
-// The package is the protocol alone, the toolkit of the module that will
-// become github.com/msfp-io/msfp-go: it imports only the standard library
+// The package is the protocol alone, the toolkit of the module
+// github.com/msfp-io/msfp-go: it imports only the standard library
 // and filippo.io/edwards25519, never the server that uses it
 // (imports_test.go checks this). The protocol's behaviour (storage,
 // limits, connections, the calls' handlers) is the engine above it,
