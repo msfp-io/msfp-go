@@ -50,6 +50,10 @@ type TitleCommon struct {
 // section 3).
 type VideoTitle struct {
 	TitleCommon
+	// Audio and Subtitles are language tags (the host's may be its media
+	// server's codes: the engine sends them as wire.SentTags gives them).
+	// Subtitles are the languages of the tracks play would list: those
+	// the host can serve (Track).
 	Audio     []string `json:"audio,omitempty"`
 	Subtitles []string `json:"subtitles,omitempty"`
 	// Pictures is the host's, for its own films and episodes: each copy's
@@ -174,8 +178,9 @@ type ChangePage struct {
 
 // Copy is one of the host's copies of a title: its handle (opaque to the
 // engine, never sent: the version ID a peer sees is a keyed MAC of it),
-// its name (for versions), its audio languages as tags (for choosing the
-// copy), and the host library holding it (one of those Copies was asked
+// its name (for versions), its audio languages as tags or as its media
+// server's codes (for choosing the copy; "fre" counts as "fr", as
+// wire.SentTag says), and the host library holding it (one of those Copies was asked
 // for: a playback ends when that library is no longer offered).
 type Copy struct {
 	Handle  string
@@ -186,10 +191,18 @@ type Copy struct {
 
 // Track is an audio or subtitle track of a copy: ID is its position,
 // "a<n>" or "s<n>" (n from 0 to 999, no leading zeros). Label is its
-// language's name in itself ("Français (Canada)"); Language a tag; Role
-// "commentary" or "description" for audio beside the title's own sound;
-// Pictures marks a PGS subtitle track (other picture formats are left
-// out of the list).
+// language's name in itself ("Français (Canada)"); Language a tag (the
+// host may give its media server's code: "fre" is sent "fr", as
+// wire.SentTag says); Role "commentary" or "description" for audio beside
+// the title's own sound, best effort (absent: the title's own sound; a
+// host may guess it from a track's title); Default the track the file
+// marks as default, never a choice a person saved (MSFP playback section
+// 2.6); Pictures marks a PGS subtitle track.
+//
+// A host lists only the subtitle tracks it can serve as MSFP video
+// section 6.2 says (WebVTT parts for text, raw PGS parts for pictures):
+// a track it can't serve that way, and picture formats other than PGS,
+// are left out (MSFP video section 5.4).
 type Track struct {
 	ID              string `json:"id"`
 	Label           string `json:"label"`
@@ -204,9 +217,16 @@ type Track struct {
 
 // CopyInfo is what Playback.Describe tells of a copy.
 type CopyInfo struct {
-	AudioTracks    []Track
+	AudioTracks []Track
+	// SubtitleTracks are those the host can serve (Track).
 	SubtitleTracks []Track
-	DurationMs     int64
+	// DurationMs is the whole copy's length, all its parts.
+	DurationMs int64
+	// Parts is how many files the copy is made of, played one after the
+	// other as one (MSFP playback section 1); 0 or 1: one file. A copy of
+	// several parts is served as "hls", never "file" (MSFP media section
+	// 1): the engine refuses a Started with "file" for it.
+	Parts int
 	// EpisodeStartMs is where the episode played starts inside a copy
 	// holding several (MSFP video section 5.2); 0 when unknown.
 	EpisodeStartMs int64
@@ -286,7 +306,10 @@ type StartRequest struct {
 	Copy      string
 	Title     string
 	AudioOnly bool
-	Peer      PeerRef
+	// Parts is the copy's files, as Describe said (1 for one file): a
+	// copy of several is started as "hls", never "file".
+	Parts int
+	Peer  PeerRef
 	// AudioTrack and SubtitleTrack are the engine's choice ("": none
 	// shown); subtitles never make a playback transcode.
 	AudioTrack    string
@@ -332,7 +355,9 @@ type Started struct {
 }
 
 // Segment is a skip marker: Kind is intro, outro, recap, preview or
-// commercial (MSFP video section 5.3).
+// commercial (MSFP video section 5.3); credits are outro. EndMs 0 is an
+// end the host doesn't know (credits that run to the end): the engine
+// sends the copy's DurationMs, and drops the marker without one.
 type Segment struct {
 	Kind    string `json:"kind"`
 	StartMs int64  `json:"startMs"`

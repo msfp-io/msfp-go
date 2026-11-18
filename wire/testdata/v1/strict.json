@@ -4,7 +4,8 @@
     "mediaNames: file and track names in media URLs (spec/v1/media.md section 1). bases: the discovery document's base (spec/v1/core.md, the discovery document).",
     "destinations: IP addresses a server connects to for a peer by default (valid), or refuses (spec/v1/core.md section 3.3; also version 0's section 3.2).",
     "uncallableAddresses: the address a server that sends inbound false must have, https://msfp-<26>.invalid, the 26 characters being 16 bytes in lowercase base32 with the unused bits zero (spec/v1/core.md section 5.2).",
-    "helloVersions: hello bodies (text) and what a receiver keeps of their versions (output: core, and each known part by name; spec/v1/core.md sections 2.3 and 10.2), or a bad body (valid false). A number that isn't an integer is valid I-JSON, and is ignored in a version list."
+    "helloVersions: hello bodies (text) and what a receiver keeps of their versions (output: core, and each known part by name; spec/v1/core.md sections 2.3 and 10.2), or a bad body (valid false). A number that isn't an integer is valid I-JSON, and is ignored in a version list.",
+    "languageCodes: a media server's language code (text) and the tag a server sends for it (output), or none (valid false): an ISO 639-2 code, /B or /T, of a language with an ISO 639-1 code sent as that code, the rest kept, in BCP 47's case conventions; und, mul, zxx and mis not sent (spec/v1/catalog.md section 3, language tags; spec/v1/core.md section 2.5)."
   ],
   "addresses": [
     {
@@ -657,6 +658,248 @@
       "text": "{\"state\":\"paired\",\"core\":[1],\"parts\":[]}",
       "valid": false,
       "reason": "parts isn't an object"
+    }
+  ],
+  "languageCodes": [
+    {
+      "text": "fr",
+      "valid": true,
+      "output": "fr"
+    },
+    {
+      "text": "fre",
+      "valid": true,
+      "output": "fr"
+    },
+    {
+      "text": "fra",
+      "valid": true,
+      "output": "fr"
+    },
+    {
+      "text": "FRE",
+      "valid": true,
+      "output": "fr"
+    },
+    {
+      "text": "ger",
+      "valid": true,
+      "output": "de"
+    },
+    {
+      "text": "deu",
+      "valid": true,
+      "output": "de"
+    },
+    {
+      "text": "chi",
+      "valid": true,
+      "output": "zh"
+    },
+    {
+      "text": "zho",
+      "valid": true,
+      "output": "zh"
+    },
+    {
+      "text": "cze",
+      "valid": true,
+      "output": "cs"
+    },
+    {
+      "text": "ces",
+      "valid": true,
+      "output": "cs"
+    },
+    {
+      "text": "wel",
+      "valid": true,
+      "output": "cy"
+    },
+    {
+      "text": "dut",
+      "valid": true,
+      "output": "nl"
+    },
+    {
+      "text": "gre",
+      "valid": true,
+      "output": "el"
+    },
+    {
+      "text": "rum",
+      "valid": true,
+      "output": "ro"
+    },
+    {
+      "text": "per",
+      "valid": true,
+      "output": "fa"
+    },
+    {
+      "text": "may",
+      "valid": true,
+      "output": "ms"
+    },
+    {
+      "text": "tib",
+      "valid": true,
+      "output": "bo"
+    },
+    {
+      "text": "alb",
+      "valid": true,
+      "output": "sq"
+    },
+    {
+      "text": "arm",
+      "valid": true,
+      "output": "hy"
+    },
+    {
+      "text": "baq",
+      "valid": true,
+      "output": "eu"
+    },
+    {
+      "text": "geo",
+      "valid": true,
+      "output": "ka"
+    },
+    {
+      "text": "ice",
+      "valid": true,
+      "output": "is"
+    },
+    {
+      "text": "mac",
+      "valid": true,
+      "output": "mk"
+    },
+    {
+      "text": "mao",
+      "valid": true,
+      "output": "mi"
+    },
+    {
+      "text": "bur",
+      "valid": true,
+      "output": "my"
+    },
+    {
+      "text": "slo",
+      "valid": true,
+      "output": "sk"
+    },
+    {
+      "text": "fre-CA",
+      "valid": true,
+      "output": "fr-CA"
+    },
+    {
+      "text": "fre-ca",
+      "valid": true,
+      "output": "fr-CA"
+    },
+    {
+      "text": "en-us",
+      "valid": true,
+      "output": "en-US"
+    },
+    {
+      "text": "EN-GB",
+      "valid": true,
+      "output": "en-GB"
+    },
+    {
+      "text": "chi-Hant-TW",
+      "valid": true,
+      "output": "zh-Hant-TW"
+    },
+    {
+      "text": "zh-hant-tw",
+      "valid": true,
+      "output": "zh-Hant-TW"
+    },
+    {
+      "text": "es-419",
+      "valid": true,
+      "output": "es-419"
+    },
+    {
+      "text": "yue",
+      "valid": true,
+      "output": "yue"
+    },
+    {
+      "text": "fil",
+      "valid": true,
+      "output": "fil"
+    },
+    {
+      "text": "tlh",
+      "valid": true,
+      "output": "tlh"
+    },
+    {
+      "text": "und",
+      "valid": false,
+      "reason": "und is not sent"
+    },
+    {
+      "text": "mul",
+      "valid": false,
+      "reason": "mul is not sent"
+    },
+    {
+      "text": "zxx",
+      "valid": false,
+      "reason": "zxx is not sent"
+    },
+    {
+      "text": "mis",
+      "valid": false,
+      "reason": "mis is not sent"
+    },
+    {
+      "text": "UND",
+      "valid": false,
+      "reason": "und is not sent"
+    },
+    {
+      "text": "e",
+      "valid": false,
+      "reason": "not a tag: 2 to 12 characters of A-Z a-z 0-9 -"
+    },
+    {
+      "text": "fr_CA",
+      "valid": false,
+      "reason": "not a tag: 2 to 12 characters of A-Z a-z 0-9 -"
+    },
+    {
+      "text": "fr--CA",
+      "valid": false,
+      "reason": "an empty subtag"
+    },
+    {
+      "text": "fr-",
+      "valid": false,
+      "reason": "an empty subtag"
+    },
+    {
+      "text": "123",
+      "valid": false,
+      "reason": "the language isn't 2 to 8 letters"
+    },
+    {
+      "text": "abcdefghi",
+      "valid": false,
+      "reason": "the language isn't 2 to 8 letters"
+    },
+    {
+      "text": "français",
+      "valid": false,
+      "reason": "not a tag: 2 to 12 characters of A-Z a-z 0-9 -"
     }
   ]
 }

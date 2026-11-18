@@ -39,7 +39,7 @@ The only dependency beyond the standard library is
 ## Install
 
 ```sh
-go get github.com/msfp-io/msfp-go@v0.1.0
+go get github.com/msfp-io/msfp-go@v0.2.0
 ```
 
 It needs the Go version in [go.mod](go.mod) or later.
@@ -137,10 +137,10 @@ rotation, a stolen key, moving address, a server that can't be called).
 
 The module follows [semantic versioning](https://semver.org). Its
 major.minor version is shared with the other MSFP engines (msfp-dotnet, to
-come): msfp-go 0.1.x and msfp-dotnet 0.1.x follow the same API design
+come): msfp-go 0.2.x and msfp-dotnet 0.2.x follow the same API design
 (the spec's api/). Patch versions are each library's own.
 
-The module's version is separate from the protocol's: v0.1.0 speaks MSFP
+The module's version is separate from the protocol's: v0.2.0 speaks MSFP
 version 1. Before 1.0, the API may change between minor versions.
 
 ## Testing

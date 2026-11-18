@@ -711,7 +711,7 @@ type videoTitleWire struct {
 func videoOut(k wire.TitleKey, t *VideoTitle, library string) videoTitleWire {
 	w := videoTitleWire{Key: t.Key, Kind: t.Kind, Library: library}
 	if k.Playable {
-		w.Audio, w.Subtitles = wire.CleanTags(t.Audio), wire.CleanTags(t.Subtitles)
+		w.Audio, w.Subtitles = wire.SentTags(t.Audio), wire.SentTags(t.Subtitles)
 		if p, ok := BestPicture(t.Pictures); ok {
 			w.Video = &wire.Picture{Height: p.Height, HDR: p.HDR}
 		}

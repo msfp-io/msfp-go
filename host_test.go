@@ -29,6 +29,7 @@ type fakeHost struct {
 	method, protocol string
 	startErr         error
 	noAdmit          bool
+	segments         []msfp.Segment
 	started          []msfp.StartRequest
 	stopped          map[string]msfp.EndReason
 	progress         []int64
@@ -125,7 +126,7 @@ func (h *fakeHost) Describe(_ context.Context, copy string) (msfp.CopyInfo, erro
 
 func (h *fakeHost) Start(_ context.Context, req msfp.StartRequest) (msfp.Started, error) {
 	h.mu.Lock()
-	method, protocol, err, noAdmit, hold, entered := h.method, h.protocol, h.startErr, h.noAdmit, h.hold, h.entered
+	method, protocol, err, noAdmit, hold, entered, segments := h.method, h.protocol, h.startErr, h.noAdmit, h.hold, h.entered, h.segments
 	h.mu.Unlock()
 	if hold != nil {
 		if entered != nil {
@@ -146,7 +147,7 @@ func (h *fakeHost) Start(_ context.Context, req msfp.StartRequest) (msfp.Started
 	h.handles++
 	h.started = append(h.started, req)
 	return msfp.Started{Handle: "h" + strconv.Itoa(h.handles), Method: method, Protocol: protocol, MimeType: "video/mp4",
-		PositionMs: req.StartMs, Info: &msfp.PlaybackInfo{Container: "mp4"}}, nil
+		PositionMs: req.StartMs, Info: &msfp.PlaybackInfo{Container: "mp4"}, Segments: segments}, nil
 }
 
 func (h *fakeHost) Progress(_ context.Context, _ string, positionMs int64, _ bool) error {

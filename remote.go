@@ -434,7 +434,7 @@ func (e *Engine) readPlay(p *PeerRecord, raw json.RawMessage, title string, audi
 		if len(v.SubtitleTracks)+len(v.ForcedTracks) > 0 {
 			v.SubtitleStretchSeconds = wire.StretchSeconds
 		}
-		v.Segments = cleanSegments(a.Segments)
+		v.Segments = cleanSegments(a.Segments, 0)
 		if tp := a.Trickplay; tp != nil {
 			for n, u := range tp.Sheets {
 				if u != wire.SheetURL(base, n) {

@@ -387,3 +387,27 @@ func TestHelloVersionVectors(t *testing.T) {
 		}
 	}
 }
+
+// Media servers' language codes and the tags sent for them
+// (vectors/v1/strict.json, languageCodes; MSFP catalog section 3).
+func TestLanguageCodeVectors(t *testing.T) {
+	var v struct {
+		LanguageCodes []struct {
+			Text, Output string
+			Valid        bool
+		} `json:"languageCodes"`
+	}
+	readVectors(t, "strict.json", &v)
+	if len(v.LanguageCodes) == 0 {
+		t.Fatal("no cases")
+	}
+	for _, c := range v.LanguageCodes {
+		got, ok := SentTag(c.Text)
+		if ok != c.Valid || got != c.Output {
+			t.Errorf("SentTag(%q) = %q, %v; want %q, %v", c.Text, got, ok, c.Output, c.Valid)
+		}
+	}
+	if got := SentTags([]string{"fre", "fr", "FRA", "und", "ger", "fr-ca", "fre-CA"}); !slices.Equal(got, []string{"fr", "de", "fr-CA"}) {
+		t.Errorf("SentTags = %q", got)
+	}
+}

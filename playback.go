@@ -329,7 +329,7 @@ func chooseCopy(copies []Copy, version func(Copy) string, versionID, language st
 	}
 	for _, exact := range []bool{true, false} {
 		for i, c := range copies {
-			if slices.ContainsFunc(c.Audio, func(a string) bool { return sameLanguage(a, language, exact) }) {
+			if slices.ContainsFunc(wire.SentTags(c.Audio), func(a string) bool { return sameLanguage(a, language, exact) }) {
 				return i
 			}
 		}
@@ -411,9 +411,7 @@ func cleanTracks(tracks []Track, kind byte) []Track {
 		if t.Label = wire.CleanText(t.Label, 64); t.Label == "" {
 			continue
 		}
-		if !wire.LanguageTag(t.Language) {
-			t.Language = ""
-		}
+		t.Language, _ = wire.SentTag(t.Language)
 		if t.Role != "commentary" && t.Role != "description" {
 			t.Role = ""
 		}
@@ -432,10 +430,16 @@ func cleanTracks(tracks []Track, kind byte) []Track {
 var segmentKinds = []string{"intro", "outro", "recap", "preview", "commercial"}
 
 // cleanSegments keeps skip markers of a known kind within 100 days, 32
-// at most.
-func cleanSegments(in []Segment) []Segment {
+// at most; an end of 0 is durationMs (the host's markers; a peer's are
+// given 0, and such a marker is dropped).
+func cleanSegments(in []Segment, durationMs int64) []Segment {
 	var out []Segment
 	for _, s := range in {
+		if s.EndMs == 0 {
+			// An end the host doesn't know: the copy's end (MSFP video
+			// section 5.3).
+			s.EndMs = durationMs
+		}
 		if len(out) < 32 && slices.Contains(segmentKinds, s.Kind) && s.StartMs >= 0 && s.EndMs > s.StartMs && s.EndMs <= maxPositionMs {
 			out = append(out, s)
 		}
@@ -581,7 +585,7 @@ func (e *Engine) play(req *request) response {
 	}
 	// 7. The host starts it, admitted by the pairing's limits first.
 	var slot *countSlot
-	sr := StartRequest{Copy: chosen.Handle, Title: *in.Title, AudioOnly: audioOnly, Peer: PeerRef{ID: p.ID, Name: p.Name},
+	sr := StartRequest{Copy: chosen.Handle, Title: *in.Title, AudioOnly: audioOnly, Parts: max(info.Parts, 1), Peer: PeerRef{ID: p.ID, Name: p.Name},
 		AudioTrack: audio, SubtitleTrack: shown, StartMs: start, Capabilities: caps, MaxBitrateKbps: kbps,
 		Admit: func(method string) (Slot, error) {
 			if slot != nil {
@@ -654,7 +658,7 @@ func (e *Engine) play(req *request) response {
 		if len(subtitles) > 0 {
 			out.SubtitleStretchSeconds = wire.StretchSeconds
 		}
-		out.Segments = cleanSegments(started.Segments)
+		out.Segments = cleanSegments(started.Segments, out.DurationMs)
 		if pb.sheets > 0 {
 			tp := info.Trickplay
 			out.Trickplay = &trickplayWire{TileWidth: tp.TileWidth, TileHeight: tp.TileHeight, Columns: tp.Columns,
@@ -687,6 +691,11 @@ func (e *Engine) register(p *PeerRecord, title string, c Copy, info CopyInfo, s 
 	}
 	if s.Method != "direct" && s.Method != "remux" && s.Method != "transcode" || s.Protocol != "hls" && s.Protocol != "file" {
 		e.log.Warn("msfp: the host started a playback with a method or protocol MSFP doesn't have")
+		return fail()
+	}
+	if s.Protocol == "file" && info.Parts > 1 {
+		// MSFP media section 1: file is for a copy of one file only.
+		e.log.Warn("msfp: the host started a copy of several parts as file; such a copy is served as hls")
 		return fail()
 	}
 	idBytes, err := e.random(16)
@@ -752,9 +761,7 @@ func cleanInfo(in *PlaybackInfo) *PlaybackInfo {
 		if s := *pair[0]; s != nil {
 			c := *s
 			c.Codec, c.Profile, c.Range = wire.CleanText(c.Codec, 32), wire.CleanText(c.Profile, 32), wire.CleanText(c.Range, 32)
-			if !wire.LanguageTag(c.Language) {
-				c.Language = ""
-			}
+			c.Language, _ = wire.SentTag(c.Language)
 			*pair[1] = &c
 		}
 	}
