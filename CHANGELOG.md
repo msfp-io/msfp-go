@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.3.0 (2026-11-19)
 
 An episode keyed by its TMDB episode ID carries `place`, its season and
 episode in TMDB's numbering, required (MSFP video sections 3, 3.1 and
