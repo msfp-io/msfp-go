@@ -684,7 +684,12 @@ func (e *Engine) titleOut(p *PeerRecord, t Title, libs []string, pub map[string]
 	}
 	switch t := t.(type) {
 	case *VideoTitle:
-		return videoOut(k, t, library), true
+		if w, ok := videoOut(k, t, library); ok {
+			return w, true
+		}
+		// MSFP video section 4.1: an episode the owner can't place in
+		// TMDB's numbering is left out.
+		e.log.Debug("msfp: an episode of the host's catalog keyed by its TMDB ID has no valid place; it isn't sent", "key", c.Key)
 	case *MusicTitle:
 		if w, ok := musicOut(k, t, library); ok {
 			return w, true
@@ -702,13 +707,17 @@ type videoTitleWire struct {
 	Audio     []string          `json:"audio,omitempty"`
 	Subtitles []string          `json:"subtitles,omitempty"`
 	Video     *wire.Picture     `json:"video,omitempty"`
+	Place     *wire.Place       `json:"place,omitempty"`
 	With      []string          `json:"with,omitempty"`
 	IDs       map[string]string `json:"ids,omitempty"`
 }
 
 // videoOut is the host's video title as sent: its members cleaned as a
 // receiver would keep them, so nothing leaves that MSFP doesn't take.
-func videoOut(k wire.TitleKey, t *VideoTitle, library string) videoTitleWire {
+// False for an episode keyed by its TMDB episode ID without a valid
+// place, which a receiver would skip (MSFP video sections 3.1 and 4.1);
+// place on any other title isn't sent.
+func videoOut(k wire.TitleKey, t *VideoTitle, library string) (videoTitleWire, bool) {
 	w := videoTitleWire{Key: t.Key, Kind: t.Kind, Library: library}
 	if k.Playable {
 		w.Audio, w.Subtitles = wire.SentTags(t.Audio), wire.SentTags(t.Subtitles)
@@ -720,6 +729,16 @@ func videoOut(k wire.TitleKey, t *VideoTitle, library string) videoTitleWire {
 		vk, _ := wire.ParseVideoKey(t.Key)
 		w.With = wire.CleanWith(vk, t.With)
 		slices.Sort(w.With)
+		if vk.EpisodeID > 0 {
+			if t.Place == nil {
+				return videoTitleWire{}, false
+			}
+			p := wire.Place{Season: t.Place.Season, Episode: t.Place.Episode}
+			if !p.Valid() {
+				return videoTitleWire{}, false
+			}
+			w.Place = &p
+		}
 	}
 	if k.Kind != "season" {
 		for scheme, v := range t.IDs {
@@ -731,7 +750,7 @@ func videoOut(k wire.TitleKey, t *VideoTitle, library string) videoTitleWire {
 			}
 		}
 	}
-	return w
+	return w, true
 }
 
 // musicTitleWire is a music title as sent (MSFP music section 3).

@@ -539,6 +539,9 @@ func (e *Engine) readTitle(p *PeerRecord, raw json.RawMessage, libs []string) (T
 		if v.Video != nil {
 			t.Video = &Picture{Height: v.Video.Height, HDR: v.Video.HDR}
 		}
+		if v.Place != nil {
+			t.Place = &Place{Season: v.Place.Season, Episode: v.Place.Episode}
+		}
 		return t, true
 	case wire.PartMusic:
 		m, ok := wire.ReadMusicTitle(raw)

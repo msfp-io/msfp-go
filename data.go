@@ -63,9 +63,27 @@ type VideoTitle struct {
 	Pictures []Picture `json:"pictures,omitempty"`
 	// Video is a peer's: the picture it sent of its best copy, cleaned
 	// (MSFP video section 3.1); nil when it sent none.
-	Video *Picture          `json:"video,omitempty"`
+	Video *Picture `json:"video,omitempty"`
+	// Place is, for an episode keyed by its TMDB episode ID
+	// (series/tmdb/<id>/e<episode id>), its place in TMDB's numbering:
+	// TMDB's current season and episode numbers (MSFP video section 4.1).
+	// The host fills it for each of its own such episodes; one it can't
+	// place (nil, or numbers out of range) isn't sent. A new place is a
+	// change of the title: a changes reading sends it again. A peer's is
+	// always set for such episodes (the engine skips one without), nil
+	// for every other title (place on them is ignored).
+	Place *Place            `json:"place,omitempty"`
 	With  []string          `json:"with,omitempty"`
 	IDs   map[string]string `json:"ids,omitempty"`
+}
+
+// Place is an episode's place in TMDB's numbering (MSFP video section
+// 4.1): Season from 0 (specials) to 9,999, Episode from 0 to 99,999, as
+// TMDB numbers them in the series' own season list (not an episode
+// group). A host whose files are numbered another way maps them to TMDB's.
+type Place struct {
+	Season  int `json:"season"`
+	Episode int `json:"episode"`
 }
 
 // Picture is what a copy of a film or an episode offers for playing

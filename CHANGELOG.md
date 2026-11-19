@@ -1,5 +1,25 @@
 # Changelog
 
+## Unreleased
+
+An episode keyed by its TMDB episode ID carries `place`, its season and
+episode in TMDB's numbering, required (MSFP video sections 3, 3.1 and
+4.1, settled on 2026-11-19).
+
+API changes since v0.2.0:
+
+- `VideoTitle.Place` (`*Place`, `{Season, Episode}`): the host fills it
+  for each of its episodes keyed `series/tmdb/<id>/e<episode id>`, with
+  TMDB's current numbers (season 0 to 9,999, episode 0 to 99,999). Such
+  an episode without a place, or with numbers out of range, isn't sent;
+  `Place` on any other title isn't sent. A new place is a change of the
+  title: a changes reading sends it again.
+- A peer's episode keyed by its TMDB episode ID without a valid `place`
+  is skipped; a kept one has `Place` set. `place` on other titles is
+  ignored.
+- `wire.Place`, `wire.MaxPlaceSeason`, `wire.MaxPlaceEpisode`;
+  `wire.VideoTitle.Place`. vectors/v1/video.json updated from msfp-spec.
+
 ## v0.2.0 (2026-11-18)
 
 MSFP's platform neutrality, decided on 2026-11-18 (msfp-spec's

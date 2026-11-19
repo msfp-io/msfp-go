@@ -73,7 +73,7 @@ func TestReadVideoTitle(t *testing.T) {
 		}
 	}
 	tags := `["fr","FR","fr-CA","x","fr_CA",3,"` + strings.Repeat("a", 13) + `","de","en","es","it","nl","pt","ja","ko","zh","ru","sv"]`
-	got, ok := read(`{"key":"series/tmdb/1399/e63056","kind":"episode","library":"L","audio":` + tags + `,"subtitles":"fr",
+	got, ok := read(`{"key":"series/tmdb/1399/e63056","kind":"episode","library":"L","place":{"season":1,"episode":1,"x":2},"audio":` + tags + `,"subtitles":"fr",
 		"with":["series/tmdb/1399/e63057","series/tmdb/1399/e63056","series/tmdb/2/e1","series/tmdb/1399/s1/e3",7,"series/tmdb/1399/s1"],
 		"ids":{"imdb":"tt1480055","tvdb":"0123","wikidata":"Q1"}}`)
 	if !ok {
@@ -90,6 +90,21 @@ func TestReadVideoTitle(t *testing.T) {
 	}
 	if len(got.IDs) != 1 || got.IDs["imdb"] != "tt1480055" {
 		t.Errorf("ids %v", got.IDs)
+	}
+	if got.Place == nil || *got.Place != (Place{Season: 1, Episode: 1}) {
+		t.Errorf("place %+v", got.Place)
+	}
+	// An episode keyed by its TMDB ID without a valid place is skipped;
+	// place on an episode keyed by its numbers is ignored.
+	for _, place := range []string{``, `,"place":null`, `,"place":[1,1]`, `,"place":{"season":1}`,
+		`,"place":{"season":1.0,"episode":1}`, `,"place":{"season":"1","episode":1}`, `,"place":{"season":10000,"episode":1}`,
+		`,"place":{"season":1,"episode":-1}`} {
+		if _, ok := read(`{"key":"series/tmdb/1399/e63056","kind":"episode","library":"L"` + place + `}`); ok {
+			t.Errorf("place %q kept", place)
+		}
+	}
+	if got, ok := read(`{"key":"series/tmdb/1399/s1/e1","kind":"episode","library":"L","place":{"season":1,"episode":1}}`); !ok || got.Place != nil {
+		t.Errorf("episode by numbers: %+v %v", got, ok)
 	}
 	// ids that isn't an object, with that isn't a list: absent.
 	got, ok = read(`{"key":"movie/tmdb/949","kind":"movie","library":"L","ids":["tt0133093"],"with":"x","audio":["en"]}`)
@@ -175,9 +190,10 @@ func TestVideoVectors(t *testing.T) {
 			Audio     []string          `json:"audio,omitempty"`
 			Subtitles []string          `json:"subtitles,omitempty"`
 			Video     *Picture          `json:"video,omitempty"`
+			Place     *Place            `json:"place,omitempty"`
 			With      []string          `json:"with,omitempty"`
 			IDs       map[string]string `json:"ids,omitempty"`
-		}{got.Key, got.Kind, got.Library, got.Audio, got.Subtitles, got.Video, got.With, got.IDs})
+		}{got.Key, got.Kind, got.Library, got.Audio, got.Subtitles, got.Video, got.Place, got.With, got.IDs})
 		json.Unmarshal(b, &have)
 		if !reflect.DeepEqual(have, want) {
 			t.Errorf("title %s:\n got %s\nwant %s", c.Name, b, c.Output)

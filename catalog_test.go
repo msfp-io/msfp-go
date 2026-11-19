@@ -300,7 +300,7 @@ func TestOwnTitlesChecked(t *testing.T) {
 		Libraries: []string{"films"}}}
 	h.titles["series/tmdb/1399/e1"] = &msfp.VideoTitle{TitleCommon: msfp.TitleCommon{Key: "series/tmdb/1399/e1", Kind: "episode",
 		Libraries: []string{"films"}}, Audio: []string{"en", "EN", "x"}, With: []string{"series/tmdb/1399/e3", "series/tmdb/2/e1", "series/tmdb/1399/e2"},
-		IDs: map[string]string{"imdb": "tt01", "tvdb": "81189", "other": "1"}}
+		IDs: map[string]string{"imdb": "tt01", "tvdb": "81189", "other": "1"}, Place: &msfp.Place{Season: 1, Episode: 1}}
 	s := newSharing(t, h, msfp.Config{}, msfp.Config{})
 	got := s.peerTitles(t)
 	if !slices.Equal(keysOf(got), []string{"movie/tmdb/1", "series/tmdb/1399/e1"}) {
@@ -466,6 +466,76 @@ func TestTitlePictures(t *testing.T) {
 	}
 	if v := s.peerTitles(t)["movie/tmdb/3"].(*msfp.VideoTitle).Video; v == nil || v.Height != 720 {
 		t.Errorf("the new picture kept: %+v", v)
+	}
+}
+
+// An episode keyed by its TMDB ID carries its place in TMDB's numbering
+// (MSFP video section 4.1): the host's goes with it; one the host can't
+// place isn't sent; place on other titles never leaves; and a new place
+// is a change of the title.
+func TestTitlePlaces(t *testing.T) {
+	ctx := context.Background()
+	h := newFakeHost()
+	episode := func(key string, place *msfp.Place) {
+		h.titles[key] = &msfp.VideoTitle{TitleCommon: msfp.TitleCommon{Key: key, Kind: "episode", Libraries: []string{"films"}},
+			Place: place}
+	}
+	h.film("films", "movie/tmdb/1", "en")
+	h.titles["movie/tmdb/1"].(*msfp.VideoTitle).Place = &msfp.Place{Season: 1, Episode: 2}
+	episode("series/tmdb/1399/e1", &msfp.Place{Season: 1, Episode: 1})
+	episode("series/tmdb/1399/e2", &msfp.Place{}) // season 0, episode 0
+	episode("series/tmdb/1399/e3", nil)
+	episode("series/tmdb/1399/e4", &msfp.Place{Season: 10000, Episode: 1})
+	episode("series/tmdb/1399/e5", &msfp.Place{Season: 1, Episode: -1})
+	episode("series/tmdb/1399/s1/e9", &msfp.Place{Season: 1, Episode: 9})
+	s := newSharing(t, h, msfp.Config{}, msfp.Config{})
+	got := s.peerTitles(t)
+	if want := []string{"movie/tmdb/1", "series/tmdb/1399/e1", "series/tmdb/1399/e2", "series/tmdb/1399/s1/e9"}; !slices.Equal(keysOf(got), want) {
+		t.Fatalf("B keeps %v, want %v", keysOf(got), want)
+	}
+	if p := got["series/tmdb/1399/e1"].(*msfp.VideoTitle).Place; p == nil || *p != (msfp.Place{Season: 1, Episode: 1}) {
+		t.Errorf("e1's place: %+v", p)
+	}
+	if p := got["series/tmdb/1399/e2"].(*msfp.VideoTitle).Place; p == nil || *p != (msfp.Place{}) {
+		t.Errorf("e2's place: %+v", p)
+	}
+	last := s.a.exchanges("titles")
+	body := last[len(last)-1].resBody
+	if !strings.Contains(body, `"key":"series/tmdb/1399/e1","kind":"episode","library":"`) ||
+		!strings.Contains(body, `"place":{"season":1,"episode":1}`) || !strings.Contains(body, `"place":{"season":0,"episode":0}`) ||
+		strings.Count(body, `"place"`) != 2 {
+		t.Errorf("as sent: %s", body)
+	}
+	// TMDB renumbers e1: the same key, a new place, sent again.
+	h.mu.Lock()
+	h.titles["series/tmdb/1399/e1"].(*msfp.VideoTitle).Place = &msfp.Place{Season: 2, Episode: 1}
+	h.mu.Unlock()
+	s.a.eng.CatalogChanged()
+	if _, err := s.b.eng.ReadNow(ctx, s.onB.ID); err != nil {
+		t.Fatal(err)
+	}
+	last = s.a.exchanges("titles")
+	if x := last[len(last)-1]; !strings.Contains(x.resBody, `"changes":true`) || !strings.Contains(x.resBody, `"key":"series/tmdb/1399/e1"`) ||
+		strings.Contains(x.resBody, `"key":"series/tmdb/1399/e2"`) {
+		t.Errorf("a changes reading: %s", x.resBody)
+	}
+	if p := s.peerTitles(t)["series/tmdb/1399/e1"].(*msfp.VideoTitle).Place; p == nil || *p != (msfp.Place{Season: 2, Episode: 1}) {
+		t.Errorf("the new place kept: %+v", p)
+	}
+	// The host can't place it any more: it is gone from the peer.
+	h.mu.Lock()
+	h.titles["series/tmdb/1399/e1"].(*msfp.VideoTitle).Place = nil
+	h.mu.Unlock()
+	s.a.eng.CatalogChanged()
+	if _, err := s.b.eng.ReadNow(ctx, s.onB.ID); err != nil {
+		t.Fatal(err)
+	}
+	last = s.a.exchanges("titles")
+	if x := last[len(last)-1]; !strings.Contains(x.resBody, `"gone":["series/tmdb/1399/e1"]`) {
+		t.Errorf("a changes reading: %s", x.resBody)
+	}
+	if _, ok := s.peerTitles(t)["series/tmdb/1399/e1"]; ok {
+		t.Error("an episode no longer placed still kept")
 	}
 }
 

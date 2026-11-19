@@ -255,8 +255,45 @@ func readPicture(raw json.RawMessage) *Picture {
 	return p
 }
 
+// Place is an episode's place in TMDB's numbering (video section 4.1):
+// TMDB's current season and episode numbers, sent with each episode keyed
+// by its TMDB episode ID.
+type Place struct {
+	Season  int `json:"season"`
+	Episode int `json:"episode"`
+}
+
+// The greatest numbers a place may carry (video section 3.1); both may
+// be 0 (season 0 holds specials, episode 0 a pilot or prologue).
+const (
+	MaxPlaceSeason  = 9999
+	MaxPlaceEpisode = 99999
+)
+
+// Valid says whether p's numbers are in range.
+func (p Place) Valid() bool {
+	return p.Season >= 0 && p.Season <= MaxPlaceSeason && p.Episode >= 0 && p.Episode <= MaxPlaceEpisode
+}
+
+// readPlace reads place as a receiver keeps it (video section 3.1): nil
+// unless it is an object whose season and episode are MSFP integers in
+// range (core section 2.3: 1.0 and "1" aren't); other members are
+// ignored.
+func readPlace(raw json.RawMessage) *Place {
+	var o map[string]json.RawMessage
+	if len(raw) == 0 || json.Unmarshal(raw, &o) != nil || o == nil {
+		return nil
+	}
+	season, episode := integerIn(o["season"], 0, MaxPlaceSeason), integerIn(o["episode"], 0, MaxPlaceEpisode)
+	if season < 0 || episode < 0 {
+		return nil
+	}
+	return &Place{Season: int(season), Episode: int(episode)}
+}
+
 // VideoTitle is a peer's video title, as kept: its key, its kind, the
-// library it gives, and the members video adds, cleaned.
+// library it gives, and the members video adds, cleaned. Place is set
+// for episodes keyed by their TMDB episode ID only, and always for them.
 type VideoTitle struct {
 	Key       string
 	Kind      string
@@ -264,6 +301,7 @@ type VideoTitle struct {
 	Audio     []string
 	Subtitles []string
 	Video     *Picture
+	Place     *Place
 	With      []string
 	IDs       map[string]string
 }
@@ -271,7 +309,9 @@ type VideoTitle struct {
 // ReadVideoTitle reads one entry of a titles answer as catalog section
 // 3.3 and video section 3.1 say: false, to skip it, when it isn't an
 // object whose key, kind and library are strings, when the key isn't a
-// canonical video key, or when its kind isn't the key's. A member video
+// canonical video key, when its kind isn't the key's, or when it is an
+// episode keyed by its TMDB episode ID without a valid place (video
+// section 3.1; place on any other title is ignored). A member video
 // adds of the wrong type counts as absent; a bad entry of one of its
 // lists is skipped alone. Whether library is one asked for is the
 // caller's to check.
@@ -285,6 +325,7 @@ func ReadVideoTitle(raw json.RawMessage) (VideoTitle, bool) {
 		With      json.RawMessage `json:"with"`
 		IDs       json.RawMessage `json:"ids"`
 		Video     json.RawMessage `json:"video"`
+		Place     json.RawMessage `json:"place"`
 	}
 	if DecodeEntry(raw, &t) != nil {
 		return VideoTitle{}, false
@@ -301,6 +342,13 @@ func ReadVideoTitle(raw json.RawMessage) (VideoTitle, bool) {
 	}
 	if k.Kind == "episode" {
 		out.With = CleanWith(k, stringsOf(t.With))
+	}
+	// An episode keyed by its TMDB episode ID can't be placed from its
+	// key: without a place, it is skipped (video section 4.1).
+	if k.Kind == "episode" && k.EpisodeID > 0 {
+		if out.Place = readPlace(t.Place); out.Place == nil {
+			return VideoTitle{}, false
+		}
 	}
 	var ids map[string]any // not an object: none
 	if k.Kind != "season" && json.Unmarshal(t.IDs, &ids) == nil {
