@@ -474,6 +474,11 @@ func (e *Engine) liveRemote(id string) *remote {
 // host reports, by Run's work of each second when no report comes at the
 // time. It returns at once. A 410 from the peer ends the playback
 // (RemotePlaybackEnded).
+//
+// The peer ends a playback it hears nothing of for 2 minutes (playback
+// section 6.3): while a viewer is on it, paused too, call Progress at
+// least every minute, whatever the player reports. Calls cost nothing
+// more: the peer still gets one report per 45 seconds at most.
 func (e *Engine) Progress(id string, positionMs int64, paused bool) {
 	rs := &e.remotes
 	rs.mu.Lock()
