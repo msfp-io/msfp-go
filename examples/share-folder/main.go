@@ -202,6 +202,10 @@ func show(ok string, err error) {
 type printer struct{}
 
 func (printer) Notify(e msfp.Event) {
+	if r, ok := e.(msfp.RemotePlaybackEnded); ok {
+		// Ended on the peer's side (or here): no more reports.
+		watches.stop(r.Playback)
+	}
 	if w, ok := e.(msfp.PeerWaiting); ok {
 		fmt.Printf("\n%s used your code; its fingerprint is %s. Compare, then: accept %s\n", w.Name, w.Fingerprint, w.Peer)
 		return
