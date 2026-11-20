@@ -1,3 +1,5 @@
+<img src="logo.png" alt="" width="128" align="right">
+
 # msfp-go
 
 The MSFP engine for Go. [MSFP](https://github.com/msfp-io/msfp-spec), the
