@@ -127,7 +127,11 @@ local addresses otherwise). Then:
 3. `offer <id>` in the first shares its films; `want <id>` then
    `titles <id>` in the second lists them;
 4. `play <id> <key>` in the second prints a URL that `curl -k` or
-   `ffplay -tls_verify 0` plays through it; `stop <playback>` ends it.
+   `ffplay -tls_verify 0` plays through it; `pause <playback>` and
+   `resume <playback>` say the viewer paused or resumed, and `stop
+   <playback>` ends it. Until then the example reports the playback to
+   the first every minute, as a host must: a peer ends a playback it
+   hears nothing of for 2 minutes.
 
 `peers` lists the pairings and `end <id>` ends one. The comment at the top
 of [main.go](examples/share-folder/main.go) lists every command (key

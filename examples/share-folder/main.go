@@ -13,8 +13,10 @@
 // <id>" reads them, "titles <id>" lists them, "play <id> <key>" prints a
 // URL that curl -k or ffplay -tls_verify 0 plays through this server
 // (anyone who has it may, for as long as the playback lasts: an example,
-// not a viewer's page), "stop <playback>" ends it. "rescan" tells the
-// engine the folder changed.
+// not a viewer's page), "pause <playback>" and "resume <playback>" say
+// the viewer paused or resumed, "stop <playback>" ends it. Until then the
+// playback is reported to the peer every minute, which ends one it hears
+// nothing of for 2 minutes. "rescan" tells the engine the folder changed.
 // "rotate" moves this server to its next key; "stolen" revokes its key
 // and rotates ("stolen none": without the next key, every pairing ends);
 // "confirm <id>" accepts a peer's new key after comparing fingerprints.
@@ -39,6 +41,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/msfp-io/msfp-go"
@@ -149,9 +152,15 @@ func main() {
 			pb, err := eng.Play(ctx, peer, msfp.PlayRequest{Title: key, Capabilities: msfp.Capabilities{
 				Containers: []string{"mp4", "mkv", "webm", "ts"}, VideoCodecs: []string{"h264", "hevc", "vp9", "av1"},
 				AudioCodecs: []string{"aac", "mp3", "opus", "ac3"}}})
+			if err == nil {
+				watches.start(ctx, eng, pb.ID)
+			}
 			name := map[string]string{"hls": "master.m3u8", "file": "file"}[pb.Protocol]
 			show(fmt.Sprintf("%s/watch/%s/%s  (%s, %s; stop %s)", *address, pb.ID, name, pb.Method, pb.Protocol, pb.ID), err)
+		case "pause", "resume":
+			show(cmd+"d", watches.pause(eng, arg, cmd == "pause"))
 		case "stop":
+			watches.stop(arg)
 			show("stopped", eng.Stop(ctx, arg, -1))
 		case "rescan":
 			eng.CatalogChanged()
@@ -221,4 +230,84 @@ func selfSigned(address string) tls.Certificate {
 	}
 	leaf, _ := x509.ParseCertificate(der)
 	return tls.Certificate{Certificate: [][]byte{der}, PrivateKey: priv, Leaf: leaf}
+}
+
+// The playbacks of peers' titles open here, each reported to its peer
+// until stopped (MSFP playback section 3): at once, on a pause or a
+// resume, and every minute (the engine sends one report per 45 seconds
+// at most). A real host reports what its player says; this example has
+// none, so the time played stands for the position.
+var watches = &watching{open: map[string]*watch{}}
+
+type watching struct {
+	mu   sync.Mutex
+	open map[string]*watch
+}
+
+type watch struct {
+	stop   context.CancelFunc
+	posMs  int64
+	paused bool
+	since  time.Time // when playing last resumed
+}
+
+func (ws *watching) start(ctx context.Context, eng *msfp.Engine, id string) {
+	ctx, cancel := context.WithCancel(ctx)
+	ws.mu.Lock()
+	ws.open[id] = &watch{stop: cancel, since: time.Now()}
+	ws.mu.Unlock()
+	eng.Progress(id, 0, false)
+	go func() {
+		t := time.NewTicker(time.Minute)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				pos, paused, ok := ws.where(id)
+				if !ok {
+					return
+				}
+				eng.Progress(id, pos, paused)
+			}
+		}
+	}()
+}
+
+// where is a playback's position and whether it is paused.
+func (ws *watching) where(id string) (int64, bool, bool) {
+	ws.mu.Lock()
+	defer ws.mu.Unlock()
+	w, ok := ws.open[id]
+	if !ok {
+		return 0, false, false
+	}
+	if w.paused {
+		return w.posMs, true, true
+	}
+	return w.posMs + time.Since(w.since).Milliseconds(), false, true
+}
+
+func (ws *watching) pause(eng *msfp.Engine, id string, paused bool) error {
+	pos, was, ok := ws.where(id)
+	if !ok {
+		return errors.New("no such playback here")
+	}
+	ws.mu.Lock()
+	if w := ws.open[id]; w != nil && was != paused {
+		w.posMs, w.paused, w.since = pos, paused, time.Now()
+	}
+	ws.mu.Unlock()
+	eng.Progress(id, pos, paused)
+	return nil
+}
+
+func (ws *watching) stop(id string) {
+	ws.mu.Lock()
+	defer ws.mu.Unlock()
+	if w, ok := ws.open[id]; ok {
+		w.stop()
+		delete(ws.open, id)
+	}
 }
