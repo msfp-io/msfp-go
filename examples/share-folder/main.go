@@ -28,6 +28,7 @@
 // code for it (redeemed with "redeem", accepted with "accept", or, from a
 // peer already, "join-accept <group> <peer>"); "pair <group> <mail>"
 // accepts a member's request, "refuse <group> <mail>" refuses it;
+// "admin <group> <member>" names a member admin (the owner only);
 // "group-offer <group>" shares the films with the group; "auto <group>
 // on|off" accepts its members by itself; "leave <group>" leaves it.
 package main
@@ -193,7 +194,7 @@ func main() {
 		case "invite":
 			code, _, err := eng.MakeCodeWith(ctx, msfp.CodeOptions{Group: arg, Uses: 10})
 			show(code, err)
-		case "pair", "refuse", "join-accept", "auto":
+		case "pair", "refuse", "join-accept", "auto", "admin":
 			group, rest, _ := strings.Cut(arg, " ")
 			var err error
 			switch cmd {
@@ -205,6 +206,8 @@ func main() {
 				err = eng.AcceptJoin(ctx, group, rest)
 			case "auto":
 				err = eng.SetGroupAnswer(ctx, group, rest == "on")
+			case "admin":
+				err = eng.SetAdmin(ctx, group, rest, true)
 			}
 			show("done", err)
 		case "group-offer":
@@ -225,7 +228,7 @@ func main() {
 		default:
 			fmt.Println("code [note] | redeem <code> | accept <id> | end <id> | peers | rotate [key] | stolen [key|none] | " +
 				"confirm <id> | address <url> | uncallable on|off | offer <id> | want <id> | titles <id> | play <id> <key> | stop <playback> | rescan | " +
-				"group-create <name> | groups | invite <group> | pair <group> <mail> | refuse <group> <mail> | join-accept <group> <peer> | group-offer <group> | auto <group> on|off | leave <group>")
+				"group-create <name> | groups | invite <group> | pair <group> <mail> | refuse <group> <mail> | join-accept <group> <peer> | admin <group> <member> | group-offer <group> | auto <group> on|off | leave <group>")
 		}
 	}
 }
