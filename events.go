@@ -251,6 +251,14 @@ func (e *Engine) tell(ev Event) {
 // 7.5); one that can be called again is read at once.
 func (e *Engine) react(ev Event) {
 	switch ev := ev.(type) {
+	case PeerPaired:
+		// Joining a group through this pairing (MSFP groups section 4).
+		id := ev.Peer
+		e.background(func(ctx context.Context) {
+			if p, err := e.peerRecord(ctx, id); err == nil && p != nil && p.State == Paired {
+				e.paired(ctx, p)
+			}
+		})
 	case PeerEnded, PeerGone, PeerSuspended:
 		id := ev.PeerID()
 		e.endPlaybacks(func(pb *playback) bool { return pb.peer == id }, EndPairingEnded)

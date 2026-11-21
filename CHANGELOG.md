@@ -12,6 +12,18 @@ byte after the expiry, and for a group's code the group's ID and name
 (`wire.Code.Group`, `wire.Code.GroupName`). `wire.MaxCodeLifetime`: a
 code works 30 days at most.
 
+Groups (MSFP groups part): `CreateGroup`, `Groups`, `Group`,
+`MakeCodeWith` (uses, lifetime, a group), `AcceptRequest`,
+`RefuseRequest`, `LiftRefusal`, `RequestMember`, `SetGroupAnswer`,
+`SetGroupOffers`, `SetGroupPool`, `SetAdmin`, `SetHeir`, `GiveGroup`,
+`SetGroupSettings`, `Ban`, `Unban`, `LeaveGroup`, `DissolveGroup`,
+`Block`. The calls `group-sync`, `group-push` and `group-pair`; the part
+`groups`. A store keeps groups by implementing `GroupsTx` (the shipped
+stores do). A link's offers and limits are what it has by hand and what
+each of its groups gives it; a playback counts against the first pool
+with room. `PeerRecord` gains `Groups`, `NotByHand`, `GroupOffers`,
+`Pools` and `JoiningGroup`; `CodeRecord`, `Uses` and `Group`.
+
 
 ## v0.3.0 (2026-11-19)
 

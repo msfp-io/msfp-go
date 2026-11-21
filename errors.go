@@ -90,6 +90,11 @@ var (
 	ErrOwnCode     = &Error{Code: "OwnCode"}     // the code is this server's own
 	ErrCodeRefused = &Error{Code: "CodeRefused"} // the code's server refused it: used, withdrawn, or not its own
 	ErrNoCodes     = &Error{Code: "NoCodes"}     // this server can't be called, so it makes no codes
+	ErrCodeOptions = &Error{Code: "CodeOptions"} // uses or lifetime out of range
+
+	ErrNoGroups  = &Error{Code: "NoGroups"}  // the store keeps no groups (GroupsTx)
+	ErrNoRight   = &Error{Code: "NoRight"}   // this server's role in the group doesn't allow it
+	ErrNotMember = &Error{Code: "NotMember"} // not a member of the group (or the group is gone)
 
 	ErrNoNextKey        = &Error{Code: "NoNextKey"}        // the next key's seed isn't on the server
 	ErrNotNextKey       = &Error{Code: "NotNextKey"}       // the text given isn't the committed next key

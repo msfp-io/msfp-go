@@ -110,4 +110,8 @@ func (e *Engine) tick(ctx context.Context) {
 	e.readDue(ctx, false)
 	e.expirePlaybacks(false)
 	e.tellWatched()
+	if now := e.now(); now.Sub(e.groupsTick) >= 30*time.Second || now.Before(e.groupsTick) {
+		e.groupsTick = now
+		e.background(e.syncGroups)
+	}
 }

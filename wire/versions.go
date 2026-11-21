@@ -17,11 +17,13 @@ const (
 	PartMedia    = "media"
 	PartVideo    = "video"
 	PartMusic    = "music"
+	PartGroups   = "groups"
 )
 
 // needs is what each part needs on between two servers to be on itself
 // (core section 10.1): the core is needed by all.
 var needs = map[string][]string{
+	PartGroups:   nil,
 	PartCatalog:  nil,
 	PartMedia:    nil,
 	PartPlayback: {PartCatalog, PartMedia},

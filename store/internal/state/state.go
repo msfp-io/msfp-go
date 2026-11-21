@@ -30,6 +30,7 @@ type State struct {
 	Forgotten  map[string]json.RawMessage `json:"forgotten"` // by the key hash, hex
 	LibraryIDs map[string]string          `json:"libraryIds"`
 	Leftovers  map[string]msfp.Leftover   `json:"leftovers"` // by peer, a line feed, playback ID
+	Groups     map[string]json.RawMessage `json:"groups,omitempty"`
 
 	// Catalogs are the peers' titles and the keys each was sent, by peer
 	// ID: kept apart, since they are big and change on their own.
@@ -167,6 +168,8 @@ func (t *tx) own(name string) error {
 		t.s.LibraryIDs = maps.Clone(t.s.LibraryIDs)
 	case "leftovers":
 		t.s.Leftovers = maps.Clone(t.s.Leftovers)
+	case "groups":
+		t.s.Groups = maps.Clone(t.s.Groups)
 	case "catalogs":
 		t.s.Catalogs = maps.Clone(t.s.Catalogs)
 	case "own":
@@ -599,3 +602,44 @@ var (
 	_ msfp.Tx       = (*tx)(nil)
 	_ msfp.OwnLogTx = (*tx)(nil)
 )
+
+// Groups, for the part groups (msfp.GroupsTx).
+
+func (t *tx) Groups() ([]msfp.GroupRecord, error) {
+	out := make([]msfp.GroupRecord, 0, len(t.s.Groups))
+	for _, id := range slices.Sorted(maps.Keys(t.s.Groups)) {
+		g, err := get[msfp.GroupRecord](t.s.Groups[id])
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *g)
+	}
+	return out, nil
+}
+
+func (t *tx) Group(id string) (*msfp.GroupRecord, error) {
+	return get[msfp.GroupRecord](t.s.Groups[id])
+}
+
+func (t *tx) PutGroup(g msfp.GroupRecord) error {
+	if err := t.own("groups"); err != nil {
+		return err
+	}
+	b, err := json.Marshal(g)
+	if err != nil {
+		return err
+	}
+	if t.s.Groups == nil {
+		t.s.Groups = map[string]json.RawMessage{}
+	}
+	t.s.Groups[g.ID] = b
+	return nil
+}
+
+func (t *tx) DeleteGroup(id string) error {
+	if err := t.own("groups"); err != nil {
+		return err
+	}
+	delete(t.s.Groups, id)
+	return nil
+}

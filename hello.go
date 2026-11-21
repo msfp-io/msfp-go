@@ -232,6 +232,12 @@ func (e *Engine) Accept(ctx context.Context, id string) (PeerView, error) {
 		return PeerView{}, err
 	}
 	e.log.Info("msfp: paired", "peer", p.ID, "name", p.Name)
+	joining := p.JoiningGroup
+	if joining != "" {
+		// A group's code: the newcomer is signed in before it is told it
+		// is paired (MSFP groups section 4, step 3).
+		e.paired(ctx, &p)
+	}
 	e.notify(PeerPaired{Peer: p.ID, Name: p.Name})
 	if p.Inbound != InboundYes {
 		// It learns at its next scheduled hello (MSFP core section 7.5).
@@ -241,6 +247,10 @@ func (e *Engine) Accept(ctx context.Context, id string) (PeerView, error) {
 	if err != nil {
 		e.log.Info("msfp: the peer couldn't be told it is paired; it learns at its next hello", "peer", id, "error", err)
 		return e.Peer(ctx, id)
+	}
+	if joining != "" {
+		// Its versions known now: the whole list, pushed to it.
+		e.pushAll(ctx, joining, id)
 	}
 	return v, nil
 }

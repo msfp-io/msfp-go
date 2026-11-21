@@ -11,7 +11,7 @@ import (
 
 // allParts are the parts of MSFP version 0, each at version 0, in the
 // order a part's needs come before it.
-var allParts = []string{wire.PartCatalog, wire.PartMedia, wire.PartPlayback, wire.PartVideo, wire.PartMusic}
+var allParts = []string{wire.PartCatalog, wire.PartMedia, wire.PartPlayback, wire.PartVideo, wire.PartMusic, wire.PartGroups}
 
 // partNeeds is what each part needs listed beside it (core section 10.1).
 var partNeeds = map[string][]string{

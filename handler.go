@@ -112,6 +112,10 @@ var calls = map[string]func(*Engine, *request) response{
 	callPlay:      (*Engine).play,
 	callProgress:  (*Engine).progress,
 	callStop:      (*Engine).stop,
+
+	callGroupSync: (*Engine).groupSync,
+	callGroupPush: (*Engine).groupPush,
+	callGroupPair: (*Engine).groupPairServed,
 }
 
 func (e *Engine) serveFederation(w http.ResponseWriter, r *http.Request) {
@@ -270,6 +274,11 @@ func (e *Engine) check(req *request, call string) (free func(), res response, ok
 func (e *Engine) admit(r *http.Request, key ed25519.PublicKey) (heard, known bool) {
 	if p, err := e.peerHeard(r, key); err == nil && p != nil {
 		return true, true
+	}
+	if strings.HasSuffix(r.URL.Path, "/"+callGroupPair) {
+		// A member of one of our groups, on group-pair (MSFP groups
+		// section 8): heard as a stranger, with a nonce memory of its own.
+		return e.groupMember(r, key), false
 	}
 	if !strings.HasSuffix(r.URL.Path, "/"+callPair) {
 		return false, false

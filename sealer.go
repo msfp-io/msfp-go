@@ -18,6 +18,7 @@ const (
 	sealRevoked = "msfp revoked key"
 	sealIDs     = "msfp ids secret"
 	sealCode    = "msfp code secret"
+	sealMailKey = "msfp group mail key"
 )
 
 // PlainSealer seals nothing: what it "seals" is kept as it is, its

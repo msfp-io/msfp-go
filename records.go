@@ -164,6 +164,94 @@ type PeerRecord struct {
 	Limits      Limits          `json:"limits"`
 	TheirLimits *Limits         `json:"theirLimits,omitempty"`
 	CatalogRead CatalogRead     `json:"catalogRead,omitzero"`
+
+	// Groups (MSFP groups part).
+	//
+	// Groups are the groups this link was made or kept through, its
+	// sources besides a pairing by hand; NotByHand says it has no pairing
+	// by hand (made by group-pair). GroupOffers and Pools are what its
+	// groups give it, copied from them whenever they change: the host
+	// libraries each offers, and each group's pool. JoiningGroup is the
+	// group a code of ours invited it to, until our operator accepts it.
+	Groups       []string    `json:"groups,omitempty"`
+	NotByHand    bool        `json:"notByHand,omitempty"`
+	GroupOffers  []string    `json:"groupOffers,omitempty"`
+	Pools        []GroupPool `json:"pools,omitempty"`
+	JoiningGroup string      `json:"joiningGroup,omitempty"`
+}
+
+// GroupPool is a group's pool, as a link through it uses it.
+type GroupPool struct {
+	Group  string `json:"group"`
+	Limits Limits `json:"limits"`
+}
+
+// GroupRecord is a group this server is in (MSFP groups part): its events
+// as received, those waiting for earlier ones, the mail it carries, and
+// this server's own choices in it. The engine owns every field.
+type GroupRecord struct {
+	ID string `json:"id"`
+	// Me is this server's member ID in it: the key it joined with.
+	Me string `json:"me"`
+	// Via is the peer whose code made this server join (its inviter),
+	// until the list arrives from it.
+	Via    string        `json:"via,omitempty"`
+	Events []StoredEvent `json:"events"`
+	Held   []StoredEvent `json:"held,omitempty"`
+	Mail   []StoredMail  `json:"mail,omitempty"`
+	// MailKey is this server's X25519 private key for the group's mail,
+	// sealed ("msfp group mail key").
+	MailKey []byte `json:"mailKey"`
+	// Accept: requests are accepted by the server itself once the
+	// requester waited the group's days ("accept members"); false: "ask
+	// me".
+	Accept bool     `json:"accept,omitempty"`
+	Offers []string `json:"offers,omitempty"`
+	Pool   Limits   `json:"pool"`
+	// Requests wait for this server's operator; Refused are members
+	// whose requests it refused; Sent are the requests and answers it
+	// sent, until used or expired; Used the mail IDs a group-pair used.
+	Requests []GroupRequest `json:"requests,omitempty"`
+	Refused  []string       `json:"refused,omitempty"`
+	Sent     []SentMail     `json:"sent,omitempty"`
+	Used     []string       `json:"used,omitempty"`
+	Synced   time.Time      `json:"synced,omitzero"`
+}
+
+// StoredEvent is an event's envelope, and when it arrived.
+type StoredEvent struct {
+	Event     string    `json:"event"`
+	Signature string    `json:"signature"`
+	Received  time.Time `json:"received"`
+}
+
+// StoredMail is a mail's envelope, its ID and when it expires.
+type StoredMail struct {
+	ID        string `json:"id"`
+	Mail      string `json:"mail"`
+	Signature string `json:"signature"`
+	Expires   int64  `json:"expires"`
+}
+
+// GroupRequest is a member's request waiting for this server's operator,
+// opened.
+type GroupRequest struct {
+	Mail           string    `json:"mail"`
+	From           string    `json:"from"`
+	Name           string    `json:"name,omitempty"`
+	Address        string    `json:"address"`
+	NextCommitment []byte    `json:"nextCommitment"`
+	Inbound        bool      `json:"inbound"`
+	Received       time.Time `json:"received"`
+}
+
+// SentMail is a request or an answer this server sent, waiting for the
+// group-pair it leads to.
+type SentMail struct {
+	ID      string    `json:"id"`
+	To      string    `json:"to"`
+	Kind    string    `json:"kind"`
+	Expires time.Time `json:"expires"`
 }
 
 // PeerMove is an address a peer announced, being checked (MSFP core
@@ -199,6 +287,12 @@ type CodeRecord struct {
 	Note       string    `json:"note,omitempty"`
 	Created    time.Time `json:"created"`
 	Expires    time.Time `json:"expires"`
+	// Uses is how many more servers may use it: 0 for a record made
+	// before uses existed, which counts as 1 (MSFP core section 5.1).
+	Uses int `json:"uses,omitempty"`
+	// Group is the group (its ID, base64url) a group's code invites to;
+	// "" for a pairing by hand.
+	Group string `json:"group,omitempty"`
 }
 
 // ForgottenKey is a key whose pairing ended (MSFP core section 7.4), by

@@ -98,6 +98,17 @@ type Tx interface {
 	PeerTitle(peer, key string) (Title, error)
 }
 
+// GroupsTx is what a Tx implements, besides Tx, for the part groups
+// (MSFP groups part): the groups this server is in. The shipped stores
+// implement it; without it, the engine has no groups.
+type GroupsTx interface {
+	Groups() ([]GroupRecord, error)
+	// Group is one of them; nil for none.
+	Group(id string) (*GroupRecord, error)
+	PutGroup(GroupRecord) error
+	DeleteGroup(id string) error
+}
+
 // OwnLogTx is what a Tx implements, besides Tx, when the engine keeps the
 // change log of the host's own catalog (a Catalog without Changes,
 // host.md section 2). The shipped stores implement it.

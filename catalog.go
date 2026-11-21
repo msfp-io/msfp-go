@@ -417,12 +417,12 @@ func (e *Engine) libraries(req *request) response {
 	}
 	out := librariesAnswer{Name: e.name(), Libraries: []libraryWire{}}
 	for _, l := range ours {
-		if pub, ok := ids[l.ID]; ok && slices.Contains(p.Offers, l.ID) {
+		if pub, ok := ids[l.ID]; ok && slices.Contains(offered(p), l.ID) {
 			out.Libraries = append(out.Libraries, libraryWire{ID: pub, Name: wire.CleanText(l.Name, maxName), Kind: cleanKind(l.Kind)})
 		}
 	}
 	if e.on(p, wire.PartPlayback) {
-		out.Limits = limitsOut(p.Limits, e.on(p, wire.PartMusic))
+		out.Limits = limitsOut(generous(p), e.on(p, wire.PartMusic))
 	}
 	return answer(out)
 }
@@ -502,7 +502,7 @@ func (e *Engine) titles(req *request) response {
 	// Those asked for that are offered to it, by their public IDs: any
 	// other is ignored.
 	byPublic := map[string]string{}
-	for _, l := range p.Offers {
+	for _, l := range offered(p) {
 		if pub, ok := ids[l]; ok {
 			byPublic[l] = pub
 		}

@@ -518,20 +518,21 @@ func (e *Engine) play(req *request) response {
 	}
 	audioOnly := k.Part == wire.PartMusic
 	// 2. No stream at all for this pairing.
-	if _, most := e.inUse(p.ID, p.Limits, audioOnly); most == 0 {
+	if _, any := e.poolRoom(p, audioOnly); !any {
 		return refuse(probStreamLimit)
 	}
 	// 3. Copies of that key in the libraries offered to it.
-	if e.cfg.Catalog == nil || e.cfg.Playback == nil || len(p.Offers) == 0 {
+	offers := offered(p)
+	if e.cfg.Catalog == nil || e.cfg.Playback == nil || len(offers) == 0 {
 		return refuse(probNotFound)
 	}
 	ctx := req.r.Context()
-	copies, err := e.cfg.Catalog.Copies(ctx, *in.Title, p.Offers)
+	copies, err := e.cfg.Catalog.Copies(ctx, *in.Title, offers)
 	if err != nil {
 		e.log.Warn("msfp: the host's copies couldn't be read", "error", err)
 		return refuse(probInternal)
 	}
-	copies = slices.DeleteFunc(copies, func(c Copy) bool { return c.Library != "" && !slices.Contains(p.Offers, c.Library) })
+	copies = slices.DeleteFunc(copies, func(c Copy) bool { return c.Library != "" && !slices.Contains(offers, c.Library) })
 	if len(copies) == 0 {
 		return refuse(probNotFound)
 	}
@@ -546,7 +547,7 @@ func (e *Engine) play(req *request) response {
 	}
 	// 5. The pairing's streams all in use: refused before any work (the
 	// count that matters is Admit's).
-	if used, most := e.inUse(p.ID, p.Limits, audioOnly); used >= most {
+	if room, _ := e.poolRoom(p, audioOnly); !room {
 		return refuse(probStreamLimit)
 	}
 	info, err := e.cfg.Playback.Describe(ctx, chosen.Handle)
@@ -571,7 +572,7 @@ func (e *Engine) play(req *request) response {
 	}
 	// 6. The bitrate cap: the lowest of the four, 120,000 without one.
 	kbps := 0
-	for _, c := range []int{int(in.MaxBitrateKbps), caps.MaxBitrateKbps, e.cfg.MaxBitrateKbps, p.Limits.BitrateKbps} {
+	for _, c := range []int{int(in.MaxBitrateKbps), caps.MaxBitrateKbps, e.cfg.MaxBitrateKbps, generous(p).BitrateKbps} {
 		if c > 0 && (kbps == 0 || c < kbps) {
 			kbps = c
 		}
@@ -591,7 +592,7 @@ func (e *Engine) play(req *request) response {
 			if slot != nil {
 				return nil, ErrInternal.with(errors.New("admit called twice"))
 			}
-			s, err := e.admitStream(p.ID, p.Limits, audioOnly, method)
+			s, err := e.admitPools(p, audioOnly, method)
 			if err != nil {
 				return nil, err
 			}
@@ -608,7 +609,7 @@ func (e *Engine) play(req *request) response {
 	if slot == nil {
 		// A host that didn't ask: admitted now, its playback stopped when
 		// the limits refuse it.
-		if slot, err = e.admitStream(p.ID, p.Limits, audioOnly, started.Method); err != nil {
+		if slot, err = e.admitPools(p, audioOnly, started.Method); err != nil {
 			e.hostStop(started.Handle, EndStopped)
 			return e.hostRefusal(err, "admit")
 		}
@@ -626,7 +627,7 @@ func (e *Engine) play(req *request) response {
 	case err != nil:
 		e.endPlayback(pb, EndStopped)
 		return refuse(probInternal)
-	case chosen.Library != "" && !slices.Contains(q.Offers, chosen.Library):
+	case chosen.Library != "" && !slices.Contains(offered(q), chosen.Library):
 		e.endPlayback(pb, EndNotOffered)
 		return refuse(probNotFound)
 	}
@@ -1031,7 +1032,7 @@ func (e *Engine) playAllowed(ctx context.Context, pb *playback) bool {
 	case p.State != Paired || !p.Suspended.IsZero():
 		e.endPlayback(pb, EndPairingEnded)
 		return false
-	case pb.library != "" && !slices.Contains(p.Offers, pb.library):
+	case pb.library != "" && !slices.Contains(offered(p), pb.library):
 		e.endPlayback(pb, EndNotOffered)
 		return false
 	}

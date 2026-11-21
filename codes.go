@@ -23,7 +23,26 @@ type CodeView struct {
 	Note    string
 	Created time.Time
 	Expires time.Time
+	// Uses is how many more servers may use it; Group the group it
+	// invites to ("" for none).
+	Uses  int
+	Group string
 }
+
+// CodeOptions are a code's settings (MSFP core section 5.1): how many
+// servers may use it (0: once) and how long it works (0: 24 hours; at most
+// 30 days).
+type CodeOptions struct {
+	Note     string
+	Uses     int
+	Lifetime time.Duration
+	// Group is a group's ID, for a code inviting to it (groups section
+	// 2): this server must be its owner or an admin.
+	Group string
+}
+
+// MaxCodeUses is how many servers one code may serve at most.
+const MaxCodeUses = 100
 
 // CodePreview is what a code says, for the operator to see before
 // redeeming it.
@@ -37,6 +56,31 @@ type CodePreview struct {
 // its text, to show once. It works once, for 24 hours. Error: ErrNoCodes
 // (this server can't be called).
 func (e *Engine) MakeCode(ctx context.Context, note string) (string, CodeView, error) {
+	return e.MakeCodeWith(ctx, CodeOptions{Note: note})
+}
+
+// MakeCodeWith makes a pairing code with its options. Errors: ErrNoCodes,
+// ErrCodeOptions (uses or lifetime out of range), and for a group's code
+// ErrNotFound (no such group) or ErrNoRight (not its owner nor an admin).
+func (e *Engine) MakeCodeWith(ctx context.Context, o CodeOptions) (string, CodeView, error) {
+	uses, life := o.Uses, o.Lifetime
+	if uses == 0 {
+		uses = 1
+	}
+	if life == 0 {
+		life = wire.CodeLifetime
+	}
+	if uses < 1 || uses > MaxCodeUses || life < time.Minute || life > wire.MaxCodeLifetime {
+		return "", CodeView{}, ErrCodeOptions
+	}
+	var group []byte
+	var groupName string
+	if o.Group != "" {
+		var err error
+		if group, groupName, err = e.groupForCode(ctx, o.Group); err != nil {
+			return "", CodeView{}, err
+		}
+	}
 	rec, err := e.serverRecord(ctx)
 	if err != nil {
 		return "", CodeView{}, err
@@ -56,13 +100,13 @@ func (e *Engine) MakeCode(ctx context.Context, note string) (string, CodeView, e
 	}
 	now := e.now()
 	code := wire.Code{Address: e.named(e.address()), Key: e.current().Public(), Secret: secret,
-		Expires: now.Add(wire.CodeLifetime).Truncate(time.Second)}
+		Expires: now.Add(life).Truncate(time.Second), Group: group, GroupName: groupName}
 	sealed, err := e.cfg.Sealer.Seal(secret, sealCode)
 	if err != nil {
 		return "", CodeView{}, err
 	}
-	c := CodeRecord{ID: id, Secret: sealed, SecretHash: wire.SecretHash(secret), Note: cleanName(note, ""),
-		Created: now.Truncate(time.Second), Expires: code.Expires.UTC()}
+	c := CodeRecord{ID: id, Secret: sealed, SecretHash: wire.SecretHash(secret), Note: cleanName(o.Note, ""),
+		Created: now.Truncate(time.Second), Expires: code.Expires.UTC(), Uses: uses, Group: o.Group}
 	if err := e.cfg.Store.Update(ctx, func(tx Tx) error { return tx.PutCode(c) }); err != nil {
 		return "", CodeView{}, err
 	}
@@ -70,7 +114,11 @@ func (e *Engine) MakeCode(ctx context.Context, note string) (string, CodeView, e
 }
 
 func codeView(c CodeRecord) CodeView {
-	return CodeView{ID: c.ID, Note: c.Note, Created: c.Created, Expires: c.Expires}
+	uses := c.Uses
+	if uses == 0 {
+		uses = 1
+	}
+	return CodeView{ID: c.ID, Note: c.Note, Created: c.Created, Expires: c.Expires, Uses: uses, Group: c.Group}
 }
 
 // Codes lists the live codes, soonest to expire first.
@@ -222,6 +270,13 @@ func (e *Engine) RedeemCode(ctx context.Context, text string) (PeerView, error) 
 		if err := tx.Unforget(hash[:]); err != nil {
 			return err
 		}
+		if c.Group != nil {
+			// A group's code: this server joins it through the maker
+			// (MSFP groups section 4).
+			if err := e.joinVia(tx, c, p.ID); err != nil {
+				return err
+			}
+		}
 		return tx.PutPeer(p)
 	})
 	if err != nil {
@@ -287,9 +342,16 @@ func (e *Engine) pair(req *request) response {
 			}
 			return err
 		}
-		if err := tx.DeleteCode(c.ID); err != nil {
+		// One use spent; the code goes with its last (core section 5.1).
+		if c.Uses > 1 {
+			c.Uses--
+			if err := tx.PutCode(*c); err != nil {
+				return err
+			}
+		} else if err := tx.DeleteCode(c.ID); err != nil {
 			return err
 		}
+		p.JoiningGroup = c.Group
 		keyHash := sha256.Sum256(req.v.Key)
 		if err := tx.Unforget(keyHash[:]); err != nil {
 			return err

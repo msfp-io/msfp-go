@@ -20,8 +20,10 @@ import (
 // plugs in through Config. One engine per server, for the life of the
 // process; it is safe to use from many goroutines at once.
 type Engine struct {
-	cfg Config
-	log *slog.Logger
+	// groupsTick is when the groups were last looked at for a sync.
+	groupsTick time.Time
+	cfg        Config
+	log        *slog.Logger
 	// parts are the parts this server speaks (Config.Parts); started is
 	// when it opened.
 	parts   map[string][]int
