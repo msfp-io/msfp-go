@@ -69,6 +69,12 @@ func TestGroupJoinAndPair(t *testing.T) {
 	b := newServer(t, msfp.Config{Name: func() string { return "B" }})
 	n := newServer(t, msfp.Config{Name: func() string { return "N" }})
 
+	if _, err := a.eng.CreateGroup(ctx, " ", msfp.GroupSettingsDefault); !errors.Is(err, msfp.ErrCodeOptions) {
+		t.Errorf("a group without a name: %v", err)
+	}
+	if _, err := a.eng.CreateGroup(ctx, "Family", msfp.GroupSettings{WaitDays: 31, CapPerDay: 5}); !errors.Is(err, msfp.ErrCodeOptions) {
+		t.Errorf("31 days: %v", err)
+	}
 	g, err := a.eng.CreateGroup(ctx, "Family", msfp.GroupSettingsDefault)
 	if err != nil {
 		t.Fatal(err)

@@ -309,10 +309,10 @@ func (e *Engine) CreateGroup(ctx context.Context, name string, settings wire.Gro
 	if settings == (wire.GroupSettings{}) {
 		settings = wire.DefaultGroupSettings
 	}
-	if settings.WaitDays < 0 || settings.WaitDays > 30 || settings.CapPerDay < 1 || settings.CapPerDay > 100 {
+	name = wire.CleanText(name, wire.MaxGroupName)
+	if !settingsOK(settings) || name == "" {
 		return GroupView{}, ErrCodeOptions
 	}
-	name = wire.CleanText(name, wire.MaxGroupName)
 	nonce, err := e.random(16)
 	if err != nil {
 		return GroupView{}, err
@@ -560,8 +560,20 @@ func (e *Engine) successor(ctx context.Context, id string) (string, error) {
 }
 
 // SetGroupSettings changes the group's name and settings (the owner only).
+//
+// Error: ErrCodeOptions (days 0 to 30, invitations 1 to 100 a day; an
+// empty name keeps the name).
 func (e *Engine) SetGroupSettings(ctx context.Context, id, name string, settings wire.GroupSettings) error {
+	if !settingsOK(settings) {
+		return ErrCodeOptions
+	}
 	return e.act(ctx, id, wire.Event{Type: wire.EventSettings, Name: wire.CleanText(name, wire.MaxGroupName), Settings: &settings})
+}
+
+// settingsOK says whether a group's settings are in range (groups section
+// 3.3).
+func settingsOK(s wire.GroupSettings) bool {
+	return s.WaitDays >= 0 && s.WaitDays <= 30 && s.CapPerDay >= 1 && s.CapPerDay <= 100
 }
 
 // Ban bans a member, with an optional reason (the owner, or an admin for
