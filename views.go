@@ -2,6 +2,7 @@ package msfp
 
 import (
 	"context"
+	"slices"
 	"time"
 
 	"github.com/msfp-io/msfp-go/wire"
@@ -57,6 +58,11 @@ type PeerView struct {
 	// Wants how many of its libraries this server reads, WantsGone how
 	// many of those it no longer offers.
 	Offers, Wants, WantsGone int
+	// Groups are the groups this link was made or kept through (MSFP
+	// groups part); ByHand says it was also paired by hand. A link with
+	// no group is always by hand.
+	Groups []string
+	ByHand bool
 }
 
 // MoveView is a peer's new address, not confirmed yet (MSFP core section
@@ -83,6 +89,7 @@ func (e *Engine) view(p *PeerRecord) PeerView {
 		Core: core, Parts: parts, Inbound: p.Inbound, CommitmentFrom: p.CommitmentFrom,
 		OurKey: p.OurKey, RotationAnswer: p.RotationAnswer, Limits: p.Limits, CallsFailed: p.CallsFailed}
 	v.Offers = len(p.Offers)
+	v.Groups, v.ByHand = slices.Clone(p.Groups), !p.NotByHand
 	if p.TheirLimits != nil {
 		l := *p.TheirLimits
 		v.TheirLimits = &l

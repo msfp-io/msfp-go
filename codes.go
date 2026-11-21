@@ -50,6 +50,9 @@ type CodePreview struct {
 	Address     string
 	Fingerprint string
 	Expires     time.Time
+	// Group and GroupName are the group a group's code invites to ("" for
+	// a plain code): show the name before redeeming.
+	Group, GroupName string
 }
 
 // MakeCode makes a pairing code, noted as note for the panel, and gives
@@ -189,7 +192,11 @@ func (e *Engine) ReadCode(ctx context.Context, text string) (CodePreview, error)
 	if err != nil {
 		return CodePreview{}, err
 	}
-	return CodePreview{Address: c.Address, Fingerprint: wire.Fingerprint(c.Key), Expires: c.Expires.UTC()}, nil
+	v := CodePreview{Address: c.Address, Fingerprint: wire.Fingerprint(c.Key), Expires: c.Expires.UTC(), GroupName: c.GroupName}
+	if c.Group != nil {
+		v.Group = wire.Encode64(c.Group)
+	}
+	return v, nil
 }
 
 // pairRequest is pair's body (MSFP core section 9.1).

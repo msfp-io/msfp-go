@@ -23,6 +23,9 @@ stores do). A link's offers and limits are what it has by hand and what
 each of its groups gives it; a playback counts against the first pool
 with room. `PeerRecord` gains `Groups`, `NotByHand`, `GroupOffers`,
 `Pools` and `JoiningGroup`; `CodeRecord`, `Uses` and `Group`.
+`PeerView` gains `Groups` and `ByHand`; `CodeView`, `Uses` and `Group`;
+`CodePreview`, `Group` and `GroupName`. Errors `CodeOptions`,
+`NoGroups`, `NoRight`, `NotMember`. No group events yet.
 
 
 ## v0.3.0 (2026-11-19)

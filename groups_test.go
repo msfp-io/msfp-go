@@ -22,6 +22,9 @@ func joinGroup(t *testing.T, inviter, member *server, group string) {
 	if view.Group != group || view.Uses != 1 {
 		t.Errorf("code view: %+v", view)
 	}
+	if pv, err := member.eng.ReadCode(ctx, code); err != nil || pv.Group != group || pv.GroupName == "" {
+		t.Errorf("preview: %+v, %v", pv, err)
+	}
 	theirs, err := member.eng.RedeemCode(ctx, code)
 	if err != nil {
 		t.Fatal(err)
@@ -110,6 +113,9 @@ func TestGroupJoinAndPair(t *testing.T) {
 	}
 	if onB.State != msfp.Paired || onN.State != msfp.Paired {
 		t.Fatalf("B and N: %+v / %+v", onB, onN)
+	}
+	if onB.ByHand || len(onB.Groups) != 1 || onB.Groups[0] != g.ID {
+		t.Fatalf("B's link with N: by hand %v, groups %v", onB.ByHand, onB.Groups)
 	}
 	if _, err := b.eng.Group(ctx, g.ID); err != nil {
 		t.Fatal(err)

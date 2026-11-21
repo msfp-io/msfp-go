@@ -6,7 +6,9 @@ The MSFP engine for Go. [MSFP](https://github.com/msfp-io/msfp-spec), the
 Media Server Federation Protocol, lets media servers share their libraries
 with each other: one server's people browse and play titles another server
 holds, through their own server. Two operators pair their servers by hand,
-and each server trusts only the servers it paired with.
+and each server trusts only the servers it paired with. Groups make that
+easier among friends: a server joins a group with one code, then pairs
+with each member who accepts, without codes.
 
 This module runs the protocol inside your media server, the **host**. The
 engine signs and checks every call, keeps the pairings, keys, addresses and
@@ -146,8 +148,9 @@ major.minor version is shared with the other MSFP engines (msfp-dotnet, to
 come): msfp-go 0.2.x and msfp-dotnet 0.2.x follow the same API design
 (the spec's api/). Patch versions are each library's own.
 
-The module's version is separate from the protocol's: v0.3.0 speaks MSFP
-version 0 (numbered 1 before 2026-11-20). Before 1.0, the API may change between minor versions.
+The module's version is separate from the protocol's: from v0.4.0 it
+speaks MSFP version 0, groups included; v0.3.0 and before speak the
+same protocol numbered 1, and the two don't talk. Before 1.0, the API may change between minor versions.
 
 ## Testing
 
