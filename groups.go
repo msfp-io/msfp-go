@@ -944,6 +944,17 @@ func (e *Engine) sendRequests(ctx context.Context, id string, to []string) error
 			return cmpErr(err, ErrNotFound)
 		}
 		s := e.stateOf(g)
+		if to != nil {
+			// Asked for by the operator: no way in is said first, whatever
+			// else would skip the member (groups section 6).
+			peers, err := tx.Peers()
+			if err != nil {
+				return err
+			}
+			if !e.wayIn(id, peers, "") {
+				return ErrNoWayIn
+			}
+		}
 		for _, m := range s.Members {
 			if m.ID == g.Me || (to != nil && !slices.Contains(to, m.ID)) || m.EncryptionKey == nil {
 				continue
