@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased (v0.4.0)
+## v0.4.0 (2026-11-20)
 
 MSFP is renumbered version 0, a draft until version 1 (msfp-spec proposal
 13): the engine speaks core 0 and every part at 0, signs with the labels
