@@ -369,20 +369,24 @@ func (e *Engine) readCatalog(ctx context.Context, id string, background bool) (k
 		}
 		e.notify(CatalogReadEnded{Peer: p.ID, Name: p.Name, Titles: kept, Changes: changes, Err: err})
 	}()
-	var wanted []string
+	// What is read: what this server shows of it individually, while the
+	// individual relation holds, and what its groups show of it.
+	individual := p.individual()
+	shows, grouped := e.shownBy(ctx, p)
+	wanted := grouped
 	for _, w := range p.Wants {
-		if w.Wanted {
-			wanted = append(wanted, w.ID)
+		if w.Wanted && individual {
+			wanted = true
 		}
 	}
 	var libs []string
-	if len(wanted) > 0 {
+	if wanted {
 		theirs, err := e.theirLibraries(ctx, p, background)
 		if err != nil {
 			return 0, err
 		}
 		for _, w := range theirs {
-			if w.Wanted && !w.Gone {
+			if !w.Gone && (w.Wanted && individual || grouped && shows(w.ID)) {
 				libs = append(libs, w.ID)
 			}
 		}

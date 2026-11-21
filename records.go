@@ -187,6 +187,13 @@ type PeerRecord struct {
 	JoiningGroup      string      `json:"joiningGroup,omitempty"`
 }
 
+// HiddenLibrary is a member's library a group doesn't show here: the
+// member's ID in the group, and the library's public ID.
+type HiddenLibrary struct {
+	Member  string `json:"member"`
+	Library string `json:"library"`
+}
+
 // GroupPool is a group's pool, as a link through it uses it.
 type GroupPool struct {
 	Group  string `json:"group"`
@@ -209,12 +216,14 @@ type GroupRecord struct {
 	// MailKey is this server's X25519 private key for the group's mail,
 	// sealed ("msfp group mail key").
 	MailKey []byte `json:"mailKey"`
-	// Accept: requests are accepted by the server itself once the
-	// requester waited the group's days ("accept members"); false: "ask
-	// me".
+	// Accept: this server automatically accepts new members, at once;
+	// false: each request waits for its operator (groups section 4.1).
 	Accept bool     `json:"accept,omitempty"`
 	Offers []string `json:"offers,omitempty"`
 	Pool   Limits   `json:"pool"`
+	// Hidden are the members' libraries this server doesn't show from the
+	// group: it shows everything else they offer it (SetGroupShows).
+	Hidden []HiddenLibrary `json:"hidden,omitempty"`
 	// Requests wait for this server's operator; Refused are members
 	// whose requests it refused; Sent are the requests and answers it
 	// sent, until used or expired; Used the mail IDs a group-pair used.

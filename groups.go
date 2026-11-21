@@ -204,9 +204,10 @@ func (e *Engine) groupView(g *GroupRecord, peers []PeerRecord) GroupView {
 
 // waited says whether a member has been in the group its days (groups
 // section 4.1).
+// A member automatically accepted is accepted at once: the group's
+// waitDays changes nothing (groups section 4.1).
 func (e *Engine) waited(s *wire.GroupState, member string) bool {
-	m := s.Members[member]
-	return m != nil && e.now().Unix() >= m.Joined+s.Settings.WaitDays*86400
+	return s.Members[member] != nil
 }
 
 // Groups lists the groups this server is in.

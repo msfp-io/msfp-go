@@ -429,36 +429,39 @@ func TestGroupOffersAndPool(t *testing.T) {
 	}
 }
 
-// "Accept members": a request is accepted by the server itself once its
-// sender has been in the group the group's days; before, it waits.
-func TestGroupAcceptAfterDays(t *testing.T) {
+// Automatically accepting new members (groups section 4.1): B accepts a
+// newcomer's request at once; C, which doesn't, keeps it waiting.
+func TestGroupAcceptNewMembers(t *testing.T) {
 	ctx := context.Background()
-	clk := newClock(1800000000)
-	a := newServer(t, msfp.Config{Name: func() string { return "A" }, Clock: clk})
-	b := newServer(t, msfp.Config{Name: func() string { return "B" }, Clock: clk})
-	n := newServer(t, msfp.Config{Name: func() string { return "N" }, Clock: clk})
+	a := newServer(t, msfp.Config{Name: func() string { return "A" }})
+	b := newServer(t, msfp.Config{Name: func() string { return "B" }})
+	c := newServer(t, msfp.Config{Name: func() string { return "C" }})
+	n := newServer(t, msfp.Config{Name: func() string { return "N" }})
 	g, err := a.eng.CreateGroup(ctx, "Family", msfp.GroupSettingsDefault)
 	if err != nil {
 		t.Fatal(err)
 	}
 	joinGroup(t, a, b, g.ID)
+	joinGroup(t, a, c, g.ID)
+	settle(a, b, c)
 	if err := b.eng.SetGroupAnswer(ctx, g.ID, true); err != nil {
 		t.Fatal(err)
 	}
 	joinGroup(t, a, n, g.ID)
-	settle(a, b, n)
-	gb, _ := b.eng.Group(ctx, g.ID)
-	if len(gb.Requests) != 1 || gb.Requests[0].Waited {
-		t.Fatalf("N's request, before its days: %+v", gb.Requests)
-	}
-	clk.Add(3*24*time.Hour + time.Minute)
-	b.eng.SyncGroupsForTest(ctx)
-	settle(a, b, n)
+	settle(a, b, c, n)
 	if p := peerNamed(t, b, "N"); p.State != msfp.Paired {
-		t.Errorf("B and N after N's days: %+v", p)
+		t.Errorf("B didn't accept N at once: %+v", p)
 	}
-	if gb, _ := b.eng.Group(ctx, g.ID); len(gb.Requests) != 0 {
-		t.Errorf("requests left: %+v", gb.Requests)
+	// C's request, from before B turned it on, still waits for B's operator.
+	gb, _ := b.eng.Group(ctx, g.ID)
+	for _, r := range gb.Requests {
+		if r.Name == "N" {
+			t.Errorf("N's request waits on B: %+v", r)
+		}
+	}
+	gc, _ := c.eng.Group(ctx, g.ID)
+	if !slices.ContainsFunc(gc.Requests, func(r msfp.GroupRequestView) bool { return r.Name == "N" }) {
+		t.Errorf("C's request from N doesn't wait: %+v", gc.Requests)
 	}
 }
 
@@ -975,5 +978,50 @@ func TestGroupBackIn(t *testing.T) {
 	code, _, _ = a.eng.MakeCodeWith(ctx, msfp.CodeOptions{Group: g.ID})
 	if _, err := b.eng.RedeemCode(ctx, code); !errors.Is(err, msfp.ErrAlreadyMember) {
 		t.Fatalf("a third code: %v", err)
+	}
+}
+
+// What a group shows here, as one choice for the whole group: everything
+// its members offer, by default, without choosing server by server; a
+// hidden library is read no more.
+func TestGroupShows(t *testing.T) {
+	ctx := context.Background()
+	h := filmHost()
+	h.libs = []msfp.Library{{ID: "films", Name: "Films", Kind: "movies"}}
+	a, b, n, g := trio(t, msfp.Config{}, msfp.Config{Catalog: h, Playback: h, Media: h}, msfp.Config{}, msfp.GroupSettingsDefault)
+	gb, _ := b.eng.Group(ctx, g.ID)
+	if err := b.eng.AcceptRequest(ctx, g.ID, gb.Requests[0].Mail); err != nil {
+		t.Fatal(err)
+	}
+	settle(a, b, n)
+	if err := b.eng.SetGroupOffers(ctx, g.ID, []string{"films"}); err != nil {
+		t.Fatal(err)
+	}
+	onN := peerNamed(t, n, "B")
+	n.eng.Check(ctx, onN.ID)
+	if kept, err := n.eng.ReadNow(ctx, onN.ID); err != nil || kept == 0 {
+		t.Fatalf("N reads B's titles, shown by the group: %d %v", kept, err)
+	}
+	shows, err := n.eng.GroupShows(ctx, g.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var bm msfp.GroupMemberShows
+	for _, m := range shows.Members {
+		if m.Name == "B" {
+			bm = m
+		}
+	}
+	if bm.Peer != onN.ID || len(bm.Libraries) != 1 || !bm.Libraries[0].Shown || bm.Libraries[0].Name != "Films" {
+		t.Fatalf("B in N's shows: %+v", shows)
+	}
+	if err := n.eng.SetGroupShows(ctx, g.ID, []msfp.HiddenLibrary{{Member: bm.Member, Library: bm.Libraries[0].ID}}); err != nil {
+		t.Fatal(err)
+	}
+	if kept, err := n.eng.ReadNow(ctx, onN.ID); err != nil || kept != 0 {
+		t.Fatalf("N reads B's hidden library: %d %v", kept, err)
+	}
+	if shows, _ := n.eng.GroupShows(ctx, g.ID); shows.Members[0].Name == "B" && shows.Members[0].Libraries[0].Shown {
+		t.Errorf("still shown: %+v", shows)
 	}
 }

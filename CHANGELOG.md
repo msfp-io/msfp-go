@@ -1,5 +1,26 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- What this server shows from a group is one choice for the whole group:
+  everything its members offer it, but the libraries hidden with
+  `SetGroupShows`; `GroupShows` lists each member's libraries and whether
+  they're shown. What is read of a server is what it is shown
+  individually (`SetWants`, while the individual relation holds) plus what
+  its groups show of it.
+
+### Changed
+
+- Automatically accepting new members (`SetGroupAnswer` true) accepts a
+  request as soon as it arrives: the group's `waitDays` changes nothing
+  (groups section 4.1). Requests that waited before it was turned on keep
+  waiting for the operator.
+- `SetWants` no longer counts for a server known only through a group:
+  what its groups show does.
+
+
 ## v0.6.0 (2026-11-21)
 
 Relations (MSFP core section 7.7, proposal 14): the operator manages why
