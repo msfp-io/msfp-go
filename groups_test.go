@@ -123,3 +123,72 @@ func mustPeers(t *testing.T, s *server) []msfp.PeerView {
 	}
 	return ps
 }
+
+// A ban ends the banned server's links made only through the group, and
+// its copy of the group; a member that leaves keeps its links by hand;
+// dissolving removes the group everywhere.
+func TestGroupBanLeaveDissolve(t *testing.T) {
+	ctx := context.Background()
+	a := newServer(t, msfp.Config{Name: func() string { return "A" }})
+	b := newServer(t, msfp.Config{Name: func() string { return "B" }})
+	n := newServer(t, msfp.Config{Name: func() string { return "N" }})
+	g, err := a.eng.CreateGroup(ctx, "Family", msfp.GroupSettingsDefault)
+	if err != nil {
+		t.Fatal(err)
+	}
+	joinGroup(t, a, b, g.ID)
+	joinGroup(t, a, n, g.ID)
+	settle(a, b, n)
+	gb, _ := b.eng.Group(ctx, g.ID)
+	if len(gb.Requests) != 1 {
+		t.Fatalf("B's requests: %+v", gb.Requests)
+	}
+	if err := b.eng.AcceptRequest(ctx, g.ID, gb.Requests[0].Mail); err != nil {
+		t.Fatal(err)
+	}
+	settle(a, b, n)
+	nID := ""
+	for _, m := range gb.Members {
+		if m.Name == "N" {
+			nID = m.ID
+		}
+	}
+	if err := a.eng.Ban(ctx, g.ID, nID, "testing"); err != nil {
+		t.Fatal(err)
+	}
+	settle(a, b, n)
+	for _, p := range mustPeers(t, b) {
+		if p.Name == "N" {
+			t.Errorf("B still has N: %+v", p)
+		}
+	}
+	if _, err := n.eng.Group(ctx, g.ID); err == nil {
+		t.Error("N still has the group")
+	}
+	ga, _ := a.eng.Group(ctx, g.ID)
+	if len(ga.Banned) != 1 || ga.Banned[0].Reason != "testing" {
+		t.Errorf("A's bans: %+v", ga.Banned)
+	}
+
+	if err := b.eng.LeaveGroup(ctx, g.ID, nil); err != nil {
+		t.Fatal(err)
+	}
+	settle(a, b, n)
+	if _, err := b.eng.Group(ctx, g.ID); err == nil {
+		t.Error("B still has the group it left")
+	}
+	if p := mustPeers(t, b); len(p) != 1 || p[0].State != msfp.Paired {
+		t.Errorf("B's link with A, kept by hand: %+v", p)
+	}
+	ga, _ = a.eng.Group(ctx, g.ID)
+	if len(ga.Members) != 1 {
+		t.Errorf("A's members after B left: %+v", ga.Members)
+	}
+	if err := a.eng.DissolveGroup(ctx, g.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	settle(a, b, n)
+	if _, err := a.eng.Group(ctx, g.ID); err == nil {
+		t.Error("A still has the dissolved group")
+	}
+}

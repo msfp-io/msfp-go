@@ -235,6 +235,18 @@ func (e *Engine) sign(g *GroupRecord, s *wire.GroupState, ev wire.Event) (Stored
 // on. Errors: ErrNotFound, ErrNoRight.
 func (e *Engine) act(ctx context.Context, id string, ev wire.Event) error {
 	var sent StoredEvent
+	var effects []func()
+	// Who is told: the members it is paired with through the group now,
+	// before the event changes who they are; a banned server too
+	// (groups section 7).
+	to := e.groupPeers(ctx, id, "")
+	if ev.Type == wire.EventBanned {
+		if k, ok := wire.Decode64(ev.Target, 32); ok {
+			if p, err := e.peerByKey(ctx, k); err == nil && p != nil && !slices.ContainsFunc(to, func(q PeerRecord) bool { return q.ID == p.ID }) {
+				to = append(to, *p)
+			}
+		}
+	}
 	err := e.cfg.Store.Update(ctx, func(tx Tx) error {
 		gt, err := groupsTx(tx)
 		if err != nil {
@@ -255,13 +267,26 @@ func (e *Engine) act(ctx context.Context, id string, ev wire.Event) error {
 		if err := gt.PutGroup(*g); err != nil {
 			return err
 		}
-		return e.afterEvents(tx, g, s, nil)
+		return e.afterEvents(tx, g, s, &effects)
 	})
 	if err != nil {
 		return err
 	}
-	e.pushSoon(id, []StoredEvent{sent}, nil, "")
+	e.pushTo(to, id, []StoredEvent{sent}, nil)
+	for _, f := range effects {
+		f()
+	}
 	return nil
+}
+
+func (e *Engine) peerByKey(ctx context.Context, key []byte) (*PeerRecord, error) {
+	var p *PeerRecord
+	err := e.cfg.Store.Read(ctx, func(tx Tx) error {
+		var err error
+		p, err = tx.PeerByKey(key)
+		return err
+	})
+	return p, err
 }
 
 // ---- the operator's actions ----------------------------------------------------
@@ -1173,6 +1198,14 @@ func (e *Engine) pushSoon(id string, events []StoredEvent, mail []StoredMail, ex
 	if len(events) == 0 && len(mail) == 0 {
 		return
 	}
+	e.pushTo(e.groupPeers(context.Background(), id, except), id, events, mail)
+}
+
+// pushTo pushes events and mail to these peers, in the background.
+func (e *Engine) pushTo(to []PeerRecord, id string, events []StoredEvent, mail []StoredMail) {
+	if len(events) == 0 && len(mail) == 0 {
+		return
+	}
 	body := groupPushRequest{Group: id}
 	for _, ev := range events {
 		body.Events = append(body.Events, wire.Envelope{Payload: ev.Event, Signature: ev.Signature})
@@ -1181,7 +1214,7 @@ func (e *Engine) pushSoon(id string, events []StoredEvent, mail []StoredMail, ex
 		body.Mail = append(body.Mail, wire.Envelope{Mail: m.Mail, Signature: m.Signature})
 	}
 	e.background(func(ctx context.Context) {
-		for _, p := range e.groupPeers(ctx, id, except) {
+		for _, p := range to {
 			if p.Inbound != InboundYes {
 				continue
 			}
