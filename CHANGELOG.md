@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.6.0 (2026-11-21)
 
 Relations (MSFP core section 7.7, proposal 14): the operator manages why
 two servers are linked, not the link. A link lasts while one relation
