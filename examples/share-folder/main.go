@@ -240,6 +240,17 @@ func main() {
 			peers, err := eng.Peers(ctx)
 			for _, p := range peers {
 				fmt.Printf("%s  %-7s %s  %s  %s", p.ID, p.State, p.Fingerprint, p.Name, p.Address)
+				switch {
+				case p.Individual:
+					fmt.Print("  individual")
+				case p.IndividualAsked:
+					fmt.Print("  asked")
+				case p.IndividualAsks:
+					fmt.Print("  asks-you")
+				}
+				if len(p.Groups) > 0 {
+					fmt.Printf("  groups=%d", len(p.Groups))
+				}
 				if p.Pending != nil {
 					fmt.Print("  new key to confirm: ", p.Pending.Fingerprint)
 				}
