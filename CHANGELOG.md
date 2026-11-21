@@ -38,6 +38,15 @@ maker's operator answers with `AcceptJoin` or `RefuseJoin`
 after 30 days on both sides; `LeaveGroup` gives up earlier. Error
 `AlreadyMember`. `wire.JoinProof`, `wire.CheckJoinProof`.
 
+A group's state is the same for every copy that kept the same events,
+whatever order they arrived in (MSFP groups sections 3.2 and 3.5):
+`wire.ComputeGroup` replays them all, `wire.CheckEvent` is what a copy
+checks before keeping one, `wire.Verdict` and `wire.EventResult` say
+whether each counts. `GroupState.Apply` is gone; `GroupState.Highest`
+gives the seq a member signs next. Events that don't count are kept and
+passed on too; `GroupRecord.Held` is no longer written (its events are
+read as kept ones).
+
 
 ## v0.3.0 (2026-11-19)
 

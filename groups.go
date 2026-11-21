@@ -122,13 +122,29 @@ func groupsTx(tx Tx) (GroupsTx, error) {
 	return g, nil
 }
 
-// stateOf replays a group's kept events.
+// stateOf is the state a group's kept events give (groups section 3.5),
+// whatever order they came in.
 func (e *Engine) stateOf(g *GroupRecord) *wire.GroupState {
-	s := wire.NewGroupState()
-	for _, ev := range g.Events {
-		s.Apply(wire.Envelope{Payload: ev.Event, Signature: ev.Signature}, e.now().Add(time.Hour*24*365*100))
-	}
+	s, _ := wire.ComputeGroup(g.ID, envelopes(g.Events, g.Held))
 	return s
+}
+
+// storedID is a stored event's ID: SHA-256 of its payload, base64url.
+func storedID(ev StoredEvent) string {
+	b, _ := wire.Decode64(ev.Event, -1)
+	sum := sha256.Sum256(b)
+	return wire.Encode64(sum[:])
+}
+
+// envelopes are stored events as envelopes.
+func envelopes(lists ...[]StoredEvent) []wire.Envelope {
+	var out []wire.Envelope
+	for _, l := range lists {
+		for _, ev := range l {
+			out = append(out, wire.Envelope{Payload: ev.Event, Signature: ev.Signature})
+		}
+	}
+	return out
 }
 
 func (e *Engine) groupView(g *GroupRecord, peers []PeerRecord) GroupView {
@@ -246,19 +262,27 @@ func (e *Engine) sign(g *GroupRecord, s *wire.GroupState, ev wire.Event) (Stored
 	if ev.Type == wire.EventFounded {
 		ev.Group = ""
 	}
-	ev.Seq, ev.Date = s.Seq(g.Me)+1, e.now().Unix()
+	// Never a seq it signed already, counted or not.
+	ev.Seq, ev.Date = s.Highest(g.Me)+1, e.now().Unix()
 	if s.Owner == g.Me && ev.Type != wire.EventProfile && ev.Type != wire.EventLeft && ev.Type != wire.EventRotated && ev.Type != wire.EventRevoked {
 		ev.OwnerSeq = s.OwnerSeq + 1
 	} else if ev.Type == wire.EventJoined || ev.Type == wire.EventBanned {
 		ev.AsOf = s.OwnerSeq
 	}
-	env, _, err := wire.SignEvent(e.current(), ev)
+	env, id, err := wire.SignEvent(e.current(), ev)
 	if err != nil {
 		return StoredEvent{}, err
 	}
-	if _, _, err := s.Apply(env, e.now()); err != nil {
-		return StoredEvent{}, ErrNoRight.with(err)
+	// It must count, with the events kept: otherwise it isn't sent.
+	group := g.ID
+	if ev.Type == wire.EventFounded {
+		group = id
 	}
+	next, results := wire.ComputeGroup(group, append(envelopes(g.Events, g.Held), env))
+	if r := results[id]; r.Verdict != wire.Counted {
+		return StoredEvent{}, ErrNoRight.with(errors.New(r.Reason))
+	}
+	*s = *next
 	return StoredEvent{Event: env.Payload, Signature: env.Signature, Received: e.now()}, nil
 }
 
@@ -954,37 +978,46 @@ func (e *Engine) receive(ctx context.Context, id string, events []wire.Envelope,
 		if err != nil || g == nil {
 			return cmpErr(err, ErrNotFound)
 		}
-		s := e.stateOf(g)
-		wasMember := s.Members[g.Me] != nil
+		wasMember := e.stateOf(g).Members[g.Me] != nil
 		now := e.now()
-		pending := make([]StoredEvent, 0, len(g.Held)+len(events))
-		pending = append(pending, g.Held...)
+		// Every event that passes section 3.2's checks is kept and passed
+		// on, counted or not: the state is what they all give, whatever
+		// order they came in (groups section 3.5).
+		all := append(slices.Clone(g.Events), g.Held...)
+		known := map[string]bool{}
+		for _, ev := range all {
+			known[storedID(ev)] = true
+		}
+		var added []StoredEvent
 		for _, env := range events {
-			pending = append(pending, StoredEvent{Event: env.Payload, Signature: env.Signature, Received: now})
-		}
-		g.Held = nil
-		for progress := true; progress; {
-			progress = false
-			var still []StoredEvent
-			for _, p := range pending {
-				ev, _, err := s.Apply(wire.Envelope{Payload: p.Event, Signature: p.Signature}, now)
-				switch {
-				case err == nil:
-					if !slices.Contains(types, ev.Type) {
-						types = append(types, ev.Type)
-					}
-					g.Events = append(g.Events, p)
-					newEvents = append(newEvents, p)
-					progress = true
-				case errors.Is(err, wire.ErrHeld):
-					if now.Sub(p.Received) < wire.HeldFor {
-						still = append(still, p)
-					}
-				}
+			if _, eid, err := wire.CheckEvent(env, id, now); err == nil && !known[eid] {
+				known[eid] = true
+				added = append(added, StoredEvent{Event: env.Payload, Signature: env.Signature, Received: now})
 			}
-			pending = still
 		}
-		g.Held = pending
+		all = append(all, added...)
+		s, results := wire.ComputeGroup(id, envelopes(all))
+		g.Events, g.Held = nil, nil
+		for _, ev := range all {
+			switch r := results[storedID(ev)]; {
+			case r.Verdict == wire.Forged:
+				// Not its member's: dropped.
+			case r.Verdict == wire.Pending && now.Sub(ev.Received) >= wire.HeldFor:
+				// Waited too long for what it needs: dropped.
+			default:
+				g.Events = append(g.Events, ev)
+			}
+		}
+		for _, ev := range added {
+			r := results[storedID(ev)]
+			if r.Verdict == wire.Forged {
+				continue
+			}
+			newEvents = append(newEvents, ev)
+			if r.Verdict == wire.Counted && !slices.Contains(types, r.Event.Type) {
+				types = append(types, r.Event.Type)
+			}
+		}
 		for _, env := range mail {
 			m, ok := e.keepMail(g, s, env)
 			if !ok {

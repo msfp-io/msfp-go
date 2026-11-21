@@ -1,13 +1,17 @@
 package wire
 
 import (
+	"cmp"
 	"crypto/ecdh"
 	"crypto/hpke"
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"maps"
 	"slices"
 	"sort"
+	"strconv"
+	"strings"
 	"time"
 	"unicode/utf8"
 )
@@ -183,15 +187,17 @@ type GroupState struct {
 	Keep      bool // dissolved with keepPairings
 	OwnerSeq  int64
 
-	seq       map[string]int64            // member -> last kept seq
-	payloads  map[string]map[int64]string // member -> seq -> payload
-	adminLog  []adminChange
-	removedAt map[string]int64     // admin -> the last seq that counts
-	bannedAt  map[string]int64     // banned -> the last seq that counts
-	revoked   map[string]keyFrom   // member -> the key it revoked, and its last good seq
-	keys      map[string][]keyFrom // member -> keys in force from a seq
-	capCount  map[string]int64
-	ids       map[string]bool // event IDs kept
+	seq        map[string]int64            // member -> last kept seq
+	payloads   map[string]map[int64]string // member -> seq -> payload
+	adminLog   []adminChange
+	removedAt  map[string]int64     // admin -> the last seq that counts
+	bannedAt   map[string]int64     // banned -> the last seq that counts
+	revoked    map[string]keyFrom   // member -> the key it revoked, and its last good seq
+	keys       map[string][]keyFrom // member -> keys in force from a seq
+	capRank    map[string]int       // joined event ID -> its rank in its inviter's UTC day
+	everMember map[string]bool      // members that were named by a counted founded or joined
+	highest    map[string]int64     // member -> its highest seq kept, whatever its verdict
+	ids        map[string]bool      // event IDs replayed
 }
 
 type adminChange struct {
@@ -210,11 +216,15 @@ func NewGroupState() *GroupState {
 	return &GroupState{Members: map[string]*GroupMember{}, Banned: map[string]string{}, Reasons: map[string]string{}, WasBanned: map[string]GroupMember{},
 		Settings: DefaultGroupSettings, seq: map[string]int64{}, payloads: map[string]map[int64]string{},
 		removedAt: map[string]int64{}, bannedAt: map[string]int64{}, revoked: map[string]keyFrom{},
-		keys: map[string][]keyFrom{}, capCount: map[string]int64{}, ids: map[string]bool{}}
+		keys: map[string][]keyFrom{}, capRank: map[string]int{}, everMember: map[string]bool{}, highest: map[string]int64{}, ids: map[string]bool{}}
 }
 
 // Seq is a member's last kept seq.
 func (s *GroupState) Seq(member string) int64 { return s.seq[member] }
+
+// Highest is a member's highest seq kept, counted or not: the member signs
+// its next event with the one after it, never twice the same.
+func (s *GroupState) Highest(member string) int64 { return max(s.highest[member], s.seq[member]) }
 
 // Have is every member's last kept seq, for group-sync.
 func (s *GroupState) Have() map[string]int64 { return maps2(s.seq) }
@@ -269,16 +279,39 @@ var ErrHeld = errors.New("msfp: an event waiting for earlier ones")
 // ErrKept is an event this copy has already.
 var ErrKept = errors.New("msfp: an event already kept")
 
-// Apply keeps an event if the rules allow it (groups sections 3.2 to 3.5),
-// now being the copy's clock; ErrHeld when it must wait, ErrKept when it is
-// there already, another error when it is refused.
-func (s *GroupState) Apply(e Envelope, now time.Time) (Event, string, error) {
-	ev, b, id, err := readEnvelope(e)
+// Verdict is what the state makes of an event a member keeps (groups
+// sections 3.2 and 3.5).
+type Verdict int
+
+const (
+	// Counted: it counts in the state.
+	Counted Verdict = iota
+	// Refused: its rules don't hold. It is kept and passed on all the
+	// same, changing nothing: with events that arrive later, it may count.
+	Refused
+	// Pending: what it needs isn't there yet: its member's earlier
+	// events, the owner event it names, its member's joined. Kept, and
+	// dropped after HeldFor.
+	Pending
+	// Forged: not signed by its member's key in force. Not kept.
+	Forged
+)
+
+// EventResult is one event's verdict, with why for Refused and Forged.
+type EventResult struct {
+	Event   Event
+	Verdict Verdict
+	Reason  string
+}
+
+// CheckEvent reads an envelope as a member keeps it (groups section 3.2):
+// well formed, signed under its signer, of the group (founded: no group,
+// and its ID is group), dated at most 5 minutes after now. Whether it
+// counts is ComputeGroup's.
+func CheckEvent(e Envelope, group string, now time.Time) (Event, string, error) {
+	ev, _, id, err := readEnvelope(e)
 	if err != nil {
 		return ev, id, err
-	}
-	if s.ids[id] {
-		return ev, id, ErrKept
 	}
 	if ev.Seq < 1 || ev.Date < 1 || ev.Type == "" || ev.Member == "" {
 		return ev, id, errors.New("a common member is missing")
@@ -287,78 +320,289 @@ func (s *GroupState) Apply(e Envelope, now time.Time) (Event, string, error) {
 		return ev, id, errors.New("dated more than 5 minutes in the future")
 	}
 	if ev.Type == EventFounded {
+		if id != group {
+			return ev, id, errors.New("another group's founded event")
+		}
+	} else if ev.Group != group {
+		return ev, id, errors.New("another group's event")
+	}
+	return ev, id, nil
+}
+
+// kept is an event in a replay.
+type kept struct {
+	ev   Event
+	b    []byte
+	id   string
+	done bool
+}
+
+// cuts are what bans, removals of admins and revocations take away from
+// a member's events after a seq: applied from the start of a replay, so
+// that events a cut covers never count, whenever the cutting event comes.
+type cuts struct {
+	banned  map[string]int64
+	removed map[string]int64
+	revoked map[string]keyFrom
+}
+
+func (c cuts) equal(d cuts) bool {
+	return maps.Equal(c.banned, d.banned) && maps.Equal(c.removed, d.removed) && maps.Equal(c.revoked, d.revoked)
+}
+
+// ComputeGroup is the state a set of kept events gives (groups section
+// 3.5), the same whatever order they arrived in, with each event's
+// verdict by its ID. group is the group's ID (its founded event's).
+// Envelopes that don't read are left out (CheckEvent says why).
+//
+// The events are replayed in one order: at each step, the ready event
+// with the lowest ID. An event is ready once its member's earlier events,
+// the owner event it follows or names, and its member's joined have been
+// replayed. Bans, removals of admins and revocations take away events of
+// their target after a seq whenever they come: the replay starts again
+// with them applied from the start, until they no longer change.
+func ComputeGroup(group string, envs []Envelope) (*GroupState, map[string]EventResult) {
+	var events []*kept
+	seen := map[string]bool{}
+	for _, e := range envs {
+		ev, b, id, err := readEnvelope(e)
+		if err != nil || seen[id] || (ev.Type == EventFounded && id != group) || (ev.Type != EventFounded && ev.Group != group) {
+			continue
+		}
+		seen[id] = true
+		events = append(events, &kept{ev: ev, b: b, id: id})
+	}
+	slices.SortFunc(events, func(a, b *kept) int { return strings.Compare(a.id, b.id) })
+	// The daily cap: each inviter's joined events of a UTC day, in date
+	// then ID order (section 3.5).
+	capRank := map[string]int{}
+	byDay := map[string][]*kept{}
+	for _, k := range events {
+		if k.ev.Type == EventJoined {
+			day := k.ev.Member + " " + time.Unix(k.ev.Date, 0).UTC().Format(time.DateOnly)
+			byDay[day] = append(byDay[day], k)
+		}
+	}
+	for _, list := range byDay {
+		slices.SortStableFunc(list, func(a, b *kept) int { return cmp.Compare(a.ev.Date, b.ev.Date) })
+		for i, k := range list {
+			capRank[k.id] = i
+		}
+	}
+	var c cuts
+	var s *GroupState
+	var results map[string]EventResult
+	for range 8 {
+		var next cuts
+		s, results, next = replay(events, c, capRank)
+		if next.equal(c) {
+			break
+		}
+		c = next
+	}
+	return s, results
+}
+
+// replay replays the events once, with the cuts applied from the start,
+// and gives the cuts its counted events make.
+func replay(events []*kept, c cuts, capRank map[string]int) (*GroupState, map[string]EventResult, cuts) {
+	s := NewGroupState()
+	s.capRank = capRank
+	maps.Copy(s.bannedAt, c.banned)
+	maps.Copy(s.removedAt, c.removed)
+	maps.Copy(s.revoked, c.revoked)
+	next := cuts{banned: map[string]int64{}, removed: map[string]int64{}, revoked: map[string]keyFrom{}}
+	bySeq := map[string][]*kept{}
+	for _, k := range events {
+		k.done = false
+		key := k.ev.Member + " " + strconv.FormatInt(k.ev.Seq, 10)
+		bySeq[key] = append(bySeq[key], k)
+	}
+	results := map[string]EventResult{}
+	for final := false; ; {
+		progressed := false
+		for _, k := range events {
+			if k.done {
+				continue
+			}
+			v, reason := s.step(k, bySeq, final)
+			if v == Pending || v == failing {
+				continue
+			}
+			final = false
+			k.done, progressed = true, true
+			results[k.id] = EventResult{Event: k.ev, Verdict: v, Reason: reason}
+			if v == Counted {
+				switch ev := k.ev; ev.Type {
+				case EventBanned:
+					if old, ok := next.banned[ev.Target]; !ok || *ev.LastSeq < old {
+						next.banned[ev.Target] = *ev.LastSeq
+					}
+				case EventAdmin:
+					if !*ev.On && ev.LastSeq != nil {
+						if old, ok := next.removed[ev.Target]; !ok || *ev.LastSeq < old {
+							next.removed[ev.Target] = *ev.LastSeq
+						}
+					}
+				case EventRevoked:
+					next.revoked[ev.Member] = s.revoked[ev.Member]
+				}
+			}
+			break // again from the lowest ID
+		}
+		if !progressed {
+			if final {
+				break
+			}
+			// No ready event can count: the lowest ready one is refused.
+			final = true
+		}
+	}
+	for _, k := range events {
+		if !k.done {
+			results[k.id] = EventResult{Event: k.ev, Verdict: Pending, Reason: "waiting for events it needs"}
+		}
+		if results[k.id].Verdict != Forged && k.ev.Seq > s.highest[k.ev.Member] {
+			s.highest[k.ev.Member] = k.ev.Seq
+		}
+	}
+	return s, results, next
+}
+
+// signedByMember says whether an event is its member's: signed with the
+// member's key in force at its seq, or, for rotated, a statement from that
+// key to the signer that verifies.
+func (s *GroupState) signedByMember(ev Event) bool {
+	cur := s.keyAt(ev.Member, ev.Seq)
+	if ev.Type != EventRotated {
+		return ev.Signer == cur
+	}
+	var st struct {
+		OldKey, NewKey, NextCommitment string
+		Date                           int64
+		OldSignature, NewSignature     string
+	}
+	if json.Unmarshal(ev.Statement, &st) != nil || st.OldKey != cur || st.NewKey != ev.Signer {
+		return false
+	}
+	old, _ := Decode64(st.OldKey, 32)
+	nu, _ := Decode64(st.NewKey, 32)
+	var commitment []byte
+	if st.NextCommitment != "" {
+		commitment, _ = Decode64(st.NextCommitment, 32)
+	}
+	os, ok1 := Decode64(st.OldSignature, 64)
+	ns, ok2 := Decode64(st.NewSignature, 64)
+	msg := rotationStatement(old, nu, commitment, st.Date)
+	return ok1 && ok2 && ValidKey(nu) && verify(old, msg, os) && verify(nu, msg, ns)
+}
+
+// failing is an event that is ready but whose rules don't hold now: it
+// waits while other events can count, and is refused only when none can.
+const failing Verdict = -1
+
+// step replays one event: Pending when it isn't ready yet; failing when
+// its rules don't hold now (with final, Refused instead).
+func (s *GroupState) step(k *kept, bySeq map[string][]*kept, final bool) (Verdict, string) {
+	ev, id := k.ev, k.id
+	if ev.Type == EventFounded {
 		if s.ID != "" {
-			return ev, id, errors.New("a second founded event")
+			return Refused, "a second founded event"
 		}
 		if ev.Seq != 1 || ev.Member != ev.Signer || ev.OwnerSeq != 1 || ev.Group != "" {
-			return ev, id, errors.New("founded: seq 1, ownerSeq 1, by the founder's own key")
+			return Forged, "founded: seq 1, ownerSeq 1, by the founder's own key"
 		}
 		s.ID, s.Owner, s.OwnerSeq = id, ev.Member, 1
 		s.Name = CleanText(ev.Name, MaxGroupName)
 		s.applySettings(ev.Settings)
 		s.Members[ev.Member] = &GroupMember{ID: ev.Member, Key: ev.Member, Joined: ev.Date, joinedID: id}
-		s.keep(ev, b, id)
-		return ev, id, nil
+		s.everMember[ev.Member] = true
+		s.keep(ev, k.b, id)
+		return Counted, ""
 	}
-	if s.ID == "" || ev.Group != s.ID {
-		return ev, id, errors.New("another group's event")
-	}
-	if s.Dissolved {
-		return ev, id, errors.New("the group is dissolved")
-	}
-	if slices.Contains(s.Excluded, ev.Member) {
-		return ev, id, errors.New("its member was excluded")
-	}
-	if prev, ok := s.payloads[ev.Member][ev.Seq]; ok && prev != string(b) {
-		// Equivocation (groups section 3.2): the proof is kept, the
-		// member excluded.
-		s.Excluded = append(s.Excluded, ev.Member)
-		s.remove(ev.Member)
-		return ev, id, errors.New("equivocation: two events with one seq")
+	if s.ID == "" {
+		return Pending, ""
 	}
 	if ev.Seq > s.seq[ev.Member]+1 {
-		return ev, id, ErrHeld
+		return Pending, ""
+	}
+	if !s.signedByMember(ev) {
+		return Forged, "not signed by its member's key in force at its seq"
 	}
 	if ev.Seq <= s.seq[ev.Member] {
-		return ev, id, ErrKept
+		// Its seq was replayed: another payload of the member's with
+		// that seq, met below.
+		return Refused, "equivocation: two events with one seq"
 	}
-	m := s.Members[ev.Member]
-	if m == nil && ev.Type != EventLeft {
-		return ev, id, errors.New("its signer isn't a member")
+	if !s.everMember[ev.Member] {
+		return Pending, "" // its joined hasn't counted yet
 	}
-	if s.keyAt(ev.Member, ev.Seq) != ev.Signer && ev.Type != EventRotated {
-		return ev, id, errors.New("signer isn't the member's key at that seq")
+	refuse := func(reason string) (Verdict, string) {
+		s.keep(ev, k.b, id)
+		return Refused, reason
+	}
+	// What may hold later: the event waits while others can count.
+	fail := func(reason string) (Verdict, string) {
+		if final {
+			return refuse(reason)
+		}
+		return failing, reason
+	}
+	// Equivocation (section 3.2): another payload of the member's own
+	// with this seq: both are dropped, the member excluded.
+	for _, other := range bySeq[ev.Member+" "+strconv.FormatInt(ev.Seq, 10)] {
+		if other.id != id && s.signedByMember(other.ev) {
+			if !slices.Contains(s.Excluded, ev.Member) {
+				s.Excluded = append(s.Excluded, ev.Member)
+				s.remove(ev.Member)
+			}
+			return refuse("equivocation: two events with one seq")
+		}
+	}
+	if s.Dissolved {
+		return refuse("the group is dissolved")
+	}
+	if slices.Contains(s.Excluded, ev.Member) {
+		return refuse("its member was excluded")
+	}
+	if s.Members[ev.Member] == nil && ev.Type != EventLeft {
+		return fail("its signer isn't a member")
 	}
 	if last, ok := s.removedAt[ev.Member]; ok && ev.Seq > last && isAdminEvent(ev.Type) {
-		return ev, id, errors.New("signed after its signer's role was removed")
+		return refuse("signed after its signer's role was removed")
 	}
 	if last, ok := s.bannedAt[ev.Member]; ok && ev.Seq > last {
-		return ev, id, errors.New("signed after its signer was banned")
+		return refuse("signed after its signer was banned")
 	}
-	if r, ok := s.revoked[ev.Member]; ok && ev.Signer == r.key && ev.Seq > r.seq {
-		return ev, id, errors.New("signed with a revoked key after its last good event")
+	if r, ok := s.revoked[ev.Member]; ok && ev.Signer == r.key && ev.Seq > r.seq && ev.Type != EventRevoked {
+		return refuse("signed with a revoked key after its last good event")
 	}
 	owner := ev.Member == s.Owner
 	if owner && isOwnerEvent(ev.Type) {
+		if ev.OwnerSeq > s.OwnerSeq+1 {
+			return Pending, ""
+		}
 		if ev.OwnerSeq != s.OwnerSeq+1 {
-			if ev.OwnerSeq > s.OwnerSeq+1 {
-				return ev, id, ErrHeld
-			}
-			return ev, id, errors.New("an owner event whose ownerSeq was taken")
+			return refuse("an owner event whose ownerSeq was taken")
 		}
 	}
-	admin := !owner && ev.AsOf > 0 && ev.AsOf <= s.OwnerSeq && s.adminAsOf(ev.Member, ev.AsOf)
 	if !owner && ev.AsOf > s.OwnerSeq {
-		return ev, id, ErrHeld
+		return Pending, ""
 	}
+	// A ban and the removal of an admin wait for their target's events
+	// up to their lastSeq: those count (section 3.5).
+	if (ev.Type == EventBanned || (ev.Type == EventAdmin && ev.On != nil && !*ev.On)) && ev.LastSeq != nil && s.seq[ev.Target] < *ev.LastSeq {
+		return Pending, ""
+	}
+	admin := !owner && ev.AsOf > 0 && ev.AsOf <= s.OwnerSeq && s.adminAsOf(ev.Member, ev.AsOf)
 	if err := s.applyType(ev, id, owner, admin); err != nil {
-		return ev, id, err
+		return fail(err.Error())
 	}
 	if owner && isOwnerEvent(ev.Type) {
 		s.OwnerSeq = ev.OwnerSeq
 	}
-	s.keep(ev, b, id)
-	return ev, id, nil
+	s.keep(ev, k.b, id)
+	return Counted, ""
 }
 
 func isOwnerEvent(t string) bool {
@@ -418,17 +662,18 @@ func (s *GroupState) applyType(ev Event, id string, owner, admin bool) error {
 		if k, ok := Decode64(ev.NewMember, 32); !ok || !ValidKey(k) {
 			return errors.New("newMember isn't a key")
 		}
-		if _, banned := s.Banned[ev.NewMember]; banned {
-			return errors.New("the newcomer is banned")
+		if _, banned := s.Banned[ev.NewMember]; banned || slices.Contains(s.Excluded, ev.NewMember) {
+			return errors.New("the newcomer is banned, or excluded")
 		}
 		if member(ev.NewMember) {
 			return errors.New("the newcomer is a member already")
 		}
-		day := ev.Member + " " + time.Unix(ev.Date, 0).UTC().Format(time.DateOnly)
-		if s.capCount[day] >= s.Settings.CapPerDay {
+		// The inviter's joined events of a UTC day beyond the cap, by
+		// date then ID, don't count (section 3.5).
+		if int64(s.capRank[id]) >= s.Settings.CapPerDay {
 			return errors.New("over the inviter's daily cap")
 		}
-		s.capCount[day]++
+		s.everMember[ev.NewMember] = true
 		s.Members[ev.NewMember] = &GroupMember{ID: ev.NewMember, Key: ev.NewMember, Name: CleanText(ev.Name, MaxGroupName),
 			InvitedBy: ev.Member, Joined: ev.Date, joinedID: id}
 		// A member that left and comes back keeps counting from its seq.

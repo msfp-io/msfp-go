@@ -1,8 +1,11 @@
 package wire
 
 import (
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
+	"math/rand/v2"
 	"reflect"
 	"slices"
 	"sort"
@@ -53,15 +56,21 @@ func TestGroupVectors(t *testing.T) {
 		} `json:"joinProof"`
 	}
 	readVectors(t, "groups.json", &v)
-	s := NewGroupState()
 	now := time.Unix(v.Now, 0)
+	var envs []Envelope
 	for _, e := range v.Events {
-		_, id, err := s.Apply(Envelope{Payload: e.Event, Signature: e.Signature}, now)
-		if (err == nil) != e.Valid {
-			t.Errorf("%s: kept %v, the vector says %v (%v)", e.Name, err == nil, e.Valid, err)
-		}
-		if id != "" && id != e.ID {
+		env := Envelope{Payload: e.Event, Signature: e.Signature}
+		if _, id, err := CheckEvent(env, v.Group, now); err == nil {
+			envs = append(envs, env)
+		} else if id != "" && id != e.ID {
 			t.Errorf("%s: id %s, want %s", e.Name, id, e.ID)
+		}
+	}
+	s, results := ComputeGroup(v.Group, envs)
+	for _, e := range v.Events {
+		r, ok := results[e.ID]
+		if counted := ok && r.Verdict == Counted; counted != e.Valid {
+			t.Errorf("%s: counts %v, the vector says %v (%s)", e.Name, counted, e.Valid, results[e.ID].Reason)
 		}
 	}
 	var admins, members []string
@@ -142,10 +151,12 @@ func signed(k Key, payload string) Envelope {
 func TestGroupSettingsDefaults(t *testing.T) {
 	a := NewKey()
 	me := Encode64(a.Public())
-	s := NewGroupState()
 	ev := signed(a, `{"type":"founded","signer":"`+me+`","member":"`+me+`","seq":1,"date":1800000000,"ownerSeq":1,"name":"F","nonce":"AAAAAAAAAAAAAAAAAAAAAA","settings":{"capPerDay":7}}`)
-	if _, _, err := s.Apply(ev, time.Unix(1800000000, 0)); err != nil {
-		t.Fatal(err)
+	b, _ := Decode64(ev.Payload, -1)
+	sum := sha256.Sum256(b)
+	s, results := ComputeGroup(Encode64(sum[:]), []Envelope{ev})
+	if results[Encode64(sum[:])].Verdict != Counted {
+		t.Fatal(results)
 	}
 	if s.Settings != (GroupSettings{WaitDays: 3, CapPerDay: 7}) {
 		t.Errorf("settings %+v, want waitDays's default 3 and capPerDay 7", s.Settings)
@@ -172,23 +183,60 @@ func TestGroupRevokedOwnKeyOnly(t *testing.T) {
 	a, other := NewKey(), NewKey()
 	me := Encode64(a.Public())
 	now := time.Unix(1800000000, 0)
-	s := NewGroupState()
-	founded, _, _ := SignEvent(a, Event{Type: EventFounded, Signer: me, Member: me, Seq: 1, Date: now.Unix(), OwnerSeq: 1, Name: "F", Nonce: "AAAAAAAAAAAAAAAAAAAAAA"})
-	if _, _, err := s.Apply(founded, now); err != nil {
-		t.Fatal(err)
-	}
-	g := s.ID
+	founded, g, _ := SignEvent(a, Event{Type: EventFounded, Signer: me, Member: me, Seq: 1, Date: now.Unix(), OwnerSeq: 1, Name: "F", Nonce: "AAAAAAAAAAAAAAAAAAAAAA"})
 	statement := func(k Key) json.RawMessage {
 		r := SignRevocation(k, now)
 		return json.RawMessage(`{"key":"` + Encode64(r.Key) + `","date":` + strconv.FormatInt(r.Date, 10) + `,"signature":"` + Encode64(r.Signature) + `"}`)
 	}
 	last := int64(1)
 	foreign, _, _ := SignEvent(a, Event{Group: g, Type: EventRevoked, Signer: me, Member: me, Seq: 2, Date: now.Unix(), LastSeq: &last, Statement: statement(other)})
-	if _, _, err := s.Apply(foreign, now); err == nil {
-		t.Error("another key's revocation was kept")
+	_, results := ComputeGroup(g, []Envelope{founded, foreign})
+	if _, id, _ := CheckEvent(foreign, g, now); results[id].Verdict == Counted {
+		t.Error("another key's revocation counts")
 	}
 	own, _, _ := SignEvent(a, Event{Group: g, Type: EventRevoked, Signer: me, Member: me, Seq: 2, Date: now.Unix(), LastSeq: &last, Statement: statement(a)})
-	if _, _, err := s.Apply(own, now); err != nil {
-		t.Errorf("its own key's revocation: %v", err)
+	_, results = ComputeGroup(g, []Envelope{founded, own})
+	if _, id, _ := CheckEvent(own, g, now); results[id].Verdict != Counted {
+		t.Errorf("its own key's revocation: %+v", results[id])
+	}
+}
+
+// The vectors' events, in any order: the same state and the same verdicts
+// (groups section 3.5).
+func TestGroupOrderIndependent(t *testing.T) {
+	var v struct {
+		Group  string `json:"group"`
+		Events []struct {
+			Event, Signature, ID string
+		} `json:"events"`
+	}
+	readVectors(t, "groups.json", &v)
+	var envs []Envelope
+	for _, e := range v.Events {
+		envs = append(envs, Envelope{Payload: e.Event, Signature: e.Signature})
+	}
+	summary := func(s *GroupState, r map[string]EventResult) string {
+		var ms []string
+		for id, m := range s.Members {
+			ms = append(ms, fmt.Sprintf("%s:%v:%s", id, m.Admin, m.Key))
+		}
+		sort.Strings(ms)
+		var vs []string
+		for id, x := range r {
+			vs = append(vs, fmt.Sprintf("%s:%d", id, x.Verdict))
+		}
+		sort.Strings(vs)
+		ex := slices.Clone(s.Excluded)
+		sort.Strings(ex)
+		return fmt.Sprint(s.Owner, s.Heir, s.OwnerSeq, s.Settings, ms, ex, len(s.Banned), vs)
+	}
+	want := summary(ComputeGroup(v.Group, envs))
+	rng := rand.New(rand.NewPCG(1, 2))
+	for range 50 {
+		shuffled := slices.Clone(envs)
+		rng.Shuffle(len(shuffled), func(i, j int) { shuffled[i], shuffled[j] = shuffled[j], shuffled[i] })
+		if got := summary(ComputeGroup(v.Group, shuffled)); got != want {
+			t.Fatalf("another order, another state:\n%s\nwant\n%s", got, want)
+		}
 	}
 }
