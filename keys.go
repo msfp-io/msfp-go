@@ -564,6 +564,7 @@ func (e *Engine) peerMoved(ctx context.Context, id string, current ed25519.Publi
 	}
 	if moved {
 		e.log.Info("msfp: a peer moved to this server's new key", "peer", id)
+		e.syncGroupsSoon(id)
 	}
 	e.tellEnded(events)
 	return moved

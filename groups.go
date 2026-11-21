@@ -1451,6 +1451,27 @@ func (e *Engine) syncGroupsNow(ctx context.Context, force bool) {
 	}
 }
 
+// syncGroupsSoon runs, in the background, a group-sync with a peer that
+// just took this server's new key, for each group they share: it pushes
+// the events the peer lacks. Those signed for the change (rotated; revoked,
+// after a stolen key) were pushed while the peer still knew the old key, or
+// held this server suspended (core section 12.6), and may have been
+// refused; without this, they and every event after them would wait for
+// the next round of group-sync.
+func (e *Engine) syncGroupsSoon(peer string) {
+	e.background(func(ctx context.Context) {
+		p, err := e.peerRecord(ctx, peer)
+		if err != nil || p == nil || p.State != Paired {
+			return
+		}
+		for _, id := range p.Groups {
+			if err := e.syncWith(ctx, id, p); err != nil {
+				e.log.Debug("msfp: a group sync after a rotation failed", "group", id, "peer", peer, "error", err)
+			}
+		}
+	})
+}
+
 // syncWith calls group-sync on a peer for a group, keeps what it lacked,
 // and pushes it what it lacks.
 func (e *Engine) syncWith(ctx context.Context, id string, p *PeerRecord) error {

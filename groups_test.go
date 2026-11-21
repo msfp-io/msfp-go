@@ -6,7 +6,10 @@ import (
 	"fmt"
 	"github.com/msfp-io/msfp-go/wire"
 	"math/rand/v2"
+	"net/http"
 	"slices"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -232,6 +235,64 @@ func TestGroupBanLeaveDissolve(t *testing.T) {
 
 // A member that rotates its key tells its groups (rotated), and its
 // events under the new key count on the others' copies.
+// A's key is stolen while B is in its group: B follows A to its next key
+// and keeps A's revoked and rotated events, so A's next owner event, signed
+// under the new key, counts there (groups 3.3; core 12.6). Here A's pushes
+// reach B after its revoke and before its rotate, and B, holding A
+// suspended, refuses them: the group-sync A runs once B moved to its new
+// key brings them.
+func TestGroupKeyStolen(t *testing.T) {
+	ctx := context.Background()
+	a := newServer(t, msfp.Config{Name: func() string { return "A" }})
+	b := newServer(t, msfp.Config{Name: func() string { return "B" }})
+	g, err := a.eng.CreateGroup(ctx, "Family", msfp.GroupSettingsDefault)
+	if err != nil {
+		t.Fatal(err)
+	}
+	joinGroup(t, a, b, g.ID)
+	settle(a, b)
+	revoked := make(chan struct{})
+	var once sync.Once
+	b.mu.Lock()
+	inner := b.h
+	b.h = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/group-push") {
+			select {
+			case <-revoked:
+			case <-time.After(5 * time.Second):
+			}
+		}
+		inner.ServeHTTP(w, r)
+		if strings.HasSuffix(r.URL.Path, "/revoke") {
+			once.Do(func() { close(revoked) })
+		}
+	})
+	b.mu.Unlock()
+	if rotated, err := a.eng.KeyStolen(ctx, "", false); err != nil || !rotated {
+		t.Fatal(rotated, err)
+	}
+	settle(a, b)
+	if err := a.eng.SetGroupSettings(ctx, g.ID, "Family and friends", msfp.GroupSettingsDefault); err != nil {
+		t.Fatal(err)
+	}
+	settle(a, b)
+	refused := 0
+	b.mu.Lock()
+	for _, x := range b.log {
+		if strings.HasSuffix(x.path, "/group-push") && x.status == http.StatusNotFound {
+			refused++
+		}
+	}
+	b.mu.Unlock()
+	if refused == 0 {
+		t.Fatal("no push was refused: the test didn't reproduce the race")
+	}
+	gb, _ := b.eng.Group(ctx, g.ID)
+	if gb.Name != "Family and friends" {
+		t.Errorf("B's copy after A's stolen key: %+v", gb)
+	}
+}
+
 func TestGroupKeyRotation(t *testing.T) {
 	ctx := context.Background()
 	a := newServer(t, msfp.Config{Name: func() string { return "A" }})
