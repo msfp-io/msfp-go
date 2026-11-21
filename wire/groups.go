@@ -607,6 +607,9 @@ type Sealed struct {
 	Name           string `json:"name,omitempty"`
 	NextCommitment string `json:"nextCommitment"`
 	Inbound        bool   `json:"inbound"`
+	// Certificates are the pins of the certificates the sender's address
+	// serves (core section 3.2): group-pair checks them.
+	Certificates []string `json:"certificates,omitempty"`
 }
 
 func mailKeys(group, id, from, to string) (info, aad []byte, err error) {

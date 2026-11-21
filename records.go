@@ -242,6 +242,7 @@ type GroupRequest struct {
 	Address        string    `json:"address"`
 	NextCommitment []byte    `json:"nextCommitment"`
 	Inbound        bool      `json:"inbound"`
+	Pins           []string  `json:"pins,omitempty"`
 	Received       time.Time `json:"received"`
 }
 

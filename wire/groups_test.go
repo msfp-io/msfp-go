@@ -2,6 +2,7 @@ package wire
 
 import (
 	"encoding/hex"
+	"reflect"
 	"slices"
 	"sort"
 	"testing"
@@ -92,7 +93,7 @@ func TestGroupVectors(t *testing.T) {
 	want, _ := Marshal(got)
 	var w Sealed
 	_ = DecodeJSON([]byte(v.Mail.Opened), &w)
-	if got != w {
+	if !reflect.DeepEqual(got, w) {
 		t.Errorf("opened %s, want %s", want, v.Mail.Opened)
 	}
 }
@@ -113,7 +114,7 @@ func TestMailRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, err := OpenMail(read, priv); err != nil || got != content {
+	if got, err := OpenMail(read, priv); err != nil || !reflect.DeepEqual(got, content) {
 		t.Fatalf("opened %+v, %v", got, err)
 	}
 	if _, err := OpenMail(read, other); err == nil {

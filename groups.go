@@ -689,7 +689,7 @@ func (e *Engine) RequestMember(ctx context.Context, id, member string) error {
 // requester's address, or an answer mail when it can't be called.
 func (e *Engine) answerRequest(ctx context.Context, id string, r GroupRequest) error {
 	if r.Inbound {
-		return e.groupPair(ctx, id, r.From, r.Mail, r.Address, r.NextCommitment, true)
+		return e.groupPair(ctx, id, r.From, r.Mail, r.Address, r.NextCommitment, true, r.Pins)
 	}
 	return e.sendMail(ctx, id, r.From, "answer", r.Mail)
 }
@@ -739,6 +739,7 @@ func (e *Engine) sendRequests(ctx context.Context, id string, to []string) error
 // to one.
 func (e *Engine) sendMail(ctx context.Context, id, to, kind, answers string) error {
 	var env StoredMail
+	pins := e.ownPins(ctx, false)
 	err := e.cfg.Store.Update(ctx, func(tx Tx) error {
 		gt, err := groupsTx(tx)
 		if err != nil {
@@ -761,7 +762,7 @@ func (e *Engine) sendMail(ctx context.Context, id, to, kind, answers string) err
 		expires := e.now().Add(wire.MailLifetime)
 		mail := wire.Mail{Group: id, ID: mid, Kind: kind, From: g.Me, To: to, Answers: answers, Expires: expires.Unix()}
 		content := wire.Sealed{Address: e.named(e.address()), Name: e.name(), NextCommitment: wire.Encode64(e.commitment()),
-			Inbound: !e.saysUncallable()}
+			Inbound: !e.saysUncallable(), Certificates: pins}
 		sealed, err := wire.SealMail(e.current(), mail, m.EncryptionKey, content)
 		if err != nil {
 			return err
@@ -970,7 +971,7 @@ func (e *Engine) gotMail(ctx context.Context, id string, m wire.Mail) {
 		}
 		commitment, _ := wire.Decode64(opened.NextCommitment, 32)
 		req = GroupRequest{Mail: m.ID, From: m.From, Name: wire.CleanText(opened.Name, 80), Address: opened.Address,
-			NextCommitment: commitment, Inbound: opened.Inbound, Received: e.now()}
+			NextCommitment: commitment, Inbound: opened.Inbound, Pins: wire.CleanPins(opened.Certificates), Received: e.now()}
 		if g.Accept && e.waited(s, m.From) {
 			accept = true
 			return nil
@@ -990,7 +991,7 @@ func (e *Engine) gotMail(ctx context.Context, id string, m wire.Mail) {
 		}
 	case m.Kind == "answer":
 		commitment, _ := wire.Decode64(opened.NextCommitment, 32)
-		if err := e.groupPair(ctx, id, m.From, m.ID, opened.Address, commitment, opened.Inbound); err != nil {
+		if err := e.groupPair(ctx, id, m.From, m.ID, opened.Address, commitment, opened.Inbound, wire.CleanPins(opened.Certificates)); err != nil {
 			e.log.Info("msfp: group-pair after an answer failed", "group", id, "error", err)
 		}
 	}
@@ -1435,7 +1436,7 @@ func (e *Engine) groupPairServed(req *request) response {
 		return e.pairRefused(req)
 	}
 	_ = used
-	if _, err := e.linkThrough(req.r.Context(), body.Group, member, key, body.Address, body.Name, commitment, inbound); err != nil {
+	if _, err := e.linkThrough(req.r.Context(), body.Group, member, key, body.Address, body.Name, commitment, inbound, nil); err != nil {
 		return refuse(probInternal)
 	}
 	t := !e.saysUncallable()
@@ -1487,7 +1488,7 @@ func (e *Engine) matchSent(ctx context.Context, id string, key []byte, mailID st
 
 // linkThrough makes (or adds the group to) the link with a member, paired
 // at once (groups section 4.2), and says hello to it.
-func (e *Engine) linkThrough(ctx context.Context, id, member string, key []byte, address, name string, commitment []byte, inbound bool) (string, error) {
+func (e *Engine) linkThrough(ctx context.Context, id, member string, key []byte, address, name string, commitment []byte, inbound bool, pins []string) (string, error) {
 	var pid string
 	err := e.cfg.Store.Update(ctx, func(tx Tx) error {
 		p, err := tx.PeerByKey(key)
@@ -1502,7 +1503,8 @@ func (e *Engine) linkThrough(ctx context.Context, id, member string, key []byte,
 			}
 			p = &PeerRecord{ID: newID, Key: key, Name: cleanName(name, address), Created: now, Seen: now,
 				State: Paired, WasPaired: true, Paired: now, Address: address, OurAddress: e.ourHost(), Inbound: InboundYes,
-				Commitment: commitment, CommitmentFrom: "pair", CommitmentTold: true, Limits: *e.cfg.NewPairing, NotByHand: true}
+				Commitment: commitment, CommitmentFrom: "pair", CommitmentTold: true, Limits: *e.cfg.NewPairing, NotByHand: true,
+				Pins: pins}
 			if !inbound {
 				p.Inbound = InboundNo
 			}
@@ -1530,7 +1532,7 @@ func (e *Engine) linkThrough(ctx context.Context, id, member string, key []byte,
 
 // groupPair calls group-pair on a member at address, answering mailID,
 // and makes the link.
-func (e *Engine) groupPair(ctx context.Context, id, member, mailID, address string, commitment []byte, inbound bool) error {
+func (e *Engine) groupPair(ctx context.Context, id, member, mailID, address string, commitment []byte, inbound bool, pins []string) error {
 	var key []byte
 	err := e.withState(ctx, id, func(g *GroupRecord, s *wire.GroupState) error {
 		m := s.Members[member]
@@ -1546,7 +1548,9 @@ func (e *Engine) groupPair(ctx context.Context, id, member, mailID, address stri
 	t := !e.saysUncallable()
 	body := groupPairRequest{Group: id, Answers: mailID, Address: e.named(e.address()), Name: e.name(),
 		NextCommitment: wire.Encode64(e.commitment()), Inbound: &t}
-	tmp := &PeerRecord{Key: key, Address: address, Inbound: InboundYes}
+	// Its certificate is checked as for any call after pairing: trusted,
+	// or named by the pins its mail carried (MSFP groups section 8.3).
+	tmp := &PeerRecord{Key: key, Address: address, Inbound: InboundYes, Pins: pins}
 	var ans groupPairAnswer
 	r, err := e.exchange(ctx, tmp, callGroupPair, body, &ans, e.current())
 	if err != nil {
@@ -1555,7 +1559,7 @@ func (e *Engine) groupPair(ctx context.Context, id, member, mailID, address stri
 	if r.status != http.StatusOK {
 		return ErrUnreachable.with(errors.New(r.problem))
 	}
-	_, err = e.linkThrough(ctx, id, member, key, address, ans.Name, commitment, inbound)
+	_, err = e.linkThrough(ctx, id, member, key, address, ans.Name, commitment, inbound, pins)
 	return err
 }
 

@@ -156,7 +156,7 @@ func (e *Engine) exchange(ctx context.Context, p *PeerRecord, call string, in, o
 	if err != nil {
 		return reply{}, ErrInternal.with(err)
 	}
-	anyCert := call == callPair || call == callHello || call == callGroupPair
+	anyCert := call == callPair || call == callHello
 	res, err := e.conns.client(p, anyCert).Do(req)
 	if err != nil {
 		switch {
