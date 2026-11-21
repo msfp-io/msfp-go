@@ -192,3 +192,35 @@ func TestGroupBanLeaveDissolve(t *testing.T) {
 		t.Error("A still has the dissolved group")
 	}
 }
+
+// A member that rotates its key tells its groups (rotated), and its
+// events under the new key count on the others' copies.
+func TestGroupKeyRotation(t *testing.T) {
+	ctx := context.Background()
+	a := newServer(t, msfp.Config{Name: func() string { return "A" }})
+	b := newServer(t, msfp.Config{Name: func() string { return "B" }})
+	g, err := a.eng.CreateGroup(ctx, "Family", msfp.GroupSettingsDefault)
+	if err != nil {
+		t.Fatal(err)
+	}
+	joinGroup(t, a, b, g.ID)
+	settle(a, b)
+	if err := a.eng.Rotate(ctx, ""); err != nil {
+		t.Fatal(err)
+	}
+	settle(a, b)
+	if err := a.eng.SetGroupSettings(ctx, g.ID, "Family and friends", msfp.GroupSettingsDefault); err != nil {
+		t.Fatal(err)
+	}
+	settle(a, b)
+	gb, _ := b.eng.Group(ctx, g.ID)
+	if gb.Name != "Family and friends" {
+		t.Errorf("B's copy after A rotated: %+v", gb)
+	}
+	aServer, _ := a.eng.Server(ctx)
+	for _, m := range gb.Members {
+		if m.Role == "owner" && m.Fingerprint != aServer.Fingerprint {
+			t.Errorf("A's key in B's copy: %s, A is %s", m.Fingerprint, aServer.Fingerprint)
+		}
+	}
+}

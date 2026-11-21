@@ -175,6 +175,7 @@ func (e *Engine) Rotate(ctx context.Context, nextKey string) error {
 	if err := e.rotateTo(ctx, next, false); err != nil {
 		return err
 	}
+	e.groupsRotated(ctx)
 	e.tellRotation(ctx)
 	return nil
 }
@@ -217,6 +218,7 @@ func (e *Engine) KeyStolen(ctx context.Context, nextKey string, withoutNext bool
 	stolen := e.current()
 	e.log.Warn("msfp: this server's key revoked", "fingerprint", wire.Fingerprint(stolen.Public()))
 	statement := wire.SignRevocation(stolen, e.now())
+	e.groupsRevoked(ctx, statement)
 	e.eachPeer(ctx, func(p *PeerRecord) bool { return p.OurKey == KeyCurrent && p.Inbound == InboundYes },
 		func(ctx context.Context, p *PeerRecord) {
 			var ans stateAnswer
@@ -228,6 +230,7 @@ func (e *Engine) KeyStolen(ctx context.Context, nextKey string, withoutNext bool
 		if err := e.rotateTo(ctx, next, true); err != nil {
 			return false, err
 		}
+		e.groupsRotated(ctx)
 		e.tellRotation(ctx)
 		return true, nil
 	}

@@ -165,7 +165,7 @@ type GroupState struct {
 	adminLog  []adminChange
 	removedAt map[string]int64 // admin -> the last seq that counts
 	bannedAt  map[string]int64 // banned -> the last seq that counts
-	revokedAt map[string]int64
+	revoked   map[string]keyFrom // member -> the key it revoked, and its last good seq
 	keys      map[string][]keyFrom // member -> keys in force from a seq
 	capCount  map[string]int64
 	ids       map[string]bool // event IDs kept
@@ -186,7 +186,7 @@ type keyFrom struct {
 func NewGroupState() *GroupState {
 	return &GroupState{Members: map[string]*GroupMember{}, Banned: map[string]string{}, Reasons: map[string]string{},
 		Settings: DefaultGroupSettings, seq: map[string]int64{}, payloads: map[string]map[int64]string{},
-		removedAt: map[string]int64{}, bannedAt: map[string]int64{}, revokedAt: map[string]int64{},
+		removedAt: map[string]int64{}, bannedAt: map[string]int64{}, revoked: map[string]keyFrom{},
 		keys: map[string][]keyFrom{}, capCount: map[string]int64{}, ids: map[string]bool{}}
 }
 
@@ -300,10 +300,11 @@ func (s *GroupState) Apply(e Envelope, now time.Time) (Event, string, error) {
 	if last, ok := s.removedAt[ev.Member]; ok && ev.Seq > last && isAdminEvent(ev.Type) {
 		return ev, id, errors.New("signed after its signer's role was removed")
 	}
-	for _, cut := range []map[string]int64{s.bannedAt, s.revokedAt} {
-		if last, ok := cut[ev.Member]; ok && ev.Seq > last {
-			return ev, id, errors.New("signed after its signer was banned or its key revoked")
-		}
+	if last, ok := s.bannedAt[ev.Member]; ok && ev.Seq > last {
+		return ev, id, errors.New("signed after its signer was banned")
+	}
+	if r, ok := s.revoked[ev.Member]; ok && ev.Signer == r.key && ev.Seq > r.seq {
+		return ev, id, errors.New("signed with a revoked key after its last good event")
 	}
 	owner := ev.Member == s.Owner
 	if owner && isOwnerEvent(ev.Type) {
@@ -539,8 +540,8 @@ func (s *GroupState) applyType(ev Event, id string, owner, admin bool) error {
 		if !ok || !verify(k, revocationStatement(k, st.Date), sig) {
 			return errors.New("the revocation statement doesn't verify")
 		}
-		if last, ok := s.revokedAt[ev.Member]; !ok || *ev.LastSeq < last {
-			s.revokedAt[ev.Member] = *ev.LastSeq
+		if r, ok := s.revoked[ev.Member]; !ok || *ev.LastSeq < r.seq {
+			s.revoked[ev.Member] = keyFrom{seq: *ev.LastSeq, key: st.Key}
 		}
 	default:
 		// A type of a later version: kept and passed on, changing nothing.

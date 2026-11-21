@@ -1804,3 +1804,63 @@ func (e *Engine) pushAll(ctx context.Context, id, peer string) {
 		body.Mail = nil
 	}
 }
+
+// ---- keys (groups section 3.3, rotated and revoked) ------------------------------
+
+// groupIDs are the groups this server is a member of.
+func (e *Engine) groupIDs(ctx context.Context) []string {
+	var out []string
+	_ = e.cfg.Store.Read(ctx, func(tx Tx) error {
+		gt, err := groupsTx(tx)
+		if err != nil {
+			return nil
+		}
+		gs, err := gt.Groups()
+		for i := range gs {
+			if e.stateOf(&gs[i]).Members[gs[i].Me] != nil {
+				out = append(out, gs[i].ID)
+			}
+		}
+		return err
+	})
+	return out
+}
+
+// groupsRotated tells this server's groups of its new key: a rotated
+// event in each, signed with it (core section 12, groups section 3.3).
+func (e *Engine) groupsRotated(ctx context.Context) {
+	k := e.ourKeys()
+	if k.old == nil {
+		return
+	}
+	rot := wire.SignRotation(*k.old, k.current, k.commitment, e.now())
+	body := rot.Body()
+	statement, err := marshal(map[string]any{"oldKey": wire.Encode64(rot.Old), "newKey": body.NewKey,
+		"nextCommitment": body.NextCommitment, "date": body.Date, "oldSignature": body.OldSignature, "newSignature": body.NewSignature})
+	if err != nil {
+		return
+	}
+	for _, id := range e.groupIDs(ctx) {
+		if err := e.act(ctx, id, wire.Event{Type: wire.EventRotated, Statement: statement}); err != nil {
+			e.log.Warn("msfp: a group couldn't be told of this server's new key", "group", id, "error", err)
+		}
+	}
+}
+
+// groupsRevoked tells this server's groups that its key was stolen: a
+// revoked event in each, signed with that key, its last good event the
+// last before now.
+func (e *Engine) groupsRevoked(ctx context.Context, r wire.Revocation) {
+	body := r.Body()
+	statement, err := marshal(map[string]any{"key": wire.Encode64(r.Key), "date": body.Date, "signature": body.Signature})
+	if err != nil {
+		return
+	}
+	for _, id := range e.groupIDs(ctx) {
+		var last int64
+		_ = e.withState(ctx, id, func(g *GroupRecord, s *wire.GroupState) error { last = s.Seq(g.Me); return nil })
+		if err := e.act(ctx, id, wire.Event{Type: wire.EventRevoked, Statement: statement, LastSeq: &last}); err != nil {
+			e.log.Warn("msfp: a group couldn't be told this server's key was stolen", "group", id, "error", err)
+		}
+	}
+}
