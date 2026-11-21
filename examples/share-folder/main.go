@@ -28,7 +28,9 @@
 // code for it (redeemed with "redeem", accepted with "accept", or, from a
 // peer already, "join-accept <group> <peer>"); "pair <group> <mail>"
 // accepts a member's request, "refuse <group> <mail>" refuses it;
-// "admin <group> <member>" names a member admin (the owner only);
+// "admin <group> <member>" names a member admin (the owner only), "ban
+// <group> <member>" bans one; "dissolve <group>" ends the group and the
+// pairings only it made;
 // "group-offer <group>" shares the films with the group; "auto <group>
 // on|off" accepts its members by itself; "leave <group>" leaves it.
 package main
@@ -194,7 +196,7 @@ func main() {
 		case "invite":
 			code, _, err := eng.MakeCodeWith(ctx, msfp.CodeOptions{Group: arg, Uses: 10})
 			show(code, err)
-		case "pair", "refuse", "join-accept", "auto", "admin":
+		case "pair", "refuse", "join-accept", "auto", "admin", "ban":
 			group, rest, _ := strings.Cut(arg, " ")
 			var err error
 			switch cmd {
@@ -208,12 +210,16 @@ func main() {
 				err = eng.SetGroupAnswer(ctx, group, rest == "on")
 			case "admin":
 				err = eng.SetAdmin(ctx, group, rest, true)
+			case "ban":
+				err = eng.Ban(ctx, group, rest, "")
 			}
 			show("done", err)
 		case "group-offer":
 			show("offered", eng.SetGroupOffers(ctx, arg, []string{"films"}))
 		case "leave":
 			show("left", eng.LeaveGroup(ctx, arg, nil))
+		case "dissolve":
+			show("dissolved", eng.DissolveGroup(ctx, arg, false))
 		case "peers":
 			eng.PanelOpen()
 			peers, err := eng.Peers(ctx)
@@ -228,7 +234,7 @@ func main() {
 		default:
 			fmt.Println("code [note] | redeem <code> | accept <id> | end <id> | peers | rotate [key] | stolen [key|none] | " +
 				"confirm <id> | address <url> | uncallable on|off | offer <id> | want <id> | titles <id> | play <id> <key> | stop <playback> | rescan | " +
-				"group-create <name> | groups | invite <group> | pair <group> <mail> | refuse <group> <mail> | join-accept <group> <peer> | admin <group> <member> | group-offer <group> | auto <group> on|off | leave <group>")
+				"group-create <name> | groups | invite <group> | pair <group> <mail> | refuse <group> <mail> | join-accept <group> <peer> | admin <group> <member> | ban <group> <member> | group-offer <group> | auto <group> on|off | leave <group> | dissolve <group>")
 		}
 	}
 }
