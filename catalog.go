@@ -57,6 +57,13 @@ func cleanKind(kind string) string {
 	return ""
 }
 
+// HostLibraries are this server's libraries, as the host's catalog gives
+// them: what it may offer, to a server or a group (the panel lists them
+// before a group exists, to create or join it with what it shares).
+func (e *Engine) HostLibraries(ctx context.Context) ([]Library, error) {
+	return e.hostLibraries(ctx)
+}
+
 // hostLibraries are the host's libraries, none without a Catalog.
 func (e *Engine) hostLibraries(ctx context.Context) ([]Library, error) {
 	if e.cfg.Catalog == nil {
