@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.5.0 (2026-11-21)
 
 ### Added
 
@@ -30,6 +30,10 @@
   pairing through the group, where before it was kept but could never
   leave. `RequestMember` returns that error, and any other error from its
   request, instead of only logging it.
+
+### Example
+
+- `groups` says when a group has no way in.
 
 ## v0.4.1 (2026-11-21)
 
