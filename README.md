@@ -137,9 +137,13 @@ local addresses otherwise). Then:
    the first every minute, as a host must: a peer ends a playback it
    hears nothing of for 2 minutes.
 
-`peers` lists the pairings and `end <id>` ends one. The comment at the top
-of [main.go](examples/share-folder/main.go) lists every command (key
-rotation, a stolen key, moving address, a server that can't be called).
+`peers` lists the pairings and `end <id>` ends one. Groups work the same
+way: `group-create <name>` in the first, `invite <group>` for a code the
+others redeem, `groups` to see the members and the requests waiting, and
+`pair <group> <mail>` to accept one. The comment at the top of
+[main.go](examples/share-folder/main.go) lists every command (key
+rotation, a stolen key, moving address, a server that can't be called,
+groups).
 
 ## Versions
 

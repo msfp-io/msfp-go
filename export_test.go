@@ -2,6 +2,7 @@ package msfp
 
 import (
 	"context"
+	"github.com/msfp-io/msfp-go/wire"
 	"time"
 )
 
@@ -65,3 +66,33 @@ func (e *Engine) TouchForTest(id string) {
 // SyncGroupsForTest reads every group's list now, and accepts the requests
 // that waited their days.
 func (e *Engine) SyncGroupsForTest(ctx context.Context) { e.syncGroupsNow(ctx, true) }
+
+// GroupEnvelopesForTest is a group's kept events, as envelopes.
+func (e *Engine) GroupEnvelopesForTest(ctx context.Context, id string) []wire.Envelope {
+	var out []wire.Envelope
+	_ = e.cfg.Store.Read(ctx, func(tx Tx) error {
+		g, err := tx.(GroupsTx).Group(id)
+		if g != nil {
+			out = envelopes(g.Events, g.Held)
+		}
+		return err
+	})
+	return out
+}
+
+// SeedGroupForTest makes an empty record of a group, as a newcomer has
+// before the list comes.
+func (e *Engine) SeedGroupForTest(ctx context.Context, id string) error {
+	return e.cfg.Store.Update(ctx, func(tx Tx) error {
+		g := GroupRecord{ID: id, Me: wire.Encode64(e.current().Public()), Pool: *e.cfg.NewPairing}
+		if err := e.newMailKey(&g); err != nil {
+			return err
+		}
+		return tx.(GroupsTx).PutGroup(g)
+	})
+}
+
+// ReceiveForTest is receive: events as a member passes them on.
+func (e *Engine) ReceiveForTest(ctx context.Context, id string, events []wire.Envelope) error {
+	return e.receive(ctx, id, events, nil, "")
+}

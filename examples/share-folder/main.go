@@ -22,6 +22,14 @@
 // "confirm <id>" accepts a peer's new key after comparing fingerprints.
 // "address <url>" moves this server (listen there too, so it reaches
 // itself); "uncallable on|off" says whether it can be called.
+//
+// Groups: "group-create <name>" founds one; "groups" lists them, with
+// their members, the requests and joins waiting; "invite <group>" makes a
+// code for it (redeemed with "redeem", accepted with "accept", or, from a
+// peer already, "join-accept <group> <peer>"); "pair <group> <mail>"
+// accepts a member's request, "refuse <group> <mail>" refuses it;
+// "group-offer <group>" shares the films with the group; "auto <group>
+// on|off" accepts its members by itself; "leave <group>" leaves it.
 package main
 
 import (
@@ -64,7 +72,7 @@ func main() {
 	}
 	cert := selfSigned(*address)
 	cfg := msfp.Config{Address: *address, Store: store, AllowLoopback: *loopback,
-		Pins: []string{wire.Pin(cert.Leaf)}, Notifier: printer{}, Parts: []string{"catalog", "playback", "media", "video"}}
+		Pins: []string{wire.Pin(cert.Leaf)}, Notifier: printer{}, Parts: []string{"catalog", "playback", "media", "video", "groups"}}
 	if *films != "" {
 		f := folder{*films}
 		cfg.Catalog, cfg.Playback, cfg.Media = f, f, f
@@ -164,6 +172,45 @@ func main() {
 			show("stopped", eng.Stop(ctx, arg, -1))
 		case "rescan":
 			eng.CatalogChanged()
+		case "group-create":
+			g, err := eng.CreateGroup(ctx, arg, msfp.GroupSettingsDefault)
+			show("group "+g.ID, err)
+		case "groups":
+			groups, err := eng.Groups(ctx)
+			for _, g := range groups {
+				fmt.Printf("group %s %q %s\n", g.ID, g.Name, g.Role)
+				for _, m := range g.Members {
+					fmt.Printf("  member %s %q %s peer=%s\n", m.ID, m.Name, m.Role, m.Peer)
+				}
+				for _, r := range g.Requests {
+					fmt.Printf("  request %s from %q\n", r.Mail, r.Name)
+				}
+				for _, j := range g.Joins {
+					fmt.Printf("  join %s %q\n", j.Peer, j.Name)
+				}
+			}
+			show("", err)
+		case "invite":
+			code, _, err := eng.MakeCodeWith(ctx, msfp.CodeOptions{Group: arg, Uses: 10})
+			show(code, err)
+		case "pair", "refuse", "join-accept", "auto":
+			group, rest, _ := strings.Cut(arg, " ")
+			var err error
+			switch cmd {
+			case "pair":
+				err = eng.AcceptRequest(ctx, group, rest)
+			case "refuse":
+				err = eng.RefuseRequest(ctx, group, rest)
+			case "join-accept":
+				err = eng.AcceptJoin(ctx, group, rest)
+			case "auto":
+				err = eng.SetGroupAnswer(ctx, group, rest == "on")
+			}
+			show("done", err)
+		case "group-offer":
+			show("offered", eng.SetGroupOffers(ctx, arg, []string{"films"}))
+		case "leave":
+			show("left", eng.LeaveGroup(ctx, arg, nil))
 		case "peers":
 			eng.PanelOpen()
 			peers, err := eng.Peers(ctx)
@@ -177,7 +224,8 @@ func main() {
 			show("", err)
 		default:
 			fmt.Println("code [note] | redeem <code> | accept <id> | end <id> | peers | rotate [key] | stolen [key|none] | " +
-				"confirm <id> | address <url> | uncallable on|off | offer <id> | want <id> | titles <id> | play <id> <key> | stop <playback> | rescan")
+				"confirm <id> | address <url> | uncallable on|off | offer <id> | want <id> | titles <id> | play <id> <key> | stop <playback> | rescan | " +
+				"group-create <name> | groups | invite <group> | pair <group> <mail> | refuse <group> <mail> | join-accept <group> <peer> | group-offer <group> | auto <group> on|off | leave <group>")
 		}
 	}
 }

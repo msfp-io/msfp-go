@@ -3,6 +3,9 @@ package msfp_test
 import (
 	"context"
 	"errors"
+	"fmt"
+	"github.com/msfp-io/msfp-go/wire"
+	"math/rand/v2"
 	"slices"
 	"testing"
 	"time"
@@ -651,5 +654,100 @@ func TestGroupJoinGivenUp(t *testing.T) {
 	}
 	if _, err := b.eng.Group(ctx, g.ID); !errors.Is(err, msfp.ErrNotFound) {
 		t.Errorf("B after 31 days: %v", err)
+	}
+}
+
+// A copy that gets a group's events one call at a time, in reverse and
+// shuffled orders, ends with the same group as the copy that signed them
+// (groups sections 3.2 and 3.5): what can't count yet waits, then counts.
+func TestGroupReceiveAnyOrder(t *testing.T) {
+	ctx := context.Background()
+	a, b, n, g := trio(t, msfp.Config{}, msfp.Config{}, msfp.Config{}, msfp.GroupSettingsDefault)
+	ga, _ := a.eng.Group(ctx, g.ID)
+	bID := memberNamed(ga, "B")
+	if err := a.eng.SetAdmin(ctx, g.ID, bID, true); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.eng.SetHeir(ctx, g.ID, memberNamed(ga, "N")); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.eng.SetGroupSettings(ctx, g.ID, "Family and friends", msfp.GroupSettings{WaitDays: 1, CapPerDay: 9}); err != nil {
+		t.Fatal(err)
+	}
+	settle(a, b, n)
+	want, _ := a.eng.Group(ctx, g.ID)
+	events := a.eng.GroupEnvelopesForTest(ctx, g.ID)
+	if len(events) < 8 {
+		t.Fatalf("only %d events", len(events))
+	}
+	summary := func(v msfp.GroupView) string {
+		var ms []string
+		for _, m := range v.Members {
+			ms = append(ms, m.ID+":"+m.Role+":"+m.Name)
+		}
+		slices.Sort(ms)
+		return fmt.Sprint(v.Name, v.Owner, v.Heir, v.Settings, ms)
+	}
+	orders := map[string][]wire.Envelope{"reversed": slices.Clone(events)}
+	slices.Reverse(orders["reversed"])
+	rng := rand.New(rand.NewPCG(3, 4))
+	for i := range 3 {
+		s := slices.Clone(events)
+		rng.Shuffle(len(s), func(i, j int) { s[i], s[j] = s[j], s[i] })
+		orders[fmt.Sprint("shuffled ", i)] = s
+	}
+	for name, order := range orders {
+		c := newServer(t, msfp.Config{Name: func() string { return "C" }})
+		if err := c.eng.SeedGroupForTest(ctx, g.ID); err != nil {
+			t.Fatal(err)
+		}
+		for _, ev := range order {
+			if err := c.eng.ReceiveForTest(ctx, g.ID, []wire.Envelope{ev}); err != nil {
+				t.Fatalf("%s: %v", name, err)
+			}
+		}
+		waitAll(c)
+		got, err := c.eng.Group(ctx, g.ID)
+		if err != nil || summary(got) != summary(want) {
+			t.Errorf("%s:\n%s\nwant\n%s (%v)", name, summary(got), summary(want), err)
+		}
+		if kept := len(c.eng.GroupEnvelopesForTest(ctx, g.ID)); kept != len(events) {
+			t.Errorf("%s: %d events kept, want %d", name, kept, len(events))
+		}
+	}
+}
+
+// An event whose predecessors never come is dropped after 30 days (groups
+// section 3.2); until then it is kept.
+func TestGroupPendingDropped(t *testing.T) {
+	ctx := context.Background()
+	clk := newClock(1800000000)
+	a := newServer(t, msfp.Config{Name: func() string { return "A" }, Clock: clk})
+	g, err := a.eng.CreateGroup(ctx, "Family", msfp.GroupSettingsDefault)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := a.eng.SetGroupSettings(ctx, g.ID, "", msfp.GroupSettings{WaitDays: 2, CapPerDay: 5}); err != nil {
+		t.Fatal(err)
+	}
+	events := a.eng.GroupEnvelopesForTest(ctx, g.ID)
+	last := events[len(events)-1]
+	c := newServer(t, msfp.Config{Name: func() string { return "C" }, Clock: clk})
+	if err := c.eng.SeedGroupForTest(ctx, g.ID); err != nil {
+		t.Fatal(err)
+	}
+	// The settings event alone: its member's earlier events missing.
+	if err := c.eng.ReceiveForTest(ctx, g.ID, []wire.Envelope{last}); err != nil {
+		t.Fatal(err)
+	}
+	clk.Add(29 * 24 * time.Hour)
+	_ = c.eng.ReceiveForTest(ctx, g.ID, nil)
+	if n := len(c.eng.GroupEnvelopesForTest(ctx, g.ID)); n != 1 {
+		t.Fatalf("after 29 days: %d events kept, want 1", n)
+	}
+	clk.Add(2 * 24 * time.Hour)
+	_ = c.eng.ReceiveForTest(ctx, g.ID, nil)
+	if n := len(c.eng.GroupEnvelopesForTest(ctx, g.ID)); n != 0 {
+		t.Errorf("after 31 days: %d events kept, want 0", n)
 	}
 }
