@@ -15,7 +15,7 @@ code works 30 days at most.
 Groups (MSFP groups part): `CreateGroup`, `Groups`, `Group`,
 `MakeCodeWith` (uses, lifetime, a group), `AcceptRequest`,
 `RefuseRequest`, `LiftRefusal`, `RequestMember`, `SetGroupAnswer`,
-`SetGroupOffers`, `SetGroupPool`, `SetAdmin`, `SetHeir`, `GiveGroup`,
+`SetGroupOffers`, `GroupOffers`, `SetGroupPool`, `SetAdmin`, `SetHeir`, `GiveGroup`,
 `SetGroupSettings`, `Ban`, `Unban`, `LeaveGroup`, `DissolveGroup`,
 `Block`. The calls `group-sync`, `group-push` and `group-pair`; the part
 `groups`. A store keeps groups by implementing `GroupsTx` (the shipped

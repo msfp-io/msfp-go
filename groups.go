@@ -410,6 +410,23 @@ func (e *Engine) SetGroupAnswer(ctx context.Context, id string, accept bool) err
 	return e.updateGroup(ctx, id, func(g *GroupRecord) { g.Accept = accept })
 }
 
+// GroupOffers lists the host's libraries, those offered to a group marked
+// Offered (as Offers does for a peer). Errors: ErrNotFound, ErrNoGroups.
+func (e *Engine) GroupOffers(ctx context.Context, id string) ([]Library, error) {
+	g, err := e.Group(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	libs, err := e.hostLibraries(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for i := range libs {
+		libs[i].Offered = slices.Contains(g.Offers, libs[i].ID)
+	}
+	return libs, nil
+}
+
 // SetGroupOffers sets the host libraries this server offers a group
 // (groups section 9; IDs that aren't the host's are left out): every link
 // through it is offered them, and their playbacks from libraries no longer

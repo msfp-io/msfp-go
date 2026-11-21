@@ -310,6 +310,9 @@ func TestGroupOffersAndPool(t *testing.T) {
 	if err := b.eng.SetGroupOffers(ctx, g.ID, []string{"films"}); err != nil {
 		t.Fatal(err)
 	}
+	if libs, err := b.eng.GroupOffers(ctx, g.ID); err != nil || !slices.ContainsFunc(libs, func(l msfp.Library) bool { return l.ID == "films" && l.Offered }) {
+		t.Errorf("B's group offers: %+v, %v", libs, err)
+	}
 	if err := b.eng.SetGroupPool(ctx, g.ID, msfp.Limits{Streams: 1, Transcodes: 0}); err != nil {
 		t.Fatal(err)
 	}
