@@ -1,5 +1,22 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- "No way in" (groups section 6). `GroupView.NoWayIn` says when this
+  server has no pairing through a group that has other members. Nothing
+  reaches those members from here, and nothing reaches here from them.
+  `GroupsCutBy(peer)` lists the groups that ending a pairing would cut
+  off, so a panel can say so before it ends.
+
+### Changed
+
+- A request mail is refused with `ErrNoWayIn` when this server has no
+  pairing through the group, where before it was kept but could never
+  leave. `RequestMember` returns that error, and any other error from its
+  request, instead of only logging it.
+
 ## v0.4.1 (2026-11-21)
 
 ### Fixed

@@ -68,7 +68,14 @@ type GroupView struct {
 	// Joins are peers already paired with this server that used its code
 	// for the group, waiting for AcceptJoin or RefuseJoin.
 	Joins []GroupJoinView
+	// NoWayIn: this server has no pairing through the group, and the group
+	// has other members: nothing reaches them from here, nor here from them
+	// (groups section 6, "No way in").
+	NoWayIn bool
 }
+
+// GroupRef names a group.
+type GroupRef struct{ ID, Name string }
 
 // GroupJoinView is a peer waiting to join a group through this server.
 type GroupJoinView struct {
@@ -165,6 +172,7 @@ func (e *Engine) groupView(g *GroupRecord, peers []PeerRecord) GroupView {
 		v.Members = append(v.Members, mv)
 	}
 	slices.SortFunc(v.Members, func(a, b GroupMemberView) int { return int(a.Joined.Sub(b.Joined)) })
+	v.NoWayIn = e.cutOff(g, s, peers, "")
 	for id := range s.Banned {
 		b := GroupBanView{ID: id, Reason: s.Reasons[id]}
 		if m, ok := s.WasBanned[id]; ok {
@@ -218,6 +226,56 @@ func (e *Engine) Groups(ctx context.Context) ([]GroupView, error) {
 			out = append(out, e.groupView(&gs[i], peers))
 		}
 		return err
+	})
+	return out, err
+}
+
+// wayIn says whether this server has a pairing through the group, but for
+// the peer except: the links events and mail travel on (groups section 6).
+func (e *Engine) wayIn(id string, peers []PeerRecord, except string) bool {
+	return slices.ContainsFunc(peers, func(p PeerRecord) bool {
+		return p.ID != except && p.State == Paired && slices.Contains(p.Groups, id) && e.on(&p, wire.PartGroups)
+	})
+}
+
+// cutOff says whether this server, a member of the group with others in
+// it, has no way in (without the peer except).
+func (e *Engine) cutOff(g *GroupRecord, s *wire.GroupState, peers []PeerRecord, except string) bool {
+	if s.Dissolved || s.Members[g.Me] == nil || len(s.Members) < 2 {
+		return false
+	}
+	return !e.wayIn(g.ID, peers, except)
+}
+
+// GroupsCutBy lists the groups that ending the pairing with this peer
+// would leave this server with no way in: the panel says so before it
+// ends (groups section 6, "No way in").
+func (e *Engine) GroupsCutBy(ctx context.Context, peer string) ([]GroupRef, error) {
+	var out []GroupRef
+	err := e.cfg.Store.Read(ctx, func(tx Tx) error {
+		gt, err := groupsTx(tx)
+		if err != nil {
+			if errors.Is(err, ErrNoGroups) {
+				return nil
+			}
+			return err
+		}
+		gs, err := gt.Groups()
+		if err != nil {
+			return err
+		}
+		peers, err := tx.Peers()
+		if err != nil {
+			return err
+		}
+		for i := range gs {
+			g := &gs[i]
+			s := e.stateOf(g)
+			if e.wayIn(g.ID, peers, "") && e.cutOff(g, s, peers, peer) {
+				out = append(out, GroupRef{ID: g.ID, Name: s.Name})
+			}
+		}
+		return nil
 	})
 	return out, err
 }
@@ -907,6 +965,9 @@ func (e *Engine) sendRequests(ctx context.Context, id string, to []string) error
 	e.log.Debug("msfp: group requests", "group", id, "to", len(targets))
 	for _, m := range targets {
 		if err := e.sendMail(ctx, id, m, "request", ""); err != nil {
+			if to != nil {
+				return err // asked for by the operator: the panel says why
+			}
 			e.log.Info("msfp: a group request couldn't be made", "group", id, "error", err)
 		}
 	}
@@ -931,6 +992,13 @@ func (e *Engine) sendMail(ctx context.Context, id, to, kind, answers string) err
 		m := s.Members[to]
 		if m == nil || m.EncryptionKey == nil {
 			return ErrNotMember
+		}
+		peers, err := tx.Peers()
+		if err != nil {
+			return err
+		}
+		if !e.wayIn(id, peers, "") {
+			return ErrNoWayIn
 		}
 		raw, err := e.random(16)
 		if err != nil {

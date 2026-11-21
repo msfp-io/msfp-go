@@ -812,3 +812,67 @@ func TestGroupPendingDropped(t *testing.T) {
 		t.Errorf("after 31 days: %d events kept, want 0", n)
 	}
 }
+
+// No way in (groups section 6): ending a server's last pairing through a
+// group is named before it ends; afterwards the group says so, and a
+// request to a member is refused rather than kept where it can't leave.
+func TestGroupNoWayIn(t *testing.T) {
+	ctx := context.Background()
+	a := newServer(t, msfp.Config{Name: func() string { return "A" }})
+	b := newServer(t, msfp.Config{Name: func() string { return "B" }})
+	n := newServer(t, msfp.Config{Name: func() string { return "N" }})
+	g, err := a.eng.CreateGroup(ctx, "Family", msfp.GroupSettingsDefault)
+	if err != nil {
+		t.Fatal(err)
+	}
+	joinGroup(t, a, b, g.ID)
+	settle(a, b)
+	peerNamed := func(s *server, name string) string {
+		for _, p := range mustPeers(t, s) {
+			if p.Name == name {
+				return p.ID
+			}
+		}
+		t.Fatalf("no peer %s", name)
+		return ""
+	}
+	bOnA, aOnB := peerNamed(a, "B"), peerNamed(b, "A")
+	for _, c := range []struct {
+		s    *server
+		peer string
+	}{{a, bOnA}, {b, aOnB}} {
+		cut, err := c.s.eng.GroupsCutBy(ctx, c.peer)
+		if err != nil || len(cut) != 1 || cut[0].ID != g.ID || cut[0].Name != "Family" {
+			t.Fatalf("cut by %s: %+v %v", c.peer, cut, err)
+		}
+	}
+	// A second way in for A: ending B no longer cuts A off.
+	joinGroup(t, a, n, g.ID)
+	settle(a, b, n)
+	if cut, err := a.eng.GroupsCutBy(ctx, bOnA); err != nil || len(cut) != 0 {
+		t.Fatalf("A has N too: %+v %v", cut, err)
+	}
+	if cut, err := b.eng.GroupsCutBy(ctx, aOnB); err != nil || len(cut) != 1 {
+		t.Fatalf("B's only way in is A: %+v %v", cut, err)
+	}
+	if err := b.eng.End(ctx, aOnB); err != nil {
+		t.Fatal(err)
+	}
+	settle(a, b, n)
+	gb, err := b.eng.Group(ctx, g.ID)
+	if err != nil || !gb.NoWayIn {
+		t.Fatalf("B: %+v %v", gb.NoWayIn, err)
+	}
+	if ga, _ := a.eng.Group(ctx, g.ID); ga.NoWayIn {
+		t.Fatal("A has a way in, through N")
+	}
+	nID := ""
+	for _, m := range gb.Members {
+		if m.Name == "N" {
+			nID = m.ID
+		}
+	}
+	if err := b.eng.RequestMember(ctx, g.ID, nID); !errors.Is(err, msfp.ErrNoWayIn) {
+		t.Fatalf("B's request: %v", err)
+	}
+}

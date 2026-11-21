@@ -95,6 +95,9 @@ var (
 	ErrNoGroups  = &Error{Code: "NoGroups"}  // the store keeps no groups (GroupsTx)
 	ErrNoRight   = &Error{Code: "NoRight"}   // this server's role in the group doesn't allow it
 	ErrNotMember = &Error{Code: "NotMember"} // not a member of the group (or the group is gone)
+	// ErrNoWayIn: this server has no pairing through the group, so a mail
+	// it sends can't leave it (groups section 6, "No way in").
+	ErrNoWayIn = &Error{Code: "NoWayIn"}
 	// ErrAlreadyMember: already in the group, banned from it, or waiting
 	// to join it (a group's code from a peer already).
 	ErrAlreadyMember = &Error{Code: "AlreadyMember"}
