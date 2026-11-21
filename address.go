@@ -708,7 +708,9 @@ func (e *Engine) doneConfirming(id string) {
 // background runs fn in the background, with a time bound, outside any
 // request: what a call or a hello started.
 func (e *Engine) background(fn func(context.Context)) {
+	e.bgActive.Add(1)
 	e.bg.Go(func() {
+		defer e.bgActive.Add(-1)
 		ctx, cancel := context.WithTimeout(context.Background(), 4*callTimeout)
 		defer cancel()
 		fn(ctx)

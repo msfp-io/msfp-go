@@ -36,6 +36,10 @@ const (
 	maxKeptMail         = 1000
 )
 
+// GroupSettings are a group's settings: the days before a member's
+// requests are accepted automatically, and invitations a day per inviter.
+type GroupSettings = wire.GroupSettings
+
 // GroupSettingsDefault are a group's settings by default: 3 days before
 // automatic acceptance, 5 invitations a day per inviter.
 var GroupSettingsDefault = wire.DefaultGroupSettings
@@ -399,9 +403,66 @@ func (e *Engine) SetGroupAnswer(ctx context.Context, id string, accept bool) err
 }
 
 // SetGroupOffers sets the host libraries this server offers a group
-// (groups section 9); every link through it is offered them.
+// (groups section 9; IDs that aren't the host's are left out): every link
+// through it is offered them, and their playbacks from libraries no longer
+// offered end. Error: ErrNotFound.
 func (e *Engine) SetGroupOffers(ctx context.Context, id string, libraries []string) error {
-	return e.updateGroup(ctx, id, func(g *GroupRecord) { g.Offers = slices.Clone(libraries) })
+	ours, err := e.hostLibraries(ctx)
+	if err != nil {
+		return err
+	}
+	var keep []string
+	for _, l := range ours {
+		if slices.Contains(libraries, l.ID) && !slices.Contains(keep, l.ID) {
+			keep = append(keep, l.ID)
+		}
+	}
+	slices.Sort(keep)
+	mark, err := e.seqMark(ctx)
+	if err != nil {
+		return err
+	}
+	err = e.cfg.Store.Update(ctx, func(tx Tx) error {
+		gt, err := groupsTx(tx)
+		if err != nil {
+			return err
+		}
+		g, err := gt.Group(id)
+		if err != nil || g == nil {
+			return cmpErr(err, ErrNotFound)
+		}
+		if _, err := e.publicIDs(tx, keep); err != nil {
+			return err
+		}
+		g.Offers = keep
+		if err := gt.PutGroup(*g); err != nil {
+			return err
+		}
+		return e.refreshLinksAt(tx, mark)
+	})
+	if err != nil {
+		return err
+	}
+	e.bumpLog(ctx)
+	e.endPlaybacksNotOffered(ctx)
+	return nil
+}
+
+// endPlaybacksNotOffered ends the playbacks from libraries their link is no
+// longer offered (playback section 6.3).
+func (e *Engine) endPlaybacksNotOffered(ctx context.Context) {
+	offers := map[string][]string{}
+	_ = e.cfg.Store.Read(ctx, func(tx Tx) error {
+		peers, err := tx.Peers()
+		for _, p := range peers {
+			offers[p.ID] = offered(&p)
+		}
+		return err
+	})
+	e.endPlaybacks(func(pb *playback) bool {
+		o, ok := offers[pb.peer]
+		return ok && pb.library != "" && !slices.Contains(o, pb.library)
+	}, EndNotOffered)
 }
 
 // SetGroupPool sets the pool this server lends a group: streams,
@@ -1089,7 +1150,11 @@ func (e *Engine) afterEvents(tx Tx, g *GroupRecord, s *wire.GroupState, effects 
 // refreshLinks copies onto every link what its groups give it: their
 // offers and pools (groups section 9), and moves its offers' change number
 // when they change.
-func (e *Engine) refreshLinks(tx Tx) error {
+func (e *Engine) refreshLinks(tx Tx) error { return e.refreshLinksAt(tx, e.own.seqSeen.Load()) }
+
+// refreshLinksAt is refreshLinks with the change number the offers were
+// set after (seqMark).
+func (e *Engine) refreshLinksAt(tx Tx, mark int64) error {
 	gt, err := groupsTx(tx)
 	if err != nil {
 		return nil
@@ -1128,10 +1193,8 @@ func (e *Engine) refreshLinks(tx Tx) error {
 		changed := !slices.Equal(offers, p.GroupOffers)
 		p.GroupOffers, p.Pools = offers, pools
 		if changed {
-			if lt, ok := tx.(OwnLogTx); ok {
-				if n, err := lt.BumpOwnSeq(); err == nil {
-					p.OffersSeq = n
-				}
+			if p.OffersSeq, err = e.offersSeq(tx, mark); err != nil {
+				return err
 			}
 		}
 		if err := tx.PutPeer(p); err != nil {
@@ -1226,8 +1289,11 @@ func (e *Engine) pushTo(to []PeerRecord, id string, events []StoredEvent, mail [
 }
 
 // syncGroups reads each group's list from one of its paired members, at
-// random (run from the engine's loop).
-func (e *Engine) syncGroups(ctx context.Context) {
+// random (run from the engine's loop), and accepts the requests that waited
+// their days where this server accepts members by itself.
+func (e *Engine) syncGroups(ctx context.Context) { e.syncGroupsNow(ctx, false) }
+
+func (e *Engine) syncGroupsNow(ctx context.Context, force bool) {
 	var groups []GroupRecord
 	_ = e.cfg.Store.Read(ctx, func(tx Tx) error {
 		gt, err := groupsTx(tx)
@@ -1242,7 +1308,8 @@ func (e *Engine) syncGroups(ctx context.Context) {
 		every = groupSyncUncallable
 	}
 	for _, g := range groups {
-		if e.now().Sub(g.Synced) < every-every/5+time.Duration(rand.Int64N(int64(every/5*2))) {
+		e.acceptWaited(ctx, g.ID)
+		if !force && e.now().Sub(g.Synced) < every-every/5+time.Duration(rand.Int64N(int64(every/5*2))) {
 			continue
 		}
 		peers := e.groupPeers(ctx, g.ID, "")
@@ -1876,4 +1943,43 @@ func isMember(m *wire.GroupMember, p *PeerRecord) bool {
 		}
 	}
 	return false
+}
+
+// acceptWaited accepts, where this server accepts members by itself, the
+// requests whose senders have now been in the group its days (groups
+// section 4.1).
+func (e *Engine) acceptWaited(ctx context.Context, id string) {
+	var ready []GroupRequest
+	err := e.cfg.Store.Update(ctx, func(tx Tx) error {
+		gt, err := groupsTx(tx)
+		if err != nil {
+			return err
+		}
+		g, err := gt.Group(id)
+		if err != nil || g == nil || !g.Accept || len(g.Requests) == 0 {
+			return err
+		}
+		s := e.stateOf(g)
+		var keep []GroupRequest
+		for _, r := range g.Requests {
+			if e.waited(s, r.From) {
+				ready = append(ready, r)
+			} else {
+				keep = append(keep, r)
+			}
+		}
+		if len(ready) == 0 {
+			return nil
+		}
+		g.Requests = keep
+		return gt.PutGroup(*g)
+	})
+	if err != nil {
+		return
+	}
+	for _, r := range ready {
+		if err := e.answerRequest(ctx, id, r); err != nil {
+			e.log.Info("msfp: a request that waited its days couldn't be accepted", "group", id, "error", err)
+		}
+	}
 }

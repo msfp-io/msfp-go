@@ -20,6 +20,9 @@ import (
 // plugs in through Config. One engine per server, for the life of the
 // process; it is safe to use from many goroutines at once.
 type Engine struct {
+	// bgActive counts the background work running (for the tests, which
+	// wait for it without racing new work on the WaitGroup).
+	bgActive atomic.Int64
 	// groupsTick is when the groups were last looked at for a sync.
 	groupsTick time.Time
 	cfg        Config

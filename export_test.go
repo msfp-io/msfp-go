@@ -1,6 +1,9 @@
 package msfp
 
-import "context"
+import (
+	"context"
+	"time"
+)
 
 // For the tests of package msfp_test: the late ends of a change of key,
 // called by hand, as if learnt after the next change began.
@@ -18,7 +21,18 @@ func (e *Engine) PeerMovedForTest(ctx context.Context, id string, current []byte
 
 // WaitForTest waits for the work the engine started in the background
 // (confirmations of peers' new addresses, discovery documents fetched).
-func (e *Engine) WaitForTest() { e.bg.Wait() }
+func (e *Engine) WaitForTest() {
+	// Until no background work runs, twice in a row a few milliseconds
+	// apart: work started by another engine's call may begin meanwhile.
+	for quiet := 0; quiet < 2; {
+		if e.bgActive.Load() == 0 {
+			quiet++
+		} else {
+			quiet = 0
+		}
+		time.Sleep(3 * time.Millisecond)
+	}
+}
 
 // FetchBaseForTest is fetchBase: the base path address's discovery
 // document gives ("" for the default).
@@ -47,3 +61,7 @@ func (e *Engine) TouchForTest(id string) {
 		e.used(pb)
 	}
 }
+
+// SyncGroupsForTest reads every group's list now, and accepts the requests
+// that waited their days.
+func (e *Engine) SyncGroupsForTest(ctx context.Context) { e.syncGroupsNow(ctx, true) }
