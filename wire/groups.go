@@ -187,8 +187,7 @@ type GroupState struct {
 	Keep      bool // dissolved with keepPairings
 	OwnerSeq  int64
 
-	seq        map[string]int64            // member -> last kept seq
-	payloads   map[string]map[int64]string // member -> seq -> payload
+	seq        map[string]int64 // member -> last kept seq
 	adminLog   []adminChange
 	removedAt  map[string]int64     // admin -> the last seq that counts
 	bannedAt   map[string]int64     // banned -> the last seq that counts
@@ -197,7 +196,6 @@ type GroupState struct {
 	capRank    map[string]int       // joined event ID -> its rank in its inviter's UTC day
 	everMember map[string]bool      // members that were named by a counted founded or joined
 	highest    map[string]int64     // member -> its highest seq kept, whatever its verdict
-	ids        map[string]bool      // event IDs replayed
 }
 
 type adminChange struct {
@@ -214,9 +212,9 @@ type keyFrom struct {
 // NewGroupState is an empty copy, before its founded event.
 func NewGroupState() *GroupState {
 	return &GroupState{Members: map[string]*GroupMember{}, Banned: map[string]string{}, Reasons: map[string]string{}, WasBanned: map[string]GroupMember{},
-		Settings: DefaultGroupSettings, seq: map[string]int64{}, payloads: map[string]map[int64]string{},
+		Settings: DefaultGroupSettings, seq: map[string]int64{},
 		removedAt: map[string]int64{}, bannedAt: map[string]int64{}, revoked: map[string]keyFrom{},
-		keys: map[string][]keyFrom{}, capRank: map[string]int{}, everMember: map[string]bool{}, highest: map[string]int64{}, ids: map[string]bool{}}
+		keys: map[string][]keyFrom{}, capRank: map[string]int{}, everMember: map[string]bool{}, highest: map[string]int64{}}
 }
 
 // Seq is a member's last kept seq.
@@ -271,13 +269,6 @@ func (s *GroupState) keyAt(member string, seq int64) string {
 	}
 	return k
 }
-
-// ErrHeld is an event that waits: its predecessors, or the owner event its
-// asOf names, haven't arrived.
-var ErrHeld = errors.New("msfp: an event waiting for earlier ones")
-
-// ErrKept is an event this copy has already.
-var ErrKept = errors.New("msfp: an event already kept")
 
 // Verdict is what the state makes of an event a member keeps (groups
 // sections 3.2 and 3.5).
@@ -469,6 +460,17 @@ func replay(events []*kept, c cuts, capRank map[string]int) (*GroupState, map[st
 	return s, results, next
 }
 
+// rotationStatementJSON is a rotated event's statement, its members read
+// by their exact names.
+type rotationStatementJSON struct {
+	OldKey         string `json:"oldKey"`
+	NewKey         string `json:"newKey"`
+	NextCommitment string `json:"nextCommitment"`
+	Date           int64  `json:"date"`
+	OldSignature   string `json:"oldSignature"`
+	NewSignature   string `json:"newSignature"`
+}
+
 // signedByMember says whether an event is its member's: signed with the
 // member's key in force at its seq, or, for rotated, a statement from that
 // key to the signer that verifies.
@@ -477,12 +479,8 @@ func (s *GroupState) signedByMember(ev Event) bool {
 	if ev.Type != EventRotated {
 		return ev.Signer == cur
 	}
-	var st struct {
-		OldKey, NewKey, NextCommitment string
-		Date                           int64
-		OldSignature, NewSignature     string
-	}
-	if json.Unmarshal(ev.Statement, &st) != nil || st.OldKey != cur || st.NewKey != ev.Signer {
+	var st rotationStatementJSON
+	if DecodeEntry(ev.Statement, &st) != nil || st.OldKey != cur || st.NewKey != ev.Signer {
 		return false
 	}
 	old, _ := Decode64(st.OldKey, 32)
@@ -615,13 +613,8 @@ func isOwnerEvent(t string) bool {
 
 func isAdminEvent(t string) bool { return t == EventJoined || t == EventBanned }
 
-func (s *GroupState) keep(ev Event, b []byte, id string) {
+func (s *GroupState) keep(ev Event, _ []byte, _ string) {
 	s.seq[ev.Member] = ev.Seq
-	if s.payloads[ev.Member] == nil {
-		s.payloads[ev.Member] = map[int64]string{}
-	}
-	s.payloads[ev.Member][ev.Seq] = string(b)
-	s.ids[id] = true
 }
 
 func (s *GroupState) remove(member string) {
@@ -770,12 +763,8 @@ func (s *GroupState) applyType(ev Event, id string, owner, admin bool) error {
 		s.Dissolved = true
 		s.Keep = ev.KeepPairings != nil && *ev.KeepPairings
 	case EventRotated:
-		var st struct {
-			OldKey, NewKey, NextCommitment string
-			Date                           int64
-			OldSignature, NewSignature     string
-		}
-		if json.Unmarshal(ev.Statement, &st) != nil {
+		var st rotationStatementJSON
+		if DecodeEntry(ev.Statement, &st) != nil {
 			return errors.New("not a rotation statement")
 		}
 		cur := s.keyAt(ev.Member, ev.Seq)
@@ -807,11 +796,11 @@ func (s *GroupState) applyType(ev Event, id string, owner, admin bool) error {
 		}
 	case EventRevoked:
 		var st struct {
-			Key       string
-			Date      int64
-			Signature string
+			Key       string `json:"key"`
+			Date      int64  `json:"date"`
+			Signature string `json:"signature"`
 		}
-		if json.Unmarshal(ev.Statement, &st) != nil || ev.LastSeq == nil {
+		if DecodeEntry(ev.Statement, &st) != nil || ev.LastSeq == nil {
 			return errors.New("not a revocation statement")
 		}
 		k, _ := Decode64(st.Key, 32)

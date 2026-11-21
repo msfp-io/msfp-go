@@ -45,7 +45,9 @@ checks before keeping one, `wire.Verdict` and `wire.EventResult` say
 whether each counts. `GroupState.Apply` is gone; `GroupState.Highest`
 gives the seq a member signs next. Events that don't count are kept and
 passed on too; `GroupRecord.Held` is no longer written (its events are
-read as kept ones).
+read as kept ones). `wire.ErrHeld` and `wire.ErrKept` are gone. Rotation
+and revocation statements in group events are read by their exact member
+names.
 
 
 ## v0.3.0 (2026-11-19)
