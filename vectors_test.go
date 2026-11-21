@@ -20,7 +20,7 @@ import (
 )
 
 // The vectors of MSFP core section 17 (vectors/v1/, copied in
-// wire/testdata/v1/), through two engines: their pair exchange byte for
+// wire/testdata/v0/), through two engines: their pair exchange byte for
 // byte both ways, the hello and play requests a peer receives, and the
 // hello answers a caller reads.
 
@@ -39,7 +39,7 @@ func readVectors(t *testing.T) (map[string]vector, map[string]struct{ Seed, Publ
 	}
 	var code struct{ Code struct{ Secret, Text string } }
 	for name, v := range map[string]any{"exchanges.json": &ex, "keys.json": &keys, "code.json": &code} {
-		b, err := os.ReadFile("wire/testdata/v1/" + name)
+		b, err := os.ReadFile("wire/testdata/v0/" + name)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -143,11 +143,11 @@ func TestVectorsThroughEngines(t *testing.T) {
 		res.Header().Get("Content-Type"), res.Body.Bytes(), res.Header().Get("MSFP-Signature")) != nil {
 		t.Fatalf("B's hello answer: %d %s", res.Code, res.Body)
 	}
-	if !strings.HasPrefix(res.Body.String(), `{"state":"paired","core":[1],"parts":{}`) {
+	if !strings.HasPrefix(res.Body.String(), `{"state":"paired","core":[0],"parts":{}`) {
 		t.Errorf("B's hello answer: %s", res.Body)
 	}
 	recB := peerRecord(t, storeB, onB.ID)
-	wantVersions := wire.Versions{Core: []int{1}, Parts: map[string][]int{"catalog": {1}, "playback": {1}, "media": {1}, "video": {1}}}
+	wantVersions := wire.Versions{Core: []int{0}, Parts: map[string][]int{"catalog": {0}, "playback": {0}, "media": {0}, "video": {0}}}
 	if recB.State != msfp.Paired || !reflect.DeepEqual(*recB.Versions, wantVersions) ||
 		!reflect.DeepEqual(recB.Pins, []string{"JN-hf1COiASAAUsiYeHXMNVvNnxYR2dKYnBT2Zx_6Fo"}) {
 		t.Errorf("A on B: %+v", recB)
@@ -189,7 +189,7 @@ func TestVectorsThroughEngines(t *testing.T) {
 		t.Fatal(err)
 	}
 	recA := peerRecord(t, storeA, onA.ID)
-	if recA.State != msfp.Ours || !reflect.DeepEqual(*recA.Versions, wire.Versions{Core: []int{1}, Parts: map[string][]int{"catalog": {1}}}) ||
+	if recA.State != msfp.Ours || !reflect.DeepEqual(*recA.Versions, wire.Versions{Core: []int{0}, Parts: map[string][]int{"catalog": {0}}}) ||
 		!reflect.DeepEqual(recA.Pins, []string{"E7UUIjYbkigLNKPjmSGixyA-pslmiFKckCEX_A6IZlM"}) {
 		t.Errorf("B on A: %+v", recA)
 	}
@@ -246,7 +246,7 @@ func peerRecord(t *testing.T, st msfp.Store, id string) msfp.PeerRecord {
 func keyVector(t *testing.T, file string) vector {
 	t.Helper()
 	var f struct{ Exchange vector }
-	b, err := os.ReadFile("wire/testdata/v1/" + file)
+	b, err := os.ReadFile("wire/testdata/v0/" + file)
 	if err != nil {
 		t.Fatal(err)
 	}

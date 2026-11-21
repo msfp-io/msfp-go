@@ -54,7 +54,7 @@ type TitleKey struct {
 	Playable bool
 }
 
-// ParseKey reads a title key of either content part of version 1, in
+// ParseKey reads a title key of either content part of version 0, in
 // its canonical form only; false for any other text.
 func ParseKey(key string) (TitleKey, bool) {
 	if k, ok := ParseVideoKey(key); ok {

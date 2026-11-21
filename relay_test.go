@@ -253,7 +253,7 @@ func TestHostilePlayAnswers(t *testing.T) {
 // playlists, WebVTT and PGS parts become on the way to the viewer.
 func TestMediaVectorsThroughRelay(t *testing.T) {
 	ctx := context.Background()
-	raw, err := os.ReadFile("wire/testdata/v1/media.json")
+	raw, err := os.ReadFile("wire/testdata/v0/media.json")
 	if err != nil {
 		t.Fatal(err)
 	}

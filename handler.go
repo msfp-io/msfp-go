@@ -246,7 +246,7 @@ func (e *Engine) check(req *request, call string) (free func(), res response, ok
 		}
 		// No core in common: every call but hello is not-supported
 		// (sections 10.3, 10.4); pair from a known key gets its own 409.
-		if core, _ := e.agreed(p); core == 0 && call != callHello && call != callPair {
+		if core, _ := e.agreed(p); core < 0 && call != callHello && call != callPair {
 			return nil, refuse(probNotSupported), false
 		}
 		key = wire.Encode64(v.Key)

@@ -29,10 +29,6 @@ var needs = map[string][]string{
 	PartMusic:    {PartCatalog, PartPlayback, PartMedia},
 }
 
-// contentParts don't work with version 0 of the parts they need (core
-// section 10.1).
-var contentParts = []string{PartVideo, PartMusic}
-
 // Versions is what a hello lists: the core versions its sender speaks,
 // and each part's.
 type Versions struct {
@@ -113,8 +109,8 @@ func highest(a, b []int) (int, bool) {
 
 // Agreed is what two servers use between them (core section 10.3): the
 // core version, and each part that is on with its version. A part is on
-// when both list a version of it, and every part it needs is on; a
-// content part needs those at version 1 or more. ok is false when the two
+// when both list a version of it, and every part it needs is on. ok is
+// false when the two
 // have no core version in common: they can't talk, and no part is on.
 func Agreed(ours, theirs Versions) (core int, parts map[string]int, ok bool) {
 	parts = map[string]int{}
@@ -133,8 +129,7 @@ func Agreed(ours, theirs Versions) (core int, parts map[string]int, ok bool) {
 		changed = false
 		for name := range parts {
 			for _, need := range needs[name] {
-				n, on := parts[need]
-				if !on || (slices.Contains(contentParts, name) && n < 1) {
+				if _, on := parts[need]; !on {
 					delete(parts, name)
 					changed = true
 					break

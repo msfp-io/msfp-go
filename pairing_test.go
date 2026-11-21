@@ -56,10 +56,10 @@ func TestPairing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if paired.State != msfp.Paired || paired.Core != 1 {
+	if paired.State != msfp.Paired || paired.Core != 0 {
 		t.Errorf("on A: %+v", paired)
 	}
-	if p := onlyPeer(t, b.eng); p.State != msfp.Paired || p.Core != 1 || p.Paired.IsZero() {
+	if p := onlyPeer(t, b.eng); p.State != msfp.Paired || p.Core != 0 || p.Paired.IsZero() {
 		t.Errorf("on B: %+v", p)
 	}
 	if _, err := a.eng.Accept(ctx, ours.ID); !errors.Is(err, msfp.ErrNotWaiting) {

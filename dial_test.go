@@ -11,7 +11,7 @@ import (
 // 3.3): the IP addresses a server connects to for a peer by default, or
 // refuses, through refusedDestination with loopback not allowed.
 func TestDestinationVectors(t *testing.T) {
-	b, err := os.ReadFile("wire/testdata/v1/strict.json")
+	b, err := os.ReadFile("wire/testdata/v0/strict.json")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -16,7 +16,7 @@ storage, catalog, playback and media through a few interfaces; it writes
 none of the protocol itself.
 
 - The protocol: [msfp-io/msfp-spec](https://github.com/msfp-io/msfp-spec),
-  version 1 ([spec/v1](https://github.com/msfp-io/msfp-spec/tree/main/spec/v1)).
+  version 0, a draft until version 1 ([spec/v0](https://github.com/msfp-io/msfp-spec/tree/main/spec/v0)).
 - The engine's API in words: [api/](https://github.com/msfp-io/msfp-spec/tree/main/api)
   in the spec's repository, mainly
   [engine.md](https://github.com/msfp-io/msfp-spec/blob/main/api/engine.md)
@@ -146,8 +146,8 @@ major.minor version is shared with the other MSFP engines (msfp-dotnet, to
 come): msfp-go 0.2.x and msfp-dotnet 0.2.x follow the same API design
 (the spec's api/). Patch versions are each library's own.
 
-The module's version is separate from the protocol's: v0.2.0 speaks MSFP
-version 1. Before 1.0, the API may change between minor versions.
+The module's version is separate from the protocol's: v0.3.0 speaks MSFP
+version 0 (numbered 1 before 2026-11-20). Before 1.0, the API may change between minor versions.
 
 ## Testing
 
@@ -160,13 +160,14 @@ The engine's tests run whole servers against each other in one process.
 The protocol's test vectors under [wire/testdata](wire/testdata) come
 from the spec's
 [vectors/](https://github.com/msfp-io/msfp-spec/tree/main/vectors),
-copied as they are: `wire/testdata/v1/` is the spec's `vectors/v1/`, and
-`wire/testdata/v0-strict.json` its `vectors/v0-strict.json`. To refresh
+copied as they are: `wire/testdata/v0/` is the spec's `vectors/v0/`, and
+`wire/testdata/test-draft-strict.json` its
+`vectors/history/test-draft-strict.json`. To refresh
 them, copy those files from a checkout of msfp-spec and run the tests:
 
 ```sh
-cp ../msfp-spec/vectors/v1/*.json wire/testdata/v1/
-cp ../msfp-spec/vectors/v0-strict.json wire/testdata/
+cp ../msfp-spec/vectors/v0/*.json wire/testdata/v0/
+cp ../msfp-spec/vectors/history/test-draft-strict.json wire/testdata/
 go test ./...
 ```
 

@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
+	"unicode/utf8"
 )
 
 // A pairing code is what an operator sends another, however they like, to
@@ -25,33 +26,48 @@ import (
 //     someone changed on the way);
 //   - a secret, used once, which proves the server redeeming the code is
 //     the one it was sent to;
-//   - when the code stops working (a day after it was made).
+//   - when the code stops working (a day after it was made, by default);
+//   - for a group's code, the group it invites to: its ID and name (MSFP
+//     groups section 2).
 //
-// The code is text, one line, easy to paste: "msfp-pair-1." then the
-// rest in URL-safe base64 (MSFP core section 5).
+// The code is text, one line, easy to paste: "msfp-pair-0." then the
+// rest in URL-safe base64 (MSFP core section 5). How many servers may use
+// it isn't in the code: its maker counts.
 type Code struct {
 	Address string
 	Key     ed25519.PublicKey
 	Secret  []byte
 	Expires time.Time
+	// Group is the group's ID (32 bytes) for a group's code, nil for
+	// none; GroupName its name, cleaned.
+	Group     []byte
+	GroupName string
 }
 
 // codePrefix names the format and the core version it pairs in, so a
 // code of another version is told apart instead of misread.
-const codePrefix = "msfp-pair-1."
+const codePrefix = "msfp-pair-0."
 
 // SecretSize is the secret's length: 32 random bytes, never guessed.
 const SecretSize = 32
 
-// CodeLifetime is how long a pairing code works.
-const CodeLifetime = 24 * time.Hour
+// CodeLifetime is how long a pairing code works by default;
+// MaxCodeLifetime, at most (core section 5.1).
+const (
+	CodeLifetime    = 24 * time.Hour
+	MaxCodeLifetime = 30 * 24 * time.Hour
+)
+
+// MaxGroupName is a group name's length at most, in code points once
+// cleaned; in bytes, a code carries at most 255 of it.
+const MaxGroupName = 80
 
 // maxAddress caps a code's address, so a code can't be made huge.
 const maxAddress = 512
 
-// maxCode caps a code's text after its prefix: 72 bytes and the longest
-// address, in base64url (core section 5.1).
-const maxCode = ((ed25519.PublicKeySize+SecretSize+8+maxAddress)*8 + 5) / 6 // 779
+// maxCode caps a code's text after its prefix: 73 bytes, a group's 288
+// at most and the longest address, in base64url (core section 5.1).
+const maxCode = ((ed25519.PublicKeySize+SecretSize+8+1+32+1+255+maxAddress)*8 + 5) / 6 // 1,164
 
 // ErrCode is returned for any text that isn't a valid pairing code.
 var ErrCode = errors.New("federation: not a valid pairing code")
@@ -82,12 +98,25 @@ func NewCode(address string, public ed25519.PublicKey, now time.Time) (Code, err
 // String is the code as text, to show and copy.
 //
 // Its bytes: the public key (32), the secret (32), when it expires (8, Unix
-// seconds, big-endian), then the address.
+// seconds, big-endian), a flag (1: a group follows, 0: none), for a group
+// its ID (32), its name's length (1) and its name, then the address.
 func (c Code) String() string {
-	b := make([]byte, 0, ed25519.PublicKeySize+SecretSize+8+len(c.Address))
+	name := c.GroupName
+	if len(name) > 255 {
+		name = CleanText(name, MaxGroupName)
+	}
+	b := make([]byte, 0, ed25519.PublicKeySize+SecretSize+8+1+len(c.Group)+1+len(name)+len(c.Address))
 	b = append(b, c.Key...)
 	b = append(b, c.Secret...)
 	b = binary.BigEndian.AppendUint64(b, uint64(c.Expires.Unix()))
+	if len(c.Group) == 32 && name != "" {
+		b = append(b, 1)
+		b = append(b, c.Group...)
+		b = append(b, byte(len(name)))
+		b = append(b, name...)
+	} else {
+		b = append(b, 0)
+	}
 	b = append(b, c.Address...)
 	return codePrefix + base64.RawURLEncoding.EncodeToString(b)
 }
@@ -111,8 +140,36 @@ func ParseCode(text string) (Code, error) {
 		Key:     ed25519.PublicKey(append([]byte(nil), b[:ed25519.PublicKeySize]...)),
 		Secret:  append([]byte(nil), b[ed25519.PublicKeySize:ed25519.PublicKeySize+SecretSize]...),
 		Expires: time.Unix(int64(binary.BigEndian.Uint64(b[fixed-8:fixed])), 0),
-		Address: string(b[fixed:]),
 	}
+	at := fixed + 1
+	switch b[fixed] {
+	case 0:
+	case 1:
+		// A group: its ID, its name's length, its name (core 5.1).
+		if len(b) < fixed+1+33 {
+			return Code{}, ErrCode
+		}
+		n := int(b[fixed+33])
+		if n == 0 || len(b) < fixed+34+n {
+			return Code{}, ErrCode
+		}
+		raw := b[fixed+34 : fixed+34+n]
+		if !utf8.Valid(raw) {
+			return Code{}, ErrCode
+		}
+		name := CleanText(string(raw), 1<<20)
+		if utf8.RuneCountInString(name) > MaxGroupName {
+			return Code{}, ErrCode
+		}
+		c.Group, c.GroupName = append([]byte(nil), b[fixed+1:fixed+33]...), name
+		at = fixed + 34 + n
+	default:
+		return Code{}, ErrCode
+	}
+	if len(b) <= at {
+		return Code{}, ErrCode
+	}
+	c.Address = string(b[at:])
 	// A key MSFP accepts (section 2.1): never one of small order.
 	if !ValidKey(c.Key) {
 		return Code{}, ErrCode

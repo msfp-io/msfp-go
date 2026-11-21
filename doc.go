@@ -1,5 +1,5 @@
 // Package msfp is an engine for MSFP, the Media Server Federation
-// Protocol (https://github.com/msfp-io/msfp-spec), version 1. A media
+// Protocol (https://github.com/msfp-io/msfp-spec), version 0. A media
 // server that uses it, the host, pairs with other servers by hand,
 // shares its titles with them and plays theirs for its own people,
 // without writing any of the protocol itself: the engine signs and

@@ -15,8 +15,8 @@ import (
 	"time"
 )
 
-// MSFP's version 1 test vectors (https://github.com/msfp-io/msfp-spec,
-// vectors/v1/), copied as they are in testdata/v1/: recomputed here with
+// MSFP's version 0 test vectors (https://github.com/msfp-io/msfp-spec,
+// vectors/v0/), copied as they are in testdata/v0/: recomputed here with
 // the code, so the code keeps speaking the protocol they describe. The
 // exchanges of a server that can't be called are read in
 // uncallable_test.go.
@@ -58,10 +58,10 @@ func unhex(t *testing.T, s string) []byte {
 	return b
 }
 
-// readVectors reads testdata/v1/name into v.
+// readVectors reads testdata/v0/name into v.
 func readVectors(t *testing.T, name string, v any) {
 	t.Helper()
-	raw, err := os.ReadFile("testdata/v1/" + name)
+	raw, err := os.ReadFile("testdata/v0/" + name)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -209,20 +209,20 @@ func TestVectorHello(t *testing.T) {
 	x := v.Exchanges[i]
 	a, err := ReadHello([]byte(x.Body), false)
 	if err != nil || a.State != "paired" || a.Address != "https://a.example.org" ||
-		!slices.Equal(a.Versions.Core, []int{1}) || len(a.Versions.Parts) != 4 || len(a.Certificates) != 1 {
+		!slices.Equal(a.Versions.Core, []int{0}) || len(a.Versions.Parts) != 4 || len(a.Certificates) != 1 {
 		t.Fatalf("A's hello reads as %+v, %v", a, err)
 	}
 	b, err := ReadHello([]byte(x.AnswerBody), true)
-	if err != nil || b.State != "paired" || !slices.Equal(b.Versions.Core, []int{1}) || len(b.Certificates) != 1 {
+	if err != nil || b.State != "paired" || !slices.Equal(b.Versions.Core, []int{0}) || len(b.Certificates) != 1 {
 		t.Fatalf("B's answer reads as %+v, %v", b, err)
 	}
 	core, parts, ok := Agreed(a.Versions, b.Versions)
-	if !ok || core != 1 || !maps.Equal(parts, map[string]int{PartCatalog: 1}) {
-		t.Errorf("agreed core %d, parts %v, %v; want core 1, catalog 1 only", core, parts, ok)
+	if !ok || core != 0 || !maps.Equal(parts, map[string]int{PartCatalog: 0}) {
+		t.Errorf("agreed core %d, parts %v, %v; want core 0, catalog 0 only", core, parts, ok)
 	}
 }
 
-// Addresses and codes under core 1 (vectors/v1/strict.json): https only,
+// Addresses and codes under core 1 (vectors/v0/strict.json): https only,
 // the prefix msfp-pair-1.; and the names of a stream's files.
 func TestStrictVectors(t *testing.T) {
 	type tc struct {
@@ -268,7 +268,7 @@ func TestStrictVectors(t *testing.T) {
 // json_test.go). Its addresses and codes are version 0's: strict.json's
 // replace them.
 func TestStrictFormVectors(t *testing.T) {
-	b, err := os.ReadFile("testdata/v0-strict.json")
+	b, err := os.ReadFile("testdata/test-draft-strict.json")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -348,7 +348,7 @@ func TestSignatureHeadersOnce(t *testing.T) {
 	}
 }
 
-// What a receiver keeps of a hello's versions (vectors/v1/strict.json,
+// What a receiver keeps of a hello's versions (vectors/v0/strict.json,
 // helloVersions): a number that isn't an integer ignored as an entry, an
 // unknown member or part ignored whatever its value, null included; the
 // lists of the wrong type a bad body (core sections 2.3 and 10.2).
@@ -389,7 +389,7 @@ func TestHelloVersionVectors(t *testing.T) {
 }
 
 // Media servers' language codes and the tags sent for them
-// (vectors/v1/strict.json, languageCodes; MSFP catalog section 3).
+// (vectors/v0/strict.json, languageCodes; MSFP catalog section 3).
 func TestLanguageCodeVectors(t *testing.T) {
 	var v struct {
 		LanguageCodes []struct {

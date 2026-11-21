@@ -20,7 +20,7 @@ type PeerView struct {
 	// Created, Paired and Seen are times (Paired and Seen zero for
 	// never); Suspended is when it revoked its key (zero: it didn't).
 	Created, Paired, Seen, Suspended time.Time
-	// Core is the core version on with it, 0 when there is none in common
+	// Core is the core version on with it, -1 when there is none in common
 	// (the panel says the two can't talk); Parts the parts on, by name.
 	Core  int
 	Parts map[string]int

@@ -63,7 +63,7 @@ type endedHello struct {
 // requests, the key it knows p by (knownKey) and p's rotation it waits
 // on; to a peer that knows our current key, our commitment (nil p:
 // none). Core and parts are always sent, parts {} when none is on (MSFP
-// core section 10.2: a server that speaks version 1 sends both in every
+// core section 10.2: a server that speaks version 0 sends both in every
 // hello).
 func (e *Engine) ourHello(ctx context.Context, state string, p *PeerRecord, answering bool) helloMessage {
 	v := e.versions()
@@ -190,7 +190,7 @@ func (e *Engine) keepHello(p *PeerRecord, h wire.Hello) (events []Event, confirm
 	}
 	v := h.Versions
 	p.Versions = &v
-	if core, _ := e.agreed(p); core == 0 {
+	if core, _ := e.agreed(p); core < 0 {
 		e.log.Info("msfp: a peer speaks no version of MSFP's core this server speaks", "peer", p.ID, "name", p.Name)
 	}
 	return append(events, VersionsChanged{Peer: p.ID, Name: p.Name}), confirm

@@ -85,7 +85,7 @@ func (e *Engine) call(ctx context.Context, p *PeerRecord, call string, in, out a
 		// (MSFP core section 12.4).
 		return reply{}, ErrKeyLost
 	}
-	if core, _ := e.agreed(p); core == 0 && call != callHello && call != callPair {
+	if core, _ := e.agreed(p); core < 0 && call != callHello && call != callPair {
 		return reply{}, ErrNotSupported
 	}
 	key := wire.Encode64(p.Key)

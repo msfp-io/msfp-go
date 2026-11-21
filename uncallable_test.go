@@ -174,7 +174,7 @@ func TestUncallableAddressVectorsThroughEngine(t *testing.T) {
 			Reason string
 		}
 	}
-	b, err := os.ReadFile("wire/testdata/v1/strict.json")
+	b, err := os.ReadFile("wire/testdata/v0/strict.json")
 	if err != nil {
 		t.Fatal(err)
 	}

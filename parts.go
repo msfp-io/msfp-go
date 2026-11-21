@@ -9,7 +9,7 @@ import (
 // The parts this engine speaks (MSFP core section 10), as Config.Parts
 // says, and those on with each peer.
 
-// allParts are the parts of MSFP version 1, each at version 1, in the
+// allParts are the parts of MSFP version 0, each at version 0, in the
 // order a part's needs come before it.
 var allParts = []string{wire.PartCatalog, wire.PartMedia, wire.PartPlayback, wire.PartVideo, wire.PartMusic}
 
@@ -35,19 +35,19 @@ func servedParts(listed []string) map[string][]int {
 			}
 		}
 		if ok {
-			out[name] = []int{1}
+			out[name] = []int{0}
 		}
 	}
 	return out
 }
 
-// versions are what this server speaks: core 1, and its parts.
+// versions are what this server speaks: core 0, and its parts.
 func (e *Engine) versions() wire.Versions {
 	parts := make(map[string][]int, len(e.parts))
 	for name, v := range e.parts {
 		parts[name] = slices.Clone(v)
 	}
-	return wire.Versions{Core: []int{1}, Parts: parts}
+	return wire.Versions{Core: []int{0}, Parts: parts}
 }
 
 // on says whether part is on between this server and p.

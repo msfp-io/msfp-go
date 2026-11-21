@@ -423,11 +423,11 @@ func (e *Engine) agreed(p *PeerRecord) (core int, parts map[string]int) {
 	if p.Versions == nil {
 		// Before any hello: the core of the code the pairing started
 		// with, no part (MSFP core section 10.3).
-		return 1, map[string]int{}
+		return 0, map[string]int{}
 	}
 	core, parts, ok := wire.Agreed(e.versions(), *p.Versions)
 	if !ok {
-		return 0, map[string]int{}
+		return -1, map[string]int{}
 	}
 	return core, parts
 }

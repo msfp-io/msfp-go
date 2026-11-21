@@ -38,7 +38,7 @@ func TestCheckPlaylist(t *testing.T) {
 }
 
 // MSFP's media test vectors (https://github.com/msfp-io/msfp-spec,
-// vectors/v1/media.json), copied in testdata/v1/media.json: each
+// vectors/v1/media.json), copied in testdata/v0/media.json: each
 // case through the code that checks what a paired server sends.
 type mediaVectors struct {
 	WebVTT []struct {
@@ -62,7 +62,7 @@ type mediaVectors struct {
 
 func readMediaVectors(t *testing.T) mediaVectors {
 	t.Helper()
-	b, err := os.ReadFile("testdata/v1/media.json")
+	b, err := os.ReadFile("testdata/v0/media.json")
 	if err != nil {
 		t.Fatal(err)
 	}

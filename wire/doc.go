@@ -1,5 +1,5 @@
 // Package wire implements MSFP, the Media Server Federation Protocol
-// (https://github.com/msfp-io/msfp-spec), version 1: of its core, each
+// (https://github.com/msfp-io/msfp-spec), version 0: of its core, each
 // server's own key and its fingerprint, the one-time pairing code, signed
 // requests and answers and their nonces, MSFP's strict JSON, addresses
 // (HTTPS only), certificate pins, hello and the versions of the core and

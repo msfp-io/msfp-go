@@ -18,7 +18,7 @@ type hello struct {
 // (testdata/v0-strict.json), through DecodeJSON: valid ones decode,
 // invalid ones are refused.
 func TestStrictJSONVectors(t *testing.T) {
-	b, err := os.ReadFile("testdata/v0-strict.json")
+	b, err := os.ReadFile("testdata/test-draft-strict.json")
 	if err != nil {
 		t.Fatal(err)
 	}

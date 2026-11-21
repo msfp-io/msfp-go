@@ -53,9 +53,9 @@ const MaxSkew = 5 * time.Minute
 // What's signed starts with what it is, so a signature made for one use
 // never passes for another (core sections 6.2, 6.3 and 9.1).
 const (
-	requestLabel  = "msfp-1 request\n"
-	responseLabel = "msfp-1 response\n"
-	pairingLabel  = "msfp-1 pairing\n"
+	requestLabel  = "msfp-0 request\n"
+	responseLabel = "msfp-0 response\n"
+	pairingLabel  = "msfp-0 pairing\n"
 )
 
 var b64 = base64.RawURLEncoding

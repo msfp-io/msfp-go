@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased (v0.4.0)
+
+MSFP is renumbered version 0, a draft until version 1 (msfp-spec proposal
+13): the engine speaks core 0 and every part at 0, signs with the labels
+`msfp-0 …`, and makes codes `msfp-pair-0.…`. It doesn't talk to servers
+of the former version 1. The vectors are the spec's `vectors/v0/`.
+
+Pairing codes have the layout of core section 5.1 of version 0: a flag
+byte after the expiry, and for a group's code the group's ID and name
+(`wire.Code.Group`, `wire.Code.GroupName`). `wire.MaxCodeLifetime`: a
+code works 30 days at most.
+
+
 ## v0.3.0 (2026-11-19)
 
 An episode keyed by its TMDB episode ID carries `place`, its season and
