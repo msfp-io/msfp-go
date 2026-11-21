@@ -90,6 +90,9 @@ func (e *Engine) RunOnce(ctx context.Context) error {
 		return err
 	}
 	e.stopLeftovers(ctx)
+	if err := e.tidyGroups(ctx); err != nil {
+		e.log.Warn("msfp: groups couldn't be tidied", "error", err)
+	}
 	if e.keepsLog() {
 		if err := e.refreshOwn(ctx); err != nil {
 			e.log.Warn("msfp: the catalog's change log couldn't be refreshed", "error", err)

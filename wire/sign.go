@@ -500,3 +500,26 @@ func uncoded(h http.Header) bool {
 	}
 	return true
 }
+
+// groupJoinLabel begins group-join's proof (MSFP groups section 8.4).
+const groupJoinLabel = "msfp-group-join-1\n"
+
+// JoinProof is group-join's proof (MSFP groups section 8.4): HMAC-SHA256,
+// keyed with a group code's secret, over the label and the redeemer's
+// public key, base64url.
+func JoinProof(secret []byte, redeemer ed25519.PublicKey) string {
+	mac := hmac.New(sha256.New, secret)
+	mac.Write([]byte(groupJoinLabel))
+	mac.Write(redeemer)
+	return b64.EncodeToString(mac.Sum(nil))
+}
+
+// CheckJoinProof checks a JoinProof in constant time.
+func CheckJoinProof(secret []byte, redeemer ed25519.PublicKey, proof string) bool {
+	got, ok := Decode64(proof, sha256.Size)
+	if !ok {
+		return false
+	}
+	want, _ := b64.DecodeString(JoinProof(secret, redeemer))
+	return hmac.Equal(got, want)
+}

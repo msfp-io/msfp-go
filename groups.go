@@ -24,6 +24,7 @@ const (
 	callGroupSync = "group-sync"
 	callGroupPush = "group-push"
 	callGroupPair = "group-pair"
+	callGroupJoin = "group-join"
 )
 
 // groupSyncEvery is how often a member reads the list from another
@@ -64,6 +65,15 @@ type GroupView struct {
 	Dissolved bool
 	// Joining: the list hasn't arrived from the inviter yet.
 	Joining bool
+	// Joins are peers already paired with this server that used its code
+	// for the group, waiting for AcceptJoin or RefuseJoin.
+	Joins []GroupJoinView
+}
+
+// GroupJoinView is a peer waiting to join a group through this server.
+type GroupJoinView struct {
+	Peer, Name, Fingerprint string
+	Received                time.Time
 }
 
 // GroupMemberView is a member, as the panel lists it (groups section 10).
@@ -148,6 +158,15 @@ func (e *Engine) groupView(g *GroupRecord, peers []PeerRecord) GroupView {
 		v.Banned = append(v.Banned, b)
 	}
 	slices.SortFunc(v.Banned, func(a, b GroupBanView) int { return strings.Compare(a.Name+a.ID, b.Name+b.ID) })
+	for _, j := range g.Joins {
+		jv := GroupJoinView{Peer: j.Peer, Received: j.Received}
+		for _, p := range peers {
+			if p.ID == j.Peer {
+				jv.Name, jv.Fingerprint = p.Name, wire.Fingerprint(p.Key)
+			}
+		}
+		v.Joins = append(v.Joins, jv)
+	}
 	for _, r := range g.Requests {
 		key, _ := wire.Decode64(r.From, 32)
 		if m := s.Members[r.From]; m != nil {
@@ -634,6 +653,10 @@ func (e *Engine) withState(ctx context.Context, id string, fn func(*GroupRecord,
 // with no other becomes a pairing by hand, keeping what the group gave
 // it (groups section 7).
 func (e *Engine) LeaveGroup(ctx context.Context, id string, end []string) error {
+	if g, err := e.Group(ctx, id); err == nil && g.Joining {
+		// Not a member yet: giving up joining (groups section 2).
+		return e.dropGroup(ctx, id, end, true, "left", "")
+	}
 	if err := e.act(ctx, id, wire.Event{Type: wire.EventLeft}); err != nil {
 		return err
 	}
@@ -1810,8 +1833,23 @@ func (e *Engine) joined(ctx context.Context, id string) {
 			return err
 		}
 		g.Events = append(g.Events, sent)
-		g.Via = ""
-		return gt.PutGroup(*g)
+		if g.Via != "" {
+			// The inviter's link gains the group as a source (a peer
+			// already, by group-join, or paired by its code).
+			if p, err := tx.Peer(g.Via); err != nil {
+				return err
+			} else if p != nil && !slices.Contains(p.Groups, id) {
+				p.Groups = append(p.Groups, id)
+				if err := tx.PutPeer(*p); err != nil {
+					return err
+				}
+			}
+		}
+		g.Via, g.Joining = "", time.Time{}
+		if err := gt.PutGroup(*g); err != nil {
+			return err
+		}
+		return e.refreshLinks(tx)
 	})
 	if err != nil {
 		return
@@ -2046,4 +2084,245 @@ func (e *Engine) acceptWaited(ctx context.Context, id string) {
 			e.log.Info("msfp: a request that waited its days couldn't be accepted", "group", id, "error", err)
 		}
 	}
+}
+
+// ---- group-join (groups sections 2 and 8.4) -------------------------------------
+
+// joinWait is how long a server waits to join through group-join, and a
+// join waits for the operator: a code works 30 days at most.
+const joinWait = wire.MaxCodeLifetime
+
+type groupJoinRequest struct {
+	SecretHash string `json:"secretHash"`
+	Proof      string `json:"proof"`
+}
+
+// joinPaired redeems a group's code from a peer already paired with this
+// server: group-join, through the pairing, instead of pair.
+func (e *Engine) joinPaired(ctx context.Context, c wire.Code, p *PeerRecord) (PeerView, error) {
+	id := wire.Encode64(c.Group)
+	if err := e.cfg.Store.Read(ctx, func(tx Tx) error {
+		gt, err := groupsTx(tx)
+		if err != nil {
+			return err
+		}
+		if g, err := gt.Group(id); err != nil || g != nil {
+			return cmpErr(err, ErrAlreadyMember)
+		}
+		return nil
+	}); err != nil {
+		return PeerView{}, err
+	}
+	if !e.on(p, wire.PartGroups) {
+		return PeerView{}, ErrNotSupported
+	}
+	body := groupJoinRequest{SecretHash: wire.Encode64(wire.SecretHash(c.Secret)), Proof: wire.JoinProof(c.Secret, e.current().Public())}
+	var none struct{}
+	r, err := e.call(ctx, p, callGroupJoin, body, &none, false)
+	switch {
+	case errors.Is(err, ErrNotFound):
+		return PeerView{}, ErrCodeRefused
+	case err != nil:
+		return PeerView{}, err
+	case r.status == http.StatusConflict:
+		return PeerView{}, ErrAlreadyMember
+	case r.status != http.StatusOK:
+		return PeerView{}, ErrCodeRefused
+	}
+	err = e.cfg.Store.Update(ctx, func(tx Tx) error {
+		if err := e.joinVia(tx, c, p.ID); err != nil {
+			return err
+		}
+		gt, err := groupsTx(tx)
+		if err != nil {
+			return err
+		}
+		g, err := gt.Group(id)
+		if err != nil || g == nil {
+			return cmpErr(err, ErrNotFound)
+		}
+		g.Joining = e.now()
+		return gt.PutGroup(*g)
+	})
+	if err != nil {
+		return PeerView{}, err
+	}
+	e.log.Info("msfp: a group's code used with a peer, waiting for its operator", "peer", p.ID, "group", id)
+	return e.view(p), nil
+}
+
+// groupJoin is a peer already paired with this server using its code for a
+// group (groups section 8.4).
+func (e *Engine) groupJoin(req *request) response {
+	var body groupJoinRequest
+	if wire.DecodeJSON(req.body, &body) != nil {
+		return refuse(probInvalid)
+	}
+	hash, ok := wire.Decode64(body.SecretHash, 32)
+	if !ok || req.peer == nil || req.peer.State != Paired || !e.on(req.peer, wire.PartGroups) {
+		return refuse(probNotFound)
+	}
+	var waiting *GroupJoinWaiting
+	err := e.cfg.Store.Update(req.r.Context(), func(tx Tx) error {
+		waiting = nil
+		gt, err := groupsTx(tx)
+		if err != nil {
+			return ErrNotFound
+		}
+		// The code, the proof, then the right to invite.
+		c, err := tx.CodeByHash(hash)
+		if err != nil {
+			return err
+		}
+		if c == nil || c.Group == "" || !c.Expires.After(e.now()) {
+			return ErrNotFound
+		}
+		secret, err := e.cfg.Sealer.Open(c.Secret, sealCode)
+		if err != nil || !wire.CheckJoinProof(secret, req.v.Key, body.Proof) {
+			return ErrNotFound
+		}
+		g, err := gt.Group(c.Group)
+		if err != nil || g == nil {
+			return cmpErr(err, ErrNotFound)
+		}
+		s := e.stateOf(g)
+		if r := role(s, g.Me); s.Members[g.Me] == nil || r == "member" || s.Dissolved {
+			return ErrNotFound
+		}
+		member := wire.Encode64(req.peer.Key)
+		in := s.Banned[member] != ""
+		for _, m := range s.Members {
+			in = in || isMember(m, req.peer)
+		}
+		if in || slices.ContainsFunc(g.Joins, func(j GroupJoin) bool { return j.Peer == req.peer.ID }) {
+			return ErrAlreadyMember
+		}
+		if c.Uses > 1 {
+			c.Uses--
+			if err := tx.PutCode(*c); err != nil {
+				return err
+			}
+		} else if err := tx.DeleteCode(c.ID); err != nil {
+			return err
+		}
+		g.Joins = append(g.Joins, GroupJoin{Peer: req.peer.ID, Received: e.now()})
+		waiting = &GroupJoinWaiting{Group: g.ID, GroupName: s.Name, Peer: req.peer.ID, Name: req.peer.Name, Fingerprint: wire.Fingerprint(req.peer.Key)}
+		return gt.PutGroup(*g)
+	})
+	switch {
+	case errors.Is(err, ErrNotFound):
+		return refuse(probNotFound)
+	case errors.Is(err, ErrAlreadyMember):
+		return response{status: http.StatusConflict}
+	case err != nil:
+		e.log.Error("msfp: a group's code couldn't be used by a peer", "error", err)
+		return refuse(probInternal)
+	}
+	e.notify(*waiting)
+	return answer(struct{}{})
+}
+
+// AcceptJoin accepts a peer waiting to join a group through this server
+// (GroupView.Joins): it signs joined, and sends the peer the list (groups
+// section 2). Errors: ErrNotFound (no such group or peer waiting),
+// ErrNoRight, ErrNotPaired.
+func (e *Engine) AcceptJoin(ctx context.Context, id, peer string) error {
+	g, err := e.Group(ctx, id)
+	if err != nil {
+		return err
+	}
+	if !slices.ContainsFunc(g.Joins, func(j GroupJoinView) bool { return j.Peer == peer }) {
+		return ErrNotFound
+	}
+	p, err := e.peerRecord(ctx, peer)
+	if err != nil {
+		return err
+	}
+	if p.State != Paired {
+		return ErrNotPaired
+	}
+	if err := e.act(ctx, id, wire.Event{Type: wire.EventJoined, NewMember: wire.Encode64(p.Key), Name: p.Name}); err != nil {
+		return err
+	}
+	err = e.cfg.Store.Update(ctx, func(tx Tx) error {
+		gt, err := groupsTx(tx)
+		if err != nil {
+			return err
+		}
+		if gr, err := gt.Group(id); err != nil {
+			return err
+		} else if gr != nil {
+			gr.Joins = slices.DeleteFunc(gr.Joins, func(j GroupJoin) bool { return j.Peer == peer })
+			if err := gt.PutGroup(*gr); err != nil {
+				return err
+			}
+		}
+		q, err := tx.Peer(peer)
+		if err != nil || q == nil {
+			return err
+		}
+		if !slices.Contains(q.Groups, id) {
+			q.Groups = append(q.Groups, id)
+		}
+		if err := tx.PutPeer(*q); err != nil {
+			return err
+		}
+		return e.refreshLinks(tx)
+	})
+	if err != nil {
+		return err
+	}
+	e.background(func(ctx context.Context) { e.pushAll(ctx, id, peer) })
+	return nil
+}
+
+// RefuseJoin refuses a peer waiting to join a group through this server:
+// nothing is sent (groups section 2). Error: ErrNotFound.
+func (e *Engine) RefuseJoin(ctx context.Context, id, peer string) error {
+	found := false
+	err := e.updateGroup(ctx, id, func(g *GroupRecord) {
+		n := len(g.Joins)
+		g.Joins = slices.DeleteFunc(g.Joins, func(j GroupJoin) bool { return j.Peer == peer })
+		found = len(g.Joins) < n
+	})
+	if err == nil && !found {
+		return ErrNotFound
+	}
+	return err
+}
+
+// tidyGroups drops what waited too long for group-join: this server's own
+// joins, and peers' joins waiting for its operator.
+func (e *Engine) tidyGroups(ctx context.Context) error {
+	var drop []string
+	cutoff := e.now().Add(-joinWait)
+	err := e.cfg.Store.Update(ctx, func(tx Tx) error {
+		gt, err := groupsTx(tx)
+		if err != nil {
+			return nil
+		}
+		gs, err := gt.Groups()
+		if err != nil {
+			return err
+		}
+		for _, g := range gs {
+			if !g.Joining.IsZero() && g.Joining.Before(cutoff) && len(g.Events) == 0 {
+				drop = append(drop, g.ID)
+				continue
+			}
+			n := len(g.Joins)
+			g.Joins = slices.DeleteFunc(g.Joins, func(j GroupJoin) bool { return j.Received.Before(cutoff) })
+			if len(g.Joins) < n {
+				if err := gt.PutGroup(g); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	})
+	for _, id := range drop {
+		e.log.Info("msfp: gave up joining a group: its inviter's operator didn't accept within 30 days", "group", id)
+		_ = e.dropGroup(ctx, id, nil, true, "left", "")
+	}
+	return err
 }

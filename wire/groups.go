@@ -147,17 +147,17 @@ type GroupMember struct {
 
 // GroupState is what a copy's events give.
 type GroupState struct {
-	ID        string
-	Name      string
-	Settings  GroupSettings
-	Owner     string // member ID
-	Heir      string
-	Members   map[string]*GroupMember
-	Banned    map[string]string // member ID -> the banned event's ID
-	Reasons   map[string]string // member ID -> its ban's reason
+	ID       string
+	Name     string
+	Settings GroupSettings
+	Owner    string // member ID
+	Heir     string
+	Members  map[string]*GroupMember
+	Banned   map[string]string // member ID -> the banned event's ID
+	Reasons  map[string]string // member ID -> its ban's reason
 	// WasBanned is a banned server as it was a member, for the panels.
 	WasBanned map[string]GroupMember
-	Excluded  []string          // equivocation
+	Excluded  []string // equivocation
 	Dissolved bool
 	Keep      bool // dissolved with keepPairings
 	OwnerSeq  int64

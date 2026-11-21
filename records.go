@@ -216,6 +216,19 @@ type GroupRecord struct {
 	Sent     []SentMail     `json:"sent,omitempty"`
 	Used     []string       `json:"used,omitempty"`
 	Synced   time.Time      `json:"synced,omitzero"`
+	// Joining is when this server called group-join to join through Via,
+	// a peer already (zero: it used pair). It gives up 30 days after.
+	Joining time.Time `json:"joining,omitzero"`
+	// Joins are peers already paired with this server that used its code
+	// for this group (group-join), waiting for its operator.
+	Joins []GroupJoin `json:"joins,omitempty"`
+}
+
+// GroupJoin is a peer waiting for this server's operator to accept it
+// into a group (MSFP groups section 8.4).
+type GroupJoin struct {
+	Peer     string    `json:"peer"`
+	Received time.Time `json:"received"`
 }
 
 // StoredEvent is an event's envelope, and when it arrived.

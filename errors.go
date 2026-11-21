@@ -95,6 +95,9 @@ var (
 	ErrNoGroups  = &Error{Code: "NoGroups"}  // the store keeps no groups (GroupsTx)
 	ErrNoRight   = &Error{Code: "NoRight"}   // this server's role in the group doesn't allow it
 	ErrNotMember = &Error{Code: "NotMember"} // not a member of the group (or the group is gone)
+	// ErrAlreadyMember: already in the group, banned from it, or waiting
+	// to join it (a group's code from a peer already).
+	ErrAlreadyMember = &Error{Code: "AlreadyMember"}
 
 	ErrNoNextKey        = &Error{Code: "NoNextKey"}        // the next key's seed isn't on the server
 	ErrNotNextKey       = &Error{Code: "NotNextKey"}       // the text given isn't the committed next key

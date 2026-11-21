@@ -167,16 +167,16 @@ func (e *Engine) readCode(ctx context.Context, text string) (wire.Code, error) {
 	case !c.Expires.After(e.now()):
 		return wire.Code{}, ErrCodeExpired
 	}
-	known := false
+	var known *PeerRecord
 	err = e.cfg.Store.Read(ctx, func(tx Tx) error {
-		p, err := tx.PeerByKey(c.Key)
-		known = p != nil
+		var err error
+		known, err = tx.PeerByKey(c.Key)
 		return err
 	})
 	if err != nil {
 		return wire.Code{}, err
 	}
-	if known {
+	if known != nil && !(c.Group != nil && known.State == Paired) {
 		// To pair again with a peer that is gone, its operator removes it
 		// first (MSFP core section 7.1, step 2).
 		return wire.Code{}, ErrAlreadyPeer
@@ -227,6 +227,21 @@ func (e *Engine) RedeemCode(ctx context.Context, text string) (PeerView, error) 
 	c, err := e.readCode(ctx, text)
 	if err != nil {
 		return PeerView{}, err
+	}
+	if c.Group != nil {
+		// A group's code from a peer already: group-join, through the
+		// pairing (MSFP groups sections 2 and 8.4).
+		var p *PeerRecord
+		if err := e.cfg.Store.Read(ctx, func(tx Tx) error {
+			var err error
+			p, err = tx.PeerByKey(c.Key)
+			return err
+		}); err != nil {
+			return PeerView{}, err
+		}
+		if p != nil {
+			return e.joinPaired(ctx, c, p)
+		}
 	}
 	commitment := wire.Encode64(e.commitment())
 	ours := e.named(e.address())

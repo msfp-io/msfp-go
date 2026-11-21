@@ -5,6 +5,7 @@
     "events: in order, as a copy meets them, with now as its clock. The valid ones build the group; each invalid one is judged on the state the valid ones before it built, and changes nothing, except the last: an equivocation, which excludes its signer. payload is the event's bytes as text; event is their base64url; id is base64url of SHA-256 of the payload.",
     "state: what a copy computes once it kept the valid events and met the invalid ones (groups section 3.5): member IDs, sorted.",
     "code: a pairing code for the group (core section 5.1, groups section 2), made by B, with the group's ID and name.",
+    "joinProof: group-join's proof of that code (groups section 8.4) by D, already paired with B: HMAC-SHA256 keyed with the code's secret over msfp-group-join-1 and a line feed, then D's 32 raw public-key bytes.",
     "mail: N's request to C (groups section 5), sealed with HPKE base mode, DHKEM(X25519, HKDF-SHA256), HKDF-SHA256, AES-128-GCM, to C's encryption key; recipientX25519Private opens it. info and aad are hex. The generator seals with a fixed ephemeral key, and opens with Go's crypto/hpke."
   ],
   "keys": {
@@ -262,5 +263,9 @@
     "info": "6d7366702d67726f75702d6d61696c2d319fa47a3f4ada04c26d75d1360a3e67579fb3527b4434e51c91d5987e08993324303132333435363738393a3b3c3d3e3f",
     "aad": "574a9e9bea24a57b8e69569cfb90b807db4131f7503c3b1f87044b1f9be4cfd1a1bfd62591a78632708079ca6250787d0e57d02d39a330548542e7e006ad7a29",
     "opened": "{\"address\":\"https://n.example.org\",\"inbound\":true,\"name\":\"N\",\"nextCommitment\":\"5skdtDe665VHaPSPrCDfIdODm3tRip6pica46_JE60A\"}"
+  },
+  "joinProof": {
+    "redeemer": "d",
+    "value": "YyjyJzuA9_Tp-Jy7IsZQ-XvCAJlDMvqgWYpEwU4iBhU"
   }
 }

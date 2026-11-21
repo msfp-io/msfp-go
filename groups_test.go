@@ -535,3 +535,121 @@ func TestGroupRefuseThenAsk(t *testing.T) {
 		t.Fatalf("B and N: %+v", p)
 	}
 }
+
+// A and B, paired by hand, then A's group code: B joins through the
+// pairing (group-join), A's operator accepts, and the list follows. C,
+// paired with A too, is refused, and gives up on its side.
+func TestGroupJoinWhenPaired(t *testing.T) {
+	ctx := context.Background()
+	a := newServer(t, msfp.Config{Name: func() string { return "A" }})
+	b := newServer(t, msfp.Config{Name: func() string { return "B" }})
+	c := newServer(t, msfp.Config{Name: func() string { return "C" }})
+	aB, _ := pair(t, a, b)
+	aC, _ := pair(t, a, c)
+	settle(a, b, c)
+	g, err := a.eng.CreateGroup(ctx, "Family", msfp.GroupSettingsDefault)
+	if err != nil {
+		t.Fatal(err)
+	}
+	code, _, err := a.eng.MakeCodeWith(ctx, msfp.CodeOptions{Group: g.ID, Uses: 3})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pv, err := b.eng.ReadCode(ctx, code); err != nil || pv.GroupName != "Family" {
+		t.Fatalf("preview from a peer: %+v, %v", pv, err)
+	}
+	if _, err := b.eng.RedeemCode(ctx, code); err != nil {
+		t.Fatalf("B joining through the pairing: %v", err)
+	}
+	if _, err := b.eng.RedeemCode(ctx, code); !errors.Is(err, msfp.ErrAlreadyMember) {
+		t.Errorf("twice: %v", err)
+	}
+	if gb, err := b.eng.Group(ctx, g.ID); err != nil || !gb.Joining {
+		t.Fatalf("B's group while waiting: %+v, %v", gb, err)
+	}
+	ga, _ := a.eng.Group(ctx, g.ID)
+	if len(ga.Joins) != 1 || ga.Joins[0].Peer != aB.ID || ga.Joins[0].Name != "B" {
+		t.Fatalf("A's joins: %+v", ga.Joins)
+	}
+	if ev, ok := has[msfp.GroupJoinWaiting](a.events); !ok || ev.Peer != aB.ID {
+		t.Errorf("A's GroupJoinWaiting: %+v", ev)
+	}
+	if err := a.eng.AcceptJoin(ctx, g.ID, aB.ID); err != nil {
+		t.Fatal(err)
+	}
+	settle(a, b, c)
+	gb, err := b.eng.Group(ctx, g.ID)
+	if err != nil || gb.Joining || len(gb.Members) != 2 || gb.Role != "member" {
+		t.Fatalf("B after A accepted: %+v, %v", gb, err)
+	}
+	if p := peerNamed(t, b, "A"); !p.ByHand || !slices.Contains(p.Groups, g.ID) {
+		t.Errorf("B's link with A: by hand %v, groups %v", p.ByHand, p.Groups)
+	}
+	if p := peerNamed(t, a, "B"); !p.ByHand || !slices.Contains(p.Groups, g.ID) {
+		t.Errorf("A's link with B: by hand %v, groups %v", p.ByHand, p.Groups)
+	}
+	if ga, _ = a.eng.Group(ctx, g.ID); len(ga.Joins) != 0 || len(ga.Members) != 2 {
+		t.Errorf("A after accepting: joins %+v, members %d", ga.Joins, len(ga.Members))
+	}
+
+	// C: refused; nothing is sent, and its operator gives up.
+	if _, err := c.eng.RedeemCode(ctx, code); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.eng.RefuseJoin(ctx, g.ID, aC.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.eng.RefuseJoin(ctx, g.ID, aC.ID); !errors.Is(err, msfp.ErrNotFound) {
+		t.Errorf("refused twice: %v", err)
+	}
+	if err := c.eng.LeaveGroup(ctx, g.ID, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.eng.Group(ctx, g.ID); !errors.Is(err, msfp.ErrNotFound) {
+		t.Errorf("C still has the group: %v", err)
+	}
+	if p := peerNamed(t, c, "A"); p.State != msfp.Paired {
+		t.Errorf("C's pairing with A: %+v", p)
+	}
+}
+
+// A join through group-join that nobody answers is dropped after 30 days,
+// on both sides.
+func TestGroupJoinGivenUp(t *testing.T) {
+	ctx := context.Background()
+	clk := newClock(1800000000)
+	a := newServer(t, msfp.Config{Name: func() string { return "A" }, Clock: clk})
+	b := newServer(t, msfp.Config{Name: func() string { return "B" }, Clock: clk})
+	pair(t, a, b)
+	settle(a, b)
+	g, err := a.eng.CreateGroup(ctx, "Family", msfp.GroupSettingsDefault)
+	if err != nil {
+		t.Fatal(err)
+	}
+	code, _, err := a.eng.MakeCodeWith(ctx, msfp.CodeOptions{Group: g.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := b.eng.RedeemCode(ctx, code); err != nil {
+		t.Fatal(err)
+	}
+	clk.Add(29 * 24 * time.Hour)
+	_ = a.eng.RunOnce(ctx)
+	_ = b.eng.RunOnce(ctx)
+	if ga, _ := a.eng.Group(ctx, g.ID); len(ga.Joins) != 1 {
+		t.Fatalf("A after 29 days: %+v", ga.Joins)
+	}
+	if _, err := b.eng.Group(ctx, g.ID); err != nil {
+		t.Fatalf("B after 29 days: %v", err)
+	}
+	clk.Add(2 * 24 * time.Hour)
+	_ = a.eng.RunOnce(ctx)
+	_ = b.eng.RunOnce(ctx)
+	settle(a, b)
+	if ga, _ := a.eng.Group(ctx, g.ID); len(ga.Joins) != 0 {
+		t.Errorf("A after 31 days: %+v", ga.Joins)
+	}
+	if _, err := b.eng.Group(ctx, g.ID); !errors.Is(err, msfp.ErrNotFound) {
+		t.Errorf("B after 31 days: %v", err)
+	}
+}

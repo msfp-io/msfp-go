@@ -44,6 +44,10 @@ func TestGroupVectors(t *testing.T) {
 			Private   string `json:"recipientX25519Private"`
 			Opened    string `json:"opened"`
 		} `json:"mail"`
+		JoinProof struct {
+			Redeemer string `json:"redeemer"`
+			Value    string `json:"value"`
+		} `json:"joinProof"`
 	}
 	readVectors(t, "groups.json", &v)
 	s := NewGroupState()
@@ -79,6 +83,9 @@ func TestGroupVectors(t *testing.T) {
 	c, err := ParseCode(v.Code.Text)
 	if err != nil || Encode64(c.Group) != v.Group || c.GroupName != v.GroupName || c.Address != v.Code.Address {
 		t.Errorf("code: %+v, %v", c, err)
+	}
+	if d, _ := Decode64(v.Keys[v.JoinProof.Redeemer], 32); JoinProof(c.Secret, d) != v.JoinProof.Value || !CheckJoinProof(c.Secret, d, v.JoinProof.Value) {
+		t.Errorf("join proof: %s, want %s", JoinProof(c.Secret, d), v.JoinProof.Value)
 	}
 	n, _ := Decode64(v.Keys["n"], 32)
 	m, err := ReadMail(Envelope{Mail: v.Mail.Mail, Signature: v.Mail.Signature}, n)

@@ -30,6 +30,14 @@ with room. `PeerRecord` gains `Groups`, `NotByHand`, `GroupOffers`,
 `Asked`; `GroupBanView` with the banned server's `Name` and `Fingerprint`
 (`wire.GroupState.WasBanned`).
 
+A server already paired with a group code's maker joins through the
+pairing (MSFP groups section 8.4, `group-join`): `RedeemCode` calls it
+instead of `pair`, `ReadCode` no longer refuses such a code, and the
+maker's operator answers with `AcceptJoin` or `RefuseJoin`
+(`GroupView.Joins`, event `GroupJoinWaiting`). Unanswered, it is dropped
+after 30 days on both sides; `LeaveGroup` gives up earlier. Error
+`AlreadyMember`. `wire.JoinProof`, `wire.CheckJoinProof`.
+
 
 ## v0.3.0 (2026-11-19)
 

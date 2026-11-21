@@ -116,6 +116,7 @@ var calls = map[string]func(*Engine, *request) response{
 	callGroupSync: (*Engine).groupSync,
 	callGroupPush: (*Engine).groupPush,
 	callGroupPair: (*Engine).groupPairServed,
+	callGroupJoin: (*Engine).groupJoin,
 }
 
 func (e *Engine) serveFederation(w http.ResponseWriter, r *http.Request) {

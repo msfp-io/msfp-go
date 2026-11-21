@@ -202,7 +202,14 @@ type GroupChanged struct {
 // server) or "banned", with the ban's Reason ("" for none).
 type GroupLeft struct{ Group, GroupName, Why, Reason string }
 
+// GroupJoinWaiting: a peer already paired with this server used its code
+// for a group (group-join): AcceptJoin or RefuseJoin (groups section 2).
+type GroupJoinWaiting struct {
+	Group, GroupName, Peer, Name, Fingerprint string
+}
+
 func (GroupRequestWaiting) PeerID() string { return "" }
+func (e GroupJoinWaiting) PeerID() string  { return e.Peer }
 func (GroupJoined) PeerID() string         { return "" }
 func (GroupChanged) PeerID() string        { return "" }
 func (GroupLeft) PeerID() string           { return "" }
