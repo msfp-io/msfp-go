@@ -70,6 +70,9 @@ type PeerView struct {
 	Individual, IndividualAsked, IndividualAsks bool
 	KeepChoice                                  bool
 	ByHand                                      bool
+	// JoiningGroup: it used one of our codes for this group, and waits for
+	// our operator (State Ours): a request to join that group.
+	JoiningGroup string
 }
 
 // MoveView is a peer's new address, not confirmed yet (MSFP core section
@@ -102,6 +105,7 @@ func (e *Engine) view(p *PeerRecord) PeerView {
 	v.IndividualAsks = p.NotByHand && p.theirIndividual() && !p.IndividualRefused && !p.KeepChoice
 	v.KeepChoice = p.KeepChoice
 	v.ByHand = v.Individual
+	v.JoiningGroup = p.JoiningGroup
 	if p.TheirLimits != nil {
 		l := *p.TheirLimits
 		v.TheirLimits = &l
