@@ -182,6 +182,9 @@ func main() {
 			groups, err := eng.Groups(ctx)
 			for _, g := range groups {
 				fmt.Printf("group %s %q %s\n", g.ID, g.Name, g.Role)
+				if g.NoWayIn {
+					fmt.Println("  no way in: no pairing through this group")
+				}
 				for _, m := range g.Members {
 					fmt.Printf("  member %s %q %s peer=%s\n", m.ID, m.Name, m.Role, m.Peer)
 				}
