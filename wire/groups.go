@@ -163,9 +163,9 @@ type GroupState struct {
 	seq       map[string]int64            // member -> last kept seq
 	payloads  map[string]map[int64]string // member -> seq -> payload
 	adminLog  []adminChange
-	removedAt map[string]int64 // admin -> the last seq that counts
-	bannedAt  map[string]int64 // banned -> the last seq that counts
-	revoked   map[string]keyFrom // member -> the key it revoked, and its last good seq
+	removedAt map[string]int64     // admin -> the last seq that counts
+	bannedAt  map[string]int64     // banned -> the last seq that counts
+	revoked   map[string]keyFrom   // member -> the key it revoked, and its last good seq
 	keys      map[string][]keyFrom // member -> keys in force from a seq
 	capCount  map[string]int64
 	ids       map[string]bool // event IDs kept

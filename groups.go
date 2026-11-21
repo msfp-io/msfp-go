@@ -121,7 +121,7 @@ func (e *Engine) groupView(g *GroupRecord, peers []PeerRecord) GroupView {
 		mv := GroupMemberView{ID: m.ID, Name: m.Name, Fingerprint: wire.Fingerprint(key), Role: role(s, m.ID),
 			InvitedBy: m.InvitedBy, Joined: time.Unix(m.Joined, 0).UTC()}
 		for _, p := range peers {
-			if wire.Encode64(p.Key) == m.Key {
+			if isMember(m, &p) {
 				mv.Peer = p.ID
 			}
 		}
@@ -1054,10 +1054,9 @@ func (e *Engine) afterEvents(tx Tx, g *GroupRecord, s *wire.GroupState, effects 
 		if !slices.Contains(p.Groups, id) {
 			continue
 		}
-		key := wire.Encode64(p.Key)
 		in := false
 		for _, m := range s.Members {
-			if m.Key == key {
+			if isMember(m, &p) {
 				in = true
 			}
 		}
@@ -1390,9 +1389,8 @@ func (e *Engine) coMember(req *request, id string) (*GroupRecord, bool) {
 			return nil
 		}
 		s := e.stateOf(g)
-		key := wire.Encode64(req.peer.Key)
 		for _, m := range s.Members {
-			if m.Key == key {
+			if isMember(m, req.peer) {
 				in = true
 			}
 		}
@@ -1863,4 +1861,19 @@ func (e *Engine) groupsRevoked(ctx context.Context, r wire.Revocation) {
 			e.log.Warn("msfp: a group couldn't be told this server's key was stolen", "group", id, "error", err)
 		}
 	}
+}
+
+// isMember says whether a peer is this member: its current key, its
+// member ID, or, while either side is between keys, the peer's previous
+// key (a rotation the copy hasn't kept yet, or the peer record has).
+func isMember(m *wire.GroupMember, p *PeerRecord) bool {
+	for _, k := range [][]byte{p.Key, p.PreviousKey} {
+		if len(k) == 0 {
+			continue
+		}
+		if e := wire.Encode64(k); e == m.Key || e == m.ID {
+			return true
+		}
+	}
+	return false
 }
