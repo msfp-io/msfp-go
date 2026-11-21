@@ -35,9 +35,12 @@ func (e *Engine) keepIndividual(p *PeerRecord, theirs *bool) []Event {
 	held := p.individual()
 	asked := !p.NotByHand && !p.theirIndividual()
 	asks := p.NotByHand && p.theirIndividual() && !p.IndividualRefused
+	// Ended by them only if they said they wanted it: a peer never heard
+	// saying it, whose first word is false, never had it.
+	saidHeld := held && p.TheirIndividual != nil && *p.TheirIndividual
 	t := *theirs
 	p.TheirIndividual = &t
-	if held && !t {
+	if saidHeld && !t {
 		p.NotByHand = true // it ended the relation: ended here too
 	}
 	if !t {
