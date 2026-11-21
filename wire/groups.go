@@ -79,18 +79,18 @@ type Event struct {
 	OwnerSeq int64 `json:"ownerSeq,omitempty"`
 	AsOf     int64 `json:"asOf,omitempty"`
 
-	Name           string         `json:"name,omitempty"`
-	Settings       *GroupSettings `json:"settings,omitempty"`
-	Nonce          string         `json:"nonce,omitempty"`
-	EncryptionKey  string         `json:"encryptionKey,omitempty"`
-	NextCommitment string         `json:"nextCommitment,omitempty"`
-	NewMember      string         `json:"newMember,omitempty"`
-	Target         string         `json:"target,omitempty"`
-	On             *bool          `json:"on,omitempty"`
-	LastSeq        *int64         `json:"lastSeq,omitempty"`
-	Reason         string         `json:"reason,omitempty"`
-	Ban            string         `json:"ban,omitempty"`
-	KeepPairings   *bool          `json:"keepPairings,omitempty"`
+	Name           string          `json:"name,omitempty"`
+	Settings       *GroupSettings  `json:"settings,omitempty"`
+	Nonce          string          `json:"nonce,omitempty"`
+	EncryptionKey  string          `json:"encryptionKey,omitempty"`
+	NextCommitment string          `json:"nextCommitment,omitempty"`
+	NewMember      string          `json:"newMember,omitempty"`
+	Target         string          `json:"target,omitempty"`
+	On             *bool           `json:"on,omitempty"`
+	LastSeq        *int64          `json:"lastSeq,omitempty"`
+	Reason         string          `json:"reason,omitempty"`
+	Ban            string          `json:"ban,omitempty"`
+	KeepPairings   *bool           `json:"keepPairings,omitempty"`
 	Statement      json.RawMessage `json:"statement,omitempty"`
 }
 
