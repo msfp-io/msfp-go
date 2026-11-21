@@ -876,3 +876,85 @@ func TestGroupNoWayIn(t *testing.T) {
 		t.Fatalf("B's request: %v", err)
 	}
 }
+
+// A member back in (groups section 2): cut off once its pairing with the
+// owner ended, B uses a new code for the group, by pair; cut off again,
+// then paired by hand, it uses one through group-join. Each time the link
+// gains the group, nobody signs joined again, and events flow again.
+func TestGroupBackIn(t *testing.T) {
+	ctx := context.Background()
+	a := newServer(t, msfp.Config{Name: func() string { return "A" }})
+	b := newServer(t, msfp.Config{Name: func() string { return "B" }})
+	g, err := a.eng.CreateGroup(ctx, "Family", msfp.GroupSettingsDefault)
+	if err != nil {
+		t.Fatal(err)
+	}
+	joinGroup(t, a, b, g.ID)
+	settle(a, b)
+	peerNamed := func(s *server, name string) string {
+		for _, p := range mustPeers(t, s) {
+			if p.Name == name {
+				return p.ID
+			}
+		}
+		return ""
+	}
+	cut := func() {
+		t.Helper()
+		if err := b.eng.End(ctx, peerNamed(b, "A")); err != nil {
+			t.Fatal(err)
+		}
+		settle(a, b)
+		if gb, _ := b.eng.Group(ctx, g.ID); !gb.NoWayIn {
+			t.Fatal("B isn't cut off")
+		}
+	}
+	backIn := func(how, name string) {
+		t.Helper()
+		settle(a, b)
+		ga, _ := a.eng.Group(ctx, g.ID)
+		gb, _ := b.eng.Group(ctx, g.ID)
+		if ga.NoWayIn || gb.NoWayIn || len(ga.Members) != 2 || len(gb.Members) != 2 {
+			t.Fatalf("%s: A %v %d, B %v %d", how, ga.NoWayIn, len(ga.Members), gb.NoWayIn, len(gb.Members))
+		}
+		if err := a.eng.SetGroupSettings(ctx, g.ID, name, msfp.GroupSettingsDefault); err != nil {
+			t.Fatal(err)
+		}
+		settle(a, b)
+		if gb, _ := b.eng.Group(ctx, g.ID); gb.Name != name {
+			t.Fatalf("%s: B's group is %q", how, gb.Name)
+		}
+	}
+	// By pair: no pairing left with A.
+	cut()
+	joinGroup(t, a, b, g.ID)
+	backIn("by pair", "Friends")
+
+	// Through group-join: paired by hand with A first.
+	cut()
+	pair(t, b, a)
+	settle(a, b)
+	if gb, _ := b.eng.Group(ctx, g.ID); !gb.NoWayIn {
+		t.Fatal("a pairing by hand is a way in")
+	}
+	code, _, err := a.eng.MakeCodeWith(ctx, msfp.CodeOptions{Group: g.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := b.eng.RedeemCode(ctx, code); err != nil {
+		t.Fatal(err)
+	}
+	ga, _ := a.eng.Group(ctx, g.ID)
+	if len(ga.Joins) != 1 {
+		t.Fatalf("A's joins: %+v", ga.Joins)
+	}
+	if err := a.eng.AcceptJoin(ctx, g.ID, ga.Joins[0].Peer); err != nil {
+		t.Fatal(err)
+	}
+	backIn("through group-join", "Neighbours")
+	// Linked through the group now: the code is refused, as before.
+	code, _, _ = a.eng.MakeCodeWith(ctx, msfp.CodeOptions{Group: g.ID})
+	if _, err := b.eng.RedeemCode(ctx, code); !errors.Is(err, msfp.ErrAlreadyMember) {
+		t.Fatalf("a third code: %v", err)
+	}
+}

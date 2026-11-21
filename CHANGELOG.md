@@ -9,6 +9,11 @@
   reaches those members from here, and nothing reaches here from them.
   `GroupsCutBy(peer)` lists the groups that ending a pairing would cut
   off, so a panel can say so before it ends.
+- A member back in (groups section 2). A member with no pairing through a
+  group to a code's maker can use a new code for the group: by `pair`, or
+  by `group-join` when the two are paired some other way. Nobody signs
+  `joined`; once the maker accepts, the pairing gains the group, and
+  events and mail flow again.
 
 ### Fixed
 

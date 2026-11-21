@@ -1530,6 +1530,27 @@ func (e *Engine) syncGroupsNow(ctx context.Context, force bool) {
 	}
 }
 
+// backInIfMember ends a member's way back in a group it was already in.
+func (e *Engine) backInIfMember(ctx context.Context, id string) {
+	err := e.cfg.Store.Update(ctx, func(tx Tx) error {
+		gt, err := groupsTx(tx)
+		if err != nil {
+			return err
+		}
+		g, err := gt.Group(id)
+		if err != nil || g == nil || g.Via == "" || e.stateOf(g).Members[g.Me] == nil {
+			return err
+		}
+		if err := e.backIn(tx, g); err != nil {
+			return err
+		}
+		return gt.PutGroup(*g)
+	})
+	if err != nil {
+		e.log.Info("msfp: back in a group: the link couldn't gain it", "group", id, "error", err)
+	}
+}
+
 // syncGroupsSoon runs, in the background, a group-sync with a peer that
 // just took this server's new key, for each group they share: it pushes
 // the events the peer lacks. Those signed for the change (rotated; revoked,
@@ -1727,11 +1748,17 @@ func (e *Engine) groupPush(req *request) response {
 	if wire.DecodeJSON(req.body, &body) != nil || len(body.Events) > maxSyncEvents || len(body.Mail) > maxPushMail {
 		return refuse(probInvalid)
 	}
-	if _, ok := e.coMember(req, body.Group); !ok || !e.on(req.peer, wire.PartGroups) {
+	g, ok := e.coMember(req, body.Group)
+	if !ok || !e.on(req.peer, wire.PartGroups) {
 		return refuse(probNotFound)
 	}
 	if err := e.receive(req.r.Context(), body.Group, body.Events, body.Mail, req.peer.ID); err != nil {
 		return refuse(probInternal)
+	}
+	if g.Via == req.peer.ID {
+		// Pushed by the maker this member used a code with: its yes
+		// (section 2, "A member back in").
+		e.backInIfMember(req.r.Context(), body.Group)
 	}
 	return answer(struct{}{})
 }
@@ -1894,8 +1921,13 @@ func (e *Engine) joinVia(tx Tx, c wire.Code, peer string) error {
 		return nil
 	}
 	id := wire.Encode64(c.Group)
-	if g, err := gt.Group(id); err != nil || g != nil {
+	if g, err := gt.Group(id); err != nil {
 		return err
+	} else if g != nil {
+		// A member back in (section 2): the link through the maker
+		// gains the group once it's made.
+		g.Via, g.Joining = peer, e.now()
+		return gt.PutGroup(*g)
 	}
 	g := GroupRecord{ID: id, Me: wire.Encode64(e.current().Public()), Via: peer, Pool: *e.cfg.NewPairing}
 	if err := e.newMailKey(&g); err != nil {
@@ -1909,7 +1941,12 @@ func (e *Engine) joinVia(tx Tx, c wire.Code, peer string) error {
 func (e *Engine) paired(ctx context.Context, p *PeerRecord) {
 	if p.JoiningGroup != "" {
 		id := p.JoiningGroup
-		err := e.act(ctx, id, wire.Event{Type: wire.EventJoined, NewMember: wire.Encode64(p.Key), Name: p.Name})
+		var err error
+		if g, gerr := e.Group(ctx, id); gerr == nil && slices.ContainsFunc(g.Members, func(m GroupMemberView) bool { return m.Peer == p.ID }) {
+			// A member back in (section 2): the link gains the group.
+		} else {
+			err = e.act(ctx, id, wire.Event{Type: wire.EventJoined, NewMember: wire.Encode64(p.Key), Name: p.Name})
+		}
 		if err != nil {
 			e.log.Info("msfp: a server couldn't be added to the group its code invited it to", "peer", p.ID, "error", err)
 		}
@@ -1942,6 +1979,7 @@ func (e *Engine) paired(ctx context.Context, p *PeerRecord) {
 				q.Groups = append(q.Groups, id)
 			}
 		})
+		e.backInIfMember(ctx, id)
 		if err := e.syncWith(ctx, id, p); err != nil {
 			e.log.Info("msfp: the group's list couldn't be read from the inviter yet", "group", id, "error", err)
 		}
@@ -2171,6 +2209,34 @@ func (e *Engine) groupsRevoked(ctx context.Context, r wire.Revocation) {
 // isMember says whether a peer is this member: its current key, its
 // member ID, or, while either side is between keys, the peer's previous
 // key (a rotation the copy hasn't kept yet, or the peer record has).
+// memberOf says whether the peer is a member in this state.
+func memberOf(s *wire.GroupState, p *PeerRecord) bool {
+	for _, m := range s.Members {
+		if isMember(m, p) {
+			return true
+		}
+	}
+	return false
+}
+
+// backIn ends a member's way back (groups section 2, "A member back in"):
+// the link through which it used a group's code gains the group as a
+// source, as a newcomer's does when the list names it.
+func (e *Engine) backIn(tx Tx, g *GroupRecord) error {
+	p, err := tx.Peer(g.Via)
+	if err != nil || p == nil {
+		return err
+	}
+	if !slices.Contains(p.Groups, g.ID) {
+		p.Groups = append(p.Groups, g.ID)
+		if err := tx.PutPeer(*p); err != nil {
+			return err
+		}
+	}
+	g.Via, g.Joining = "", time.Time{}
+	return e.refreshLinks(tx)
+}
+
 func isMember(m *wire.GroupMember, p *PeerRecord) bool {
 	for _, k := range [][]byte{p.Key, p.PreviousKey} {
 		if len(k) == 0 {
@@ -2242,8 +2308,15 @@ func (e *Engine) joinPaired(ctx context.Context, c wire.Code, p *PeerRecord) (Pe
 		if err != nil {
 			return err
 		}
-		if g, err := gt.Group(id); err != nil || g != nil {
-			return cmpErr(err, ErrAlreadyMember)
+		g, err := gt.Group(id)
+		if err != nil {
+			return err
+		}
+		// A member back in, through a link that isn't through the group
+		// (section 2): only if this server can be called, for the maker's
+		// push says yes.
+		if g != nil && (slices.Contains(p.Groups, id) || e.saysUncallable() || e.stateOf(g).Members[g.Me] == nil) {
+			return ErrAlreadyMember
 		}
 		return nil
 	}); err != nil {
@@ -2326,11 +2399,11 @@ func (e *Engine) groupJoin(req *request) response {
 			return ErrNotFound
 		}
 		member := wire.Encode64(req.peer.Key)
-		in := s.Banned[member] != ""
-		for _, m := range s.Members {
-			in = in || isMember(m, req.peer)
-		}
-		if in || slices.ContainsFunc(g.Joins, func(j GroupJoin) bool { return j.Peer == req.peer.ID }) {
+		// A member is back in through a link that isn't through the
+		// group (section 2), if it can be called: it learns of the yes
+		// from this server's push.
+		in := memberOf(s, req.peer) && (slices.Contains(req.peer.Groups, g.ID) || req.peer.Inbound != InboundYes)
+		if in || s.Banned[member] != "" || slices.ContainsFunc(g.Joins, func(j GroupJoin) bool { return j.Peer == req.peer.ID }) {
 			return ErrAlreadyMember
 		}
 		if c.Uses > 1 {
@@ -2377,8 +2450,11 @@ func (e *Engine) AcceptJoin(ctx context.Context, id, peer string) error {
 	if p.State != Paired {
 		return ErrNotPaired
 	}
-	if err := e.act(ctx, id, wire.Event{Type: wire.EventJoined, NewMember: wire.Encode64(p.Key), Name: p.Name}); err != nil {
-		return err
+	back := slices.ContainsFunc(g.Members, func(m GroupMemberView) bool { return m.Peer == p.ID })
+	if !back {
+		if err := e.act(ctx, id, wire.Event{Type: wire.EventJoined, NewMember: wire.Encode64(p.Key), Name: p.Name}); err != nil {
+			return err
+		}
 	}
 	err = e.cfg.Store.Update(ctx, func(tx Tx) error {
 		gt, err := groupsTx(tx)
