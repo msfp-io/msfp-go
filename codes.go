@@ -116,6 +116,48 @@ func (e *Engine) MakeCodeWith(ctx context.Context, o CodeOptions) (string, CodeV
 	return code.String(), codeView(c), nil
 }
 
+// CodeText is a live code's text again, to copy or send once more: from
+// its record, with this server's address and key now (a code is no secret
+// from whoever can make another; it still needs the operator's acceptance
+// and the fingerprint check). Errors: ErrNotFound (no such live code),
+// ErrNoCodes (this server can't be called).
+func (e *Engine) CodeText(ctx context.Context, id string) (string, error) {
+	var c *CodeRecord
+	err := e.cfg.Store.Read(ctx, func(tx Tx) error {
+		codes, err := tx.Codes()
+		for i := range codes {
+			if codes[i].ID == id {
+				c = &codes[i]
+			}
+		}
+		return err
+	})
+	if err != nil {
+		return "", err
+	}
+	if c == nil || !c.Expires.After(e.now()) {
+		return "", ErrNotFound
+	}
+	rec, err := e.serverRecord(ctx)
+	if err != nil {
+		return "", err
+	}
+	if rec.Uncallable || e.saysUncallable() {
+		return "", ErrNoCodes
+	}
+	secret, err := e.cfg.Sealer.Open(c.Secret, sealCode)
+	if err != nil {
+		return "", err
+	}
+	code := wire.Code{Address: e.named(e.address()), Key: e.current().Public(), Secret: secret, Expires: c.Expires}
+	if c.Group != "" {
+		if code.Group, code.GroupName, err = e.groupForCode(ctx, c.Group); err != nil {
+			return "", err
+		}
+	}
+	return code.String(), nil
+}
+
 func codeView(c CodeRecord) CodeView {
 	uses := c.Uses
 	if uses == 0 {

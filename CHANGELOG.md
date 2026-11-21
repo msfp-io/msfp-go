@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- `CodeText`: a live code's text again, to copy or send once more, built
+  with this server's address and key now.
+
+
 ## v0.7.0 (2026-11-21)
 
 ### Added
