@@ -351,7 +351,7 @@ func (e *Engine) replaceKey(ctx context.Context, stolen wire.Key) error {
 			return err
 		}
 		for _, p := range peers {
-			if err := forgetPeer(tx, &p, now, true); err != nil {
+			if err := forgetPeer(tx, &p, now, true, false); err != nil {
 				return err
 			}
 			ended = append(ended, p)
@@ -385,10 +385,10 @@ func (e *Engine) replaceKey(ctx context.Context, stolen wire.Key) error {
 // forgetPeer deletes p in tx, every key of its history forgotten at now
 // (MSFP core section 7.4, step 1); byReplacement marks them ended by
 // replaceKey.
-func forgetPeer(tx Tx, p *PeerRecord, now time.Time, byReplacement bool) error {
+func forgetPeer(tx Tx, p *PeerRecord, now time.Time, byReplacement, blocked bool) error {
 	for _, k := range historyKeys(p) {
 		hash := sha256Of(k)
-		if err := tx.Forget(ForgottenKey{KeyHash: hash, At: now, Revoked: byReplacement}); err != nil {
+		if err := tx.Forget(ForgottenKey{KeyHash: hash, At: now, Revoked: byReplacement, Blocked: blocked}); err != nil {
 			return err
 		}
 	}

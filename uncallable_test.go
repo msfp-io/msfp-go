@@ -73,7 +73,7 @@ func TestUncallableServer(t *testing.T) {
 		t.Fatalf("A on U: %+v", p)
 	}
 	hello := a.exchanges("hello")
-	if len(hello) == 0 || !strings.Contains(hello[len(hello)-1].reqBody, `"inbound":false,"knownKey":"`) {
+	if len(hello) == 0 || !strings.Contains(hello[len(hello)-1].reqBody, `"inbound":false,`) || !strings.Contains(hello[len(hello)-1].reqBody, `"knownKey":"`) {
 		t.Errorf("U's hello: %+v", hello)
 	}
 	// Not due again for 5 minutes, give or take a fifth.

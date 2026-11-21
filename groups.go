@@ -353,10 +353,12 @@ func (e *Engine) act(ctx context.Context, id string, ev wire.Event) error {
 	// before the event changes who they are; a banned server too
 	// (groups section 7).
 	to := e.groupPeers(ctx, id, "")
+	var banned *PeerRecord
 	if ev.Type == wire.EventBanned {
 		if k, ok := wire.Decode64(ev.Target, 32); ok {
-			if p, err := e.peerByKey(ctx, k); err == nil && p != nil && !slices.ContainsFunc(to, func(q PeerRecord) bool { return q.ID == p.ID }) {
-				to = append(to, *p)
+			if p, err := e.peerByKey(ctx, k); err == nil && p != nil {
+				banned = p
+				to = slices.DeleteFunc(to, func(q PeerRecord) bool { return q.ID == p.ID })
 			}
 		}
 	}
@@ -384,6 +386,15 @@ func (e *Engine) act(ctx context.Context, id string, ev wire.Event) error {
 	})
 	if err != nil {
 		return err
+	}
+	if banned != nil && banned.Inbound == InboundYes {
+		// The banned server hears of it before its link here ends, which
+		// it does when nothing else holds it (core section 7.7).
+		body := groupPushRequest{Group: id, Events: []wire.Envelope{{Payload: sent.Event, Signature: sent.Signature}}}
+		var ans struct{}
+		if _, err := e.call(ctx, banned, callGroupPush, body, &ans, true); err != nil {
+			e.log.Debug("msfp: the banned server couldn't be told", "peer", banned.ID, "error", err)
+		}
 	}
 	e.pushTo(to, id, []StoredEvent{sent}, nil)
 	for _, f := range effects {
@@ -730,31 +741,37 @@ func (e *Engine) withState(ctx context.Context, id string, fn func(*GroupRecord,
 	})
 }
 
-// LeaveGroup leaves a group; end lists the peers (links made through it)
-// whose pairing ends too. The others lose this group as a source; one
-// with no other becomes a pairing by hand, keeping what the group gave
-// it (groups section 7).
-func (e *Engine) LeaveGroup(ctx context.Context, id string, end []string) error {
+// LeaveGroup leaves a group. Every link through it loses it as a
+// relation; one with no relation left ends, but those in ask, which are
+// asked for the individual relation first and stay until their operators
+// answer (groups section 7, core section 7.7).
+func (e *Engine) LeaveGroup(ctx context.Context, id string, ask []string) error {
+	for _, p := range ask {
+		if _, err := e.AskIndividual(ctx, p); err != nil && !errors.Is(err, ErrNotFound) {
+			e.log.Info("msfp: a server couldn't be asked for the individual relation before leaving", "peer", p, "error", err)
+		}
+	}
 	if g, err := e.Group(ctx, id); err == nil && g.Joining {
 		// Not a member yet: giving up joining (groups section 2).
-		return e.dropGroup(ctx, id, end, true, "left", "")
+		return e.dropGroup(ctx, id, false, "left", "")
 	}
 	if err := e.act(ctx, id, wire.Event{Type: wire.EventLeft}); err != nil {
 		return err
 	}
-	return e.dropGroup(ctx, id, end, true, "left", "")
+	return e.dropGroup(ctx, id, false, "left", "")
 }
 
 // DissolveGroup dissolves the group (the owner only): every member removes
-// it; with keepPairings false, links whose only source it was end.
+// it; links it alone held end, or, with keepPairings, wait for each
+// side's operator to keep (AskIndividual) or end them (RefuseIndividual).
 func (e *Engine) DissolveGroup(ctx context.Context, id string, keepPairings bool) error {
 	return e.act(ctx, id, wire.Event{Type: wire.EventDissolved, KeepPairings: &keepPairings})
 }
 
 // dropGroup removes a group from this server: its record, and from every
-// link's sources. Links in end end; a link with no other source ends when
-// keep is false, and becomes a pairing by hand when it is true.
-func (e *Engine) dropGroup(ctx context.Context, id string, end []string, keep bool, why, reason string) error {
+// link's relations. A link with no relation left ends, or, with keep (a
+// dissolution with keepPairings), waits for the operator's choice.
+func (e *Engine) dropGroup(ctx context.Context, id string, keep bool, why, reason string) error {
 	var ending []string
 	var left *GroupLeft
 	err := e.cfg.Store.Update(ctx, func(tx Tx) error {
@@ -776,15 +793,18 @@ func (e *Engine) dropGroup(ctx context.Context, id string, end []string, keep bo
 				continue
 			}
 			p.Groups = slices.DeleteFunc(p.Groups, func(x string) bool { return x == id })
-			alone := p.NotByHand && len(p.Groups) == 0
-			if slices.Contains(end, p.ID) || (alone && !keep) {
+			alone := p.State == Paired && !holds(&p, false)
+			if alone && !keep {
 				ending = append(ending, p.ID)
 				continue
 			}
-			if alone && g != nil {
-				// A pairing by hand from now on, with what the group gave.
-				p.NotByHand = false
-				p.Offers, p.Limits = slices.Clone(g.Offers), g.Pool
+			if alone {
+				// Kept or ended by our operator; its offers and limits, if
+				// kept, are the group's until changed.
+				p.KeepChoice = true
+				if g != nil {
+					p.Offers, p.Limits = slices.Clone(g.Offers), g.Pool
+				}
 			}
 			if err := tx.PutPeer(p); err != nil {
 				return err
@@ -850,13 +870,13 @@ func (e *Engine) Block(ctx context.Context, id, member string, invitees bool) er
 				return nil
 			}
 			h := sha256Sum(k)
-			return tx.Forget(ForgottenKey{KeyHash: h, At: e.now()})
+			return tx.Forget(ForgottenKey{KeyHash: h, At: e.now(), Blocked: true})
 		})
 		if err != nil {
 			return err
 		}
 		if peer != "" {
-			if err := e.End(ctx, peer); err != nil && !errors.Is(err, ErrNotFound) {
+			if err := e.BlockPeer(ctx, peer); err != nil && !errors.Is(err, ErrNotFound) {
 				return err
 			}
 		}
@@ -1237,8 +1257,8 @@ func (e *Engine) gotMail(ctx context.Context, id string, m wire.Mail) {
 		}
 		key, _ := wire.Decode64(from.Key, 32)
 		hash := sha256Sum(key)
-		if f, err := tx.Forgotten(hash); err != nil || f != nil || slices.Contains(g.Refused, m.From) {
-			return cmpErr(err, ErrNotFound) // blocked or refused: dropped
+		if f, err := tx.Forgotten(hash); err != nil || f != nil && f.Blocked || slices.Contains(g.Refused, m.From) {
+			return cmpErr(err, ErrNotFound) // blocked or refused: dropped (core section 7.4)
 		}
 		if p, err := tx.PeerByKey(key); err != nil || p != nil {
 			if p != nil && !slices.Contains(p.Groups, id) {
@@ -1294,7 +1314,7 @@ func (e *Engine) afterEvents(tx Tx, g *GroupRecord, s *wire.GroupState, effects 
 		if effects != nil {
 			keep := s.Keep
 			*effects = append(*effects, func() {
-				e.background(func(ctx context.Context) { _ = e.dropGroup(ctx, id, nil, keep, "dissolved", "") })
+				e.background(func(ctx context.Context) { _ = e.dropGroup(ctx, id, keep, "dissolved", "") })
 			})
 		}
 		return nil
@@ -1303,7 +1323,7 @@ func (e *Engine) afterEvents(tx Tx, g *GroupRecord, s *wire.GroupState, effects 
 		if effects != nil {
 			reason := s.Reasons[g.Me]
 			*effects = append(*effects, func() {
-				e.background(func(ctx context.Context) { _ = e.dropGroup(ctx, id, nil, false, "banned", reason) })
+				e.background(func(ctx context.Context) { _ = e.dropGroup(ctx, id, false, "banned", reason) })
 			})
 		}
 		return nil
@@ -1327,19 +1347,14 @@ func (e *Engine) afterEvents(tx Tx, g *GroupRecord, s *wire.GroupState, effects 
 			continue
 		}
 		p.Groups = slices.DeleteFunc(p.Groups, func(x string) bool { return x == id })
-		_, banned := s.Banned[wire.Encode64(p.Key)]
-		if p.NotByHand && len(p.Groups) == 0 {
-			if banned {
-				pid := p.ID
-				if effects != nil {
-					*effects = append(*effects, func() {
-						e.background(func(ctx context.Context) { _ = e.End(ctx, pid) })
-					})
-				}
-			} else {
-				// A member that left keeping the link: by hand from now on.
-				p.NotByHand = false
-				p.Offers, p.Limits = slices.Clone(g.Offers), g.Pool
+		if p.State == Paired && !holds(&p, false) {
+			// Banned, or left: a link nothing else holds ends (core
+			// section 7.7); one the leaver asked to keep is held by its ask.
+			pid := p.ID
+			if effects != nil {
+				*effects = append(*effects, func() {
+					e.background(func(ctx context.Context) { _ = e.End(ctx, pid) })
+				})
 			}
 		}
 		if err := tx.PutPeer(p); err != nil {
@@ -1410,7 +1425,7 @@ func (e *Engine) refreshLinksAt(tx Tx, mark int64) error {
 // its groups (their union).
 func offered(p *PeerRecord) []string {
 	out := slices.Clone(p.GroupOffers)
-	if !p.NotByHand {
+	if p.individual() {
 		for _, l := range p.Offers {
 			if !slices.Contains(out, l) {
 				out = append(out, l)
@@ -1424,7 +1439,7 @@ func offered(p *PeerRecord) []string {
 // its own limits when paired by hand, then its groups' (groups section 9).
 func pools(p *PeerRecord) []GroupPool {
 	var out []GroupPool
-	if !p.NotByHand {
+	if p.individual() {
 		out = append(out, GroupPool{Group: "", Limits: p.Limits})
 	}
 	return append(out, p.Pools...)
@@ -1820,8 +1835,8 @@ func (e *Engine) matchSent(ctx context.Context, id string, key []byte, mailID st
 			return ErrNotMember
 		}
 		hash := sha256Sum(key)
-		if f, err := tx.Forgotten(hash); err != nil || f != nil {
-			return cmpErr(err, ErrNotFound)
+		if f, err := tx.Forgotten(hash); err != nil || f != nil && f.Blocked {
+			return cmpErr(err, ErrNotFound) // blocked: kept away from groups (core section 7.4)
 		}
 		i := slices.IndexFunc(g.Sent, func(x SentMail) bool { return x.ID == mailID && x.To == member })
 		if i < 0 {
@@ -1845,6 +1860,11 @@ func (e *Engine) linkThrough(ctx context.Context, id, member string, key []byte,
 		}
 		now := e.now().Truncate(time.Second)
 		if p == nil {
+			// Linked again: an ended key comes off the forgotten list
+			// (core section 7.4); a blocked one never gets this far.
+			if err := tx.Unforget(sha256Sum(key)); err != nil {
+				return err
+			}
 			newID, err := e.newID("p")
 			if err != nil {
 				return err
@@ -1954,6 +1974,11 @@ func (e *Engine) paired(ctx context.Context, p *PeerRecord) {
 			q.JoiningGroup = ""
 			if err == nil && !slices.Contains(q.Groups, id) {
 				q.Groups = append(q.Groups, id)
+			}
+			if err != nil {
+				// No relation: this side asks for the individual one
+				// (groups section 2), the other side's operator answers.
+				q.NotByHand = false
 			}
 		})
 		_ = e.cfg.Store.Update(ctx, func(tx Tx) error { return e.refreshLinks(tx) })
@@ -2534,7 +2559,7 @@ func (e *Engine) tidyGroups(ctx context.Context) error {
 	})
 	for _, id := range drop {
 		e.log.Info("msfp: gave up joining a group: its inviter's operator didn't accept within 30 days", "group", id)
-		_ = e.dropGroup(ctx, id, nil, true, "left", "")
+		_ = e.dropGroup(ctx, id, false, "left", "")
 	}
 	return err
 }

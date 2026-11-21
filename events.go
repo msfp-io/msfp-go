@@ -46,6 +46,13 @@ type PeerEnded struct {
 	ByThem     bool
 }
 
+// RelationsChanged: why this server and a peer are linked changed: the
+// individual relation was asked, accepted, refused or ended, by either
+// side (core section 7.7).
+type RelationsChanged struct {
+	Peer, Name string
+}
+
 // VersionsChanged: a peer's versions changed; the parts on with it may
 // have changed (core section 10).
 type VersionsChanged struct{ Peer, Name string }
@@ -218,6 +225,7 @@ func (e PeerWaiting) PeerID() string         { return e.Peer }
 func (e PeerPaired) PeerID() string          { return e.Peer }
 func (e PeerGone) PeerID() string            { return e.Peer }
 func (e PeerEnded) PeerID() string           { return e.Peer }
+func (e RelationsChanged) PeerID() string    { return e.Peer }
 func (e VersionsChanged) PeerID() string     { return e.Peer }
 func (e PeerSuspended) PeerID() string       { return e.Peer }
 func (e PeerResumed) PeerID() string         { return e.Peer }

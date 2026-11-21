@@ -33,6 +33,11 @@
 // pairings only it made;
 // "group-offer <group>" shares the films with the group; "auto <group>
 // on|off" accepts its members by itself; "leave <group>" leaves it.
+//
+// Relations (core section 7.7): "individual <id>" asks a peer linked
+// through a group for the individual relation, or accepts its ask;
+// "end-individual <id>" ends it (the link stays while a group holds it);
+// "block <id>" ends the link and keeps the peer away from every group.
 package main
 
 import (
@@ -124,6 +129,13 @@ func main() {
 			show("paired with "+p.Name, err)
 		case "end":
 			show("ended", eng.End(ctx, arg))
+		case "individual":
+			p, err := eng.AskIndividual(ctx, arg)
+			show(fmt.Sprintf("individual: %v, asked: %v", p.Individual, p.IndividualAsked), err)
+		case "end-individual":
+			show("individual relation ended", eng.EndIndividual(ctx, arg))
+		case "block":
+			show("blocked", eng.BlockPeer(ctx, arg))
 		case "rotate":
 			show("key changed; peers told", eng.Rotate(ctx, arg))
 		case "stolen":

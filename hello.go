@@ -37,6 +37,9 @@ type helloMessage struct {
 	// Inbound is false while this server can't be called (MSFP core
 	// section 7.5); absent otherwise.
 	Inbound *bool `json:"inbound,omitempty"`
+	// Individual: whether this side wants the individual relation (MSFP
+	// core section 7.7); sent to every known peer.
+	Individual *bool `json:"individual,omitempty"`
 	// KnownKey, in requests of a server that can't be called: the key it
 	// checks the peer's answers against (MSFP core section 12.4).
 	KnownKey string `json:"knownKey,omitempty"`
@@ -69,6 +72,10 @@ func (e *Engine) ourHello(ctx context.Context, state string, p *PeerRecord, answ
 	v := e.versions()
 	named := e.named(e.address())
 	h := helloMessage{State: state, Core: v.Core, Parts: v.Parts, Address: named}
+	if p != nil {
+		ours := !p.NotByHand
+		h.Individual = &ours
+	}
 	if p != nil && p.OurKey == KeyCurrent {
 		h.NextCommitment = wire.Encode64(e.commitment())
 	}
@@ -134,8 +141,14 @@ func (e *Engine) hello(req *request) response {
 		if msg.State == helloPaired {
 			events = append(events, e.theyPaired(q)...)
 		}
+		was := q.individual()
 		ev, c := e.keepHello(q, msg)
 		events, confirm = append(events, ev...), c
+		if was != q.individual() {
+			if q.OffersSeq, err = e.offersSeq(tx, e.own.seqSeen.Load()); err != nil {
+				return err
+			}
+		}
 		q.Seen = e.now().Truncate(time.Second)
 		now = *q
 		return tx.PutPeer(*q)
@@ -150,6 +163,7 @@ func (e *Engine) hello(req *request) response {
 	if confirm {
 		e.confirmSoon(p.ID)
 	}
+	e.endIfUnheld(p.ID)
 	// From a peer that can't be called: which of our keys it knows us by
 	// (MSFP core section 12.4); then our rotation for it to pull.
 	if msg.Uncallable {
@@ -182,6 +196,7 @@ func (e *Engine) theyPaired(p *PeerRecord) []Event {
 // commitment comes from pair or a rotation only (MSFP core section 12.5).
 func (e *Engine) keepHello(p *PeerRecord, h wire.Hello) (events []Event, confirm bool) {
 	events = e.keepInbound(p, h.Uncallable)
+	events = append(events, e.keepIndividual(p, h.Individual)...)
 	ev, confirm := e.keepAddress(p, h.Address)
 	events = append(events, ev...)
 	p.Pins = wire.CleanPins(h.Certificates)
@@ -255,10 +270,24 @@ func (e *Engine) Accept(ctx context.Context, id string) (PeerView, error) {
 	return v, nil
 }
 
-// End is this server's operator ending a pairing, or refusing a waiting
-// one, in any state: the peer is deleted, every key of its history
-// forgotten, then it is told (MSFP core section 7.4). Error: ErrNotFound.
+// End ends a link, whatever its relations, or refuses a waiting one, in
+// any state: the peer is deleted, every key of its history recorded for
+// the signed 404 (not blocked: it isn't kept away from groups), then it
+// is told (MSFP core section 7.4). Panels end relations instead
+// (EndIndividual, LeaveGroup) and keep End for refusing a waiting server.
+// Error: ErrNotFound.
 func (e *Engine) End(ctx context.Context, id string) error {
+	return e.end(ctx, id, false)
+}
+
+// BlockPeer ends the link with a peer whatever its relations, and keeps
+// it away from every group: its keys are recorded blocked (MSFP core
+// section 7.4). Block does it for a group's member. Error: ErrNotFound.
+func (e *Engine) BlockPeer(ctx context.Context, id string) error {
+	return e.end(ctx, id, true)
+}
+
+func (e *Engine) end(ctx context.Context, id string, blocked bool) error {
 	var p PeerRecord
 	err := e.cfg.Store.Update(ctx, func(tx Tx) error {
 		q, err := tx.Peer(id)
@@ -269,7 +298,7 @@ func (e *Engine) End(ctx context.Context, id string) error {
 			return ErrNotFound
 		}
 		p = *q
-		return forgetPeer(tx, q, e.now().Truncate(time.Second), false)
+		return forgetPeer(tx, q, e.now().Truncate(time.Second), false, blocked)
 	})
 	if err != nil {
 		return err
@@ -384,6 +413,7 @@ func (e *Engine) check1(ctx context.Context, id string, background bool) (PeerVi
 		if uncallable {
 			e.pulledRotation(ctx, id, pulled.Rotation)
 		}
+		e.endIfUnheld(id)
 		return e.Peer(ctx, id)
 	case http.StatusNotFound:
 		// It doesn't know us, or suspended our key: gone (MSFP core

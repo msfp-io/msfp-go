@@ -275,9 +275,12 @@ func (e *Engine) RedeemCode(ctx context.Context, text string) (PeerView, error) 
 		return PeerView{}, err
 	}
 	now := e.now().Truncate(time.Second)
+	// A plain code: the individual relation, both sides; a group's: the
+	// group relation only (MSFP core section 7.7).
 	p := PeerRecord{ID: id, Key: c.Key, Name: cleanName(ans.Name, c.Address), Created: now, Seen: now,
 		State: Theirs, Address: c.Address, Base: maker.Base, Inbound: InboundYes,
-		Commitment: theirs, CommitmentFrom: "pair", CommitmentTold: true, Limits: *e.cfg.NewPairing}
+		Commitment: theirs, CommitmentFrom: "pair", CommitmentTold: true, Limits: *e.cfg.NewPairing,
+		NotByHand: c.Group != nil}
 	err = e.cfg.Store.Update(ctx, func(tx Tx) error {
 		// Paired meanwhile (its own code, redeemed by it at once)?
 		if q, err := tx.PeerByKey(c.Key); err != nil || q != nil {
@@ -374,6 +377,7 @@ func (e *Engine) pair(req *request) response {
 			return err
 		}
 		p.JoiningGroup = c.Group
+		p.NotByHand = c.Group != "" // a group's code: the group relation only (core section 7.7)
 		keyHash := sha256.Sum256(req.v.Key)
 		if err := tx.Unforget(keyHash[:]); err != nil {
 			return err

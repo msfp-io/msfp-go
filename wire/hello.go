@@ -26,6 +26,9 @@ type Hello struct {
 	// Uncallable: it says inbound false, it can't be called (section
 	// 7.5). Absent or true reads as false: it can.
 	Uncallable bool
+	// Individual is whether it wants the individual relation (section
+	// 7.7); nil when it doesn't say.
+	Individual *bool
 
 	// In a request from a server that can't be called only (read from no
 	// other, whatever their value):
@@ -59,6 +62,7 @@ type helloMembers struct {
 	Address        json.RawMessage `json:"address"`
 	NextCommitment json.RawMessage `json:"nextCommitment"`
 	Inbound        json.RawMessage `json:"inbound"`
+	Individual     json.RawMessage `json:"individual"`
 	// One way only.
 	KnownKey    json.RawMessage `json:"knownKey"`
 	Rotation    json.RawMessage `json:"rotation"`
@@ -129,6 +133,13 @@ func ReadHello(body []byte, answer bool) (Hello, error) {
 		return Hello{}, ErrJSON
 	}
 	h.Uncallable = !inbound
+	if m.Individual != nil {
+		var b bool
+		if json.Unmarshal(m.Individual, &b) != nil {
+			return Hello{}, ErrJSON
+		}
+		h.Individual = &b
+	}
 	if m.NextCommitment != nil {
 		var ok bool
 		if h.NextCommitment, ok = readBytes(m.NextCommitment, 32); !ok {

@@ -204,7 +204,10 @@ func TestGroupBanLeaveDissolve(t *testing.T) {
 		t.Errorf("A's bans: %+v", ga.Banned)
 	}
 
-	if err := b.eng.LeaveGroup(ctx, g.ID, nil); err != nil {
+	// B leaves, asking A to stay linked: the link waits for A's answer
+	// (core section 7.7), and A accepts it.
+	aOnB := mustPeers(t, b)[0].ID
+	if err := b.eng.LeaveGroup(ctx, g.ID, []string{aOnB}); err != nil {
 		t.Fatal(err)
 	}
 	settle(a, b, n)
@@ -214,8 +217,24 @@ func TestGroupBanLeaveDissolve(t *testing.T) {
 	if ev, ok := has[msfp.GroupLeft](b.events); !ok || ev.Why != "left" {
 		t.Errorf("B's GroupLeft: %+v", ev)
 	}
-	if p := mustPeers(t, b); len(p) != 1 || p[0].State != msfp.Paired {
-		t.Errorf("B's link with A, kept by hand: %+v", p)
+	if p := mustPeers(t, b); len(p) != 1 || p[0].State != msfp.Paired || !p[0].IndividualAsked {
+		t.Fatalf("B's link with A, asked: %+v", p)
+	}
+	var bOnA string
+	for _, p := range mustPeers(t, a) {
+		if p.Name == "B" {
+			bOnA = p.ID
+			if !p.IndividualAsks {
+				t.Errorf("A isn't asked: %+v", p)
+			}
+		}
+	}
+	if _, err := a.eng.AskIndividual(ctx, bOnA); err != nil {
+		t.Fatal(err)
+	}
+	settle(a, b, n)
+	if p := mustPeers(t, b); len(p) != 1 || !p[0].Individual {
+		t.Errorf("B's link with A, individual: %+v", p)
 	}
 	ga, _ = a.eng.Group(ctx, g.ID)
 	if len(ga.Members) != 1 {

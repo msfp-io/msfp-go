@@ -167,17 +167,24 @@ type PeerRecord struct {
 
 	// Groups (MSFP groups part).
 	//
-	// Groups are the groups this link was made or kept through, its
-	// sources besides a pairing by hand; NotByHand says it has no pairing
-	// by hand (made by group-pair). GroupOffers and Pools are what its
+	// Groups are the groups this link was made or kept through: its group
+	// relations (MSFP core section 7.7). NotByHand says this side doesn't
+	// want the individual relation; TheirIndividual is what the peer last
+	// said of it in hello (nil: never said, counted as ours). KeepChoice:
+	// our operator is choosing whether to keep the link (a dissolution with
+	// keepPairings). IndividualRefused: our operator refused the peer's
+	// ask, privately. GroupOffers and Pools are what its
 	// groups give it, copied from them whenever they change: the host
 	// libraries each offers, and each group's pool. JoiningGroup is the
 	// group a code of ours invited it to, until our operator accepts it.
-	Groups       []string    `json:"groups,omitempty"`
-	NotByHand    bool        `json:"notByHand,omitempty"`
-	GroupOffers  []string    `json:"groupOffers,omitempty"`
-	Pools        []GroupPool `json:"pools,omitempty"`
-	JoiningGroup string      `json:"joiningGroup,omitempty"`
+	Groups            []string    `json:"groups,omitempty"`
+	NotByHand         bool        `json:"notByHand,omitempty"`
+	TheirIndividual   *bool       `json:"theirIndividual,omitempty"`
+	KeepChoice        bool        `json:"keepChoice,omitempty"`
+	IndividualRefused bool        `json:"individualRefused,omitempty"`
+	GroupOffers       []string    `json:"groupOffers,omitempty"`
+	Pools             []GroupPool `json:"pools,omitempty"`
+	JoiningGroup      string      `json:"joiningGroup,omitempty"`
 }
 
 // GroupPool is a group's pool, as a link through it uses it.
@@ -318,6 +325,10 @@ type ForgottenKey struct {
 	KeyHash []byte    `json:"keyHash"`
 	At      time.Time `json:"at"`
 	Revoked bool      `json:"revoked,omitempty"`
+	// Blocked: the operator blocked it, which keeps it away from every
+	// group (MSFP core section 7.4); other ended keys are kept only for
+	// the signed 404.
+	Blocked bool `json:"blocked,omitempty"`
 }
 
 // Leftover is a playback this server started on a peer (the peer's
