@@ -155,6 +155,8 @@ type GroupState struct {
 	Members   map[string]*GroupMember
 	Banned    map[string]string // member ID -> the banned event's ID
 	Reasons   map[string]string // member ID -> its ban's reason
+	// WasBanned is a banned server as it was a member, for the panels.
+	WasBanned map[string]GroupMember
 	Excluded  []string          // equivocation
 	Dissolved bool
 	Keep      bool // dissolved with keepPairings
@@ -184,7 +186,7 @@ type keyFrom struct {
 
 // NewGroupState is an empty copy, before its founded event.
 func NewGroupState() *GroupState {
-	return &GroupState{Members: map[string]*GroupMember{}, Banned: map[string]string{}, Reasons: map[string]string{},
+	return &GroupState{Members: map[string]*GroupMember{}, Banned: map[string]string{}, Reasons: map[string]string{}, WasBanned: map[string]GroupMember{},
 		Settings: DefaultGroupSettings, seq: map[string]int64{}, payloads: map[string]map[int64]string{},
 		removedAt: map[string]int64{}, bannedAt: map[string]int64{}, revoked: map[string]keyFrom{},
 		keys: map[string][]keyFrom{}, capCount: map[string]int64{}, ids: map[string]bool{}}
@@ -463,6 +465,7 @@ func (s *GroupState) applyType(ev Event, id string, owner, admin bool) error {
 		s.Banned[ev.Target] = id
 		s.Reasons[ev.Target] = CleanText(ev.Reason, MaxGroupReason)
 		s.bannedAt[ev.Target] = *ev.LastSeq
+		s.WasBanned[ev.Target] = *s.Members[ev.Target]
 		s.remove(ev.Target)
 	case EventUnbanned:
 		if !owner {
@@ -472,6 +475,7 @@ func (s *GroupState) applyType(ev Event, id string, owner, admin bool) error {
 			if ban == ev.Ban {
 				delete(s.Banned, m)
 				delete(s.Reasons, m)
+				delete(s.WasBanned, m)
 				return nil
 			}
 		}

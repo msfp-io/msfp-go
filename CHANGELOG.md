@@ -26,7 +26,9 @@ with room. `PeerRecord` gains `Groups`, `NotByHand`, `GroupOffers`,
 `PeerView` gains `Groups` and `ByHand`; `CodeView`, `Uses` and `Group`;
 `CodePreview`, `Group` and `GroupName`. Errors `CodeOptions`,
 `NoGroups`, `NoRight`, `NotMember`. Events `GroupRequestWaiting`,
-`GroupJoined`, `GroupChanged`, `GroupLeft`.
+`GroupJoined`, `GroupChanged`, `GroupLeft`. `GroupMemberView.Refused` and
+`Asked`; `GroupBanView` with the banned server's `Name` and `Fingerprint`
+(`wire.GroupState.WasBanned`).
 
 
 ## v0.3.0 (2026-11-19)

@@ -7,6 +7,7 @@ import (
 	"math/rand/v2"
 	"net/http"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/msfp-io/msfp-go/wire"
@@ -71,12 +72,17 @@ type GroupMemberView struct {
 	Role                  string
 	InvitedBy             string
 	Joined                time.Time
-	// Peer is the link with it, "" for none.
-	Peer string
+	// Peer is the link with it, "" for none. Refused: this server refused
+	// its requests (LiftRefusal undoes it); Asked: this server's request
+	// to it waits for its answer.
+	Peer           string
+	Refused, Asked bool
 }
 
 // GroupBanView is a banned server, and the reason given.
-type GroupBanView struct{ ID, Reason string }
+// GroupBanView is a banned server: its member ID, name and fingerprint as
+// it was a member, and the ban's reason ("" for none).
+type GroupBanView struct{ ID, Name, Fingerprint, Reason string }
 
 // GroupRequestView is a member's request waiting for this server's
 // operator; Waited says it has been in the group the group's days.
@@ -123,7 +129,8 @@ func (e *Engine) groupView(g *GroupRecord, peers []PeerRecord) GroupView {
 	for _, m := range s.Members {
 		key, _ := wire.Decode64(m.Key, 32)
 		mv := GroupMemberView{ID: m.ID, Name: m.Name, Fingerprint: wire.Fingerprint(key), Role: role(s, m.ID),
-			InvitedBy: m.InvitedBy, Joined: time.Unix(m.Joined, 0).UTC()}
+			InvitedBy: m.InvitedBy, Joined: time.Unix(m.Joined, 0).UTC(), Refused: slices.Contains(g.Refused, m.ID),
+			Asked: slices.ContainsFunc(g.Sent, func(x SentMail) bool { return x.To == m.ID && x.Kind == "request" && x.Expires.After(e.now()) })}
 		for _, p := range peers {
 			if isMember(m, &p) {
 				mv.Peer = p.ID
@@ -132,14 +139,15 @@ func (e *Engine) groupView(g *GroupRecord, peers []PeerRecord) GroupView {
 		v.Members = append(v.Members, mv)
 	}
 	slices.SortFunc(v.Members, func(a, b GroupMemberView) int { return int(a.Joined.Sub(b.Joined)) })
-	for id, ban := range s.Reasons {
-		v.Banned = append(v.Banned, GroupBanView{ID: id, Reason: ban})
-	}
 	for id := range s.Banned {
-		if _, ok := s.Reasons[id]; !ok {
-			v.Banned = append(v.Banned, GroupBanView{ID: id})
+		b := GroupBanView{ID: id, Reason: s.Reasons[id]}
+		if m, ok := s.WasBanned[id]; ok {
+			key, _ := wire.Decode64(m.Key, 32)
+			b.Name, b.Fingerprint = m.Name, wire.Fingerprint(key)
 		}
+		v.Banned = append(v.Banned, b)
 	}
+	slices.SortFunc(v.Banned, func(a, b GroupBanView) int { return strings.Compare(a.Name+a.ID, b.Name+b.ID) })
 	for _, r := range g.Requests {
 		key, _ := wire.Decode64(r.From, 32)
 		if m := s.Members[r.From]; m != nil {

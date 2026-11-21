@@ -188,7 +188,7 @@ func TestGroupBanLeaveDissolve(t *testing.T) {
 		t.Errorf("N's GroupLeft: %+v", ev)
 	}
 	ga, _ := a.eng.Group(ctx, g.ID)
-	if len(ga.Banned) != 1 || ga.Banned[0].Reason != "testing" {
+	if len(ga.Banned) != 1 || ga.Banned[0].Reason != "testing" || ga.Banned[0].Name != "N" || ga.Banned[0].Fingerprint == "" {
 		t.Errorf("A's bans: %+v", ga.Banned)
 	}
 
@@ -471,5 +471,58 @@ func TestGroupRoles(t *testing.T) {
 	}
 	if err := a.eng.SetAdmin(ctx, g.ID, bID, false); !errors.Is(err, msfp.ErrNoRight) {
 		t.Errorf("A, no longer the owner, removing an admin: %v", err)
+	}
+}
+
+// memberView is a member of a group view, by name.
+func memberView(v msfp.GroupView, name string) msfp.GroupMemberView {
+	for _, m := range v.Members {
+		if m.Name == name {
+			return m
+		}
+	}
+	return msfp.GroupMemberView{}
+}
+
+// B refuses N's request, then lifts the refusal and asks N itself; N
+// accepts, and the two pair through the group.
+func TestGroupRefuseThenAsk(t *testing.T) {
+	ctx := context.Background()
+	a, b, n, g := trio(t, msfp.Config{}, msfp.Config{}, msfp.Config{}, msfp.GroupSettingsDefault)
+	gb, _ := b.eng.Group(ctx, g.ID)
+	gn, _ := n.eng.Group(ctx, g.ID)
+	if len(gb.Requests) != 1 || !memberView(gn, "B").Asked {
+		t.Fatalf("N's request: B's %+v, N's view of B %+v", gb.Requests, memberView(gn, "B"))
+	}
+	if err := b.eng.RefuseRequest(ctx, g.ID, gb.Requests[0].Mail); err != nil {
+		t.Fatal(err)
+	}
+	gb, _ = b.eng.Group(ctx, g.ID)
+	nID := memberView(gb, "N").ID
+	if len(gb.Requests) != 0 || !memberView(gb, "N").Refused {
+		t.Fatalf("after refusing: %+v, N %+v", gb.Requests, memberView(gb, "N"))
+	}
+	if err := b.eng.LiftRefusal(ctx, g.ID, nID); err != nil {
+		t.Fatal(err)
+	}
+	if err := b.eng.RequestMember(ctx, g.ID, nID); err != nil {
+		t.Fatal(err)
+	}
+	settle(a, b, n)
+	gb, _ = b.eng.Group(ctx, g.ID)
+	if m := memberView(gb, "N"); m.Refused || !m.Asked {
+		t.Fatalf("B's view of N after asking: %+v", m)
+	}
+	gn, _ = n.eng.Group(ctx, g.ID)
+	i := slices.IndexFunc(gn.Requests, func(r msfp.GroupRequestView) bool { return r.Name == "B" })
+	if i < 0 {
+		t.Fatalf("N has no request from B: %+v", gn.Requests)
+	}
+	if err := n.eng.AcceptRequest(ctx, g.ID, gn.Requests[i].Mail); err != nil {
+		t.Fatal(err)
+	}
+	settle(a, b, n)
+	if p := peerNamed(t, b, "N"); p.State != msfp.Paired {
+		t.Fatalf("B and N: %+v", p)
 	}
 }
