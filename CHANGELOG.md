@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.7.0 (2026-11-21)
 
 ### Added
 
@@ -10,6 +10,11 @@
   they're shown. What is read of a server is what it is shown
   individually (`SetWants`, while the individual relation holds) plus what
   its groups show of it.
+
+- `PeerView.JoiningGroup`: a server waiting with one of our group's
+  invites is a request to join that group, for the panel to show there.
+- `HostLibraries`: this server's libraries, for a panel creating or
+  joining a group with what it shares.
 
 ### Changed
 
