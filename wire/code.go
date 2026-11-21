@@ -101,9 +101,13 @@ func NewCode(address string, public ed25519.PublicKey, now time.Time) (Code, err
 // seconds, big-endian), a flag (1: a group follows, 0: none), for a group
 // its ID (32), its name's length (1) and its name, then the address.
 func (c Code) String() string {
-	name := c.GroupName
-	if len(name) > 255 {
-		name = CleanText(name, MaxGroupName)
+	// The name as a group code carries it (core section 5.1): cleaned, 80
+	// code points at most, then cut a whole code point at a time until
+	// its UTF-8 fits the length byte.
+	name := CleanText(c.GroupName, MaxGroupName)
+	for len(name) > 255 {
+		_, size := utf8.DecodeLastRuneInString(name)
+		name = name[:len(name)-size]
 	}
 	b := make([]byte, 0, ed25519.PublicKeySize+SecretSize+8+1+len(c.Group)+1+len(name)+len(c.Address))
 	b = append(b, c.Key...)

@@ -1120,6 +1120,9 @@ func (e *Engine) gotMail(ctx context.Context, id string, m wire.Mail) {
 			return nil
 		}
 		from := s.Members[m.From]
+		if from == nil {
+			return ErrNotFound // its sender left or was banned since
+		}
 		key, _ := wire.Decode64(from.Key, 32)
 		hash := sha256Sum(key)
 		if f, err := tx.Forgotten(hash); err != nil || f != nil || slices.Contains(g.Refused, m.From) {

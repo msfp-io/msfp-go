@@ -67,6 +67,26 @@ type GroupSettings struct {
 // automatic acceptance, 5 invitations a day per inviter.
 var DefaultGroupSettings = GroupSettings{WaitDays: 3, CapPerDay: 5}
 
+// UnmarshalJSON reads settings, an absent member taking its default
+// (groups section 3.3: 3 days, 5 a day). Members are matched by their
+// exact names, as every MSFP object; a value that isn't an integer fails.
+func (g *GroupSettings) UnmarshalJSON(b []byte) error {
+	var obj map[string]json.RawMessage
+	if err := json.Unmarshal(b, &obj); err != nil {
+		return err
+	}
+	out := DefaultGroupSettings
+	for name, field := range map[string]*int64{"waitDays": &out.WaitDays, "capPerDay": &out.CapPerDay} {
+		if raw, ok := obj[name]; ok {
+			if err := json.Unmarshal(raw, field); err != nil {
+				return err
+			}
+		}
+	}
+	*g = out
+	return nil
+}
+
 // Event is an event's payload, read.
 type Event struct {
 	Group  string `json:"group,omitempty"`
@@ -138,7 +158,8 @@ type GroupMember struct {
 	Name      string
 	Admin     bool
 	InvitedBy string
-	Joined    int64 // its joined event's date (the founder: founded's)
+	Joined    int64  // its joined event's date (the founder: founded's)
+	joinedID  string // its joined event's ID (the founder: founded's), for "oldest"
 	// EncryptionKey and NextCommitment, from its latest profile.
 	EncryptionKey  []byte
 	NextCommitment []byte
@@ -222,6 +243,15 @@ func (s *GroupState) adminAsOf(member string, k int64) bool {
 	return on
 }
 
+// memberKey says whether key is one of a member's keys: the one it joined
+// with, or one it rotated to.
+func (s *GroupState) memberKey(member, key string) bool {
+	if key == member {
+		return true
+	}
+	return slices.ContainsFunc(s.keys[member], func(f keyFrom) bool { return f.key == key })
+}
+
 func (s *GroupState) keyAt(member string, seq int64) string {
 	k := member
 	for _, f := range s.keys[member] {
@@ -266,7 +296,7 @@ func (s *GroupState) Apply(e Envelope, now time.Time) (Event, string, error) {
 		s.ID, s.Owner, s.OwnerSeq = id, ev.Member, 1
 		s.Name = CleanText(ev.Name, MaxGroupName)
 		s.applySettings(ev.Settings)
-		s.Members[ev.Member] = &GroupMember{ID: ev.Member, Key: ev.Member, Joined: ev.Date}
+		s.Members[ev.Member] = &GroupMember{ID: ev.Member, Key: ev.Member, Joined: ev.Date, joinedID: id}
 		s.keep(ev, b, id)
 		return ev, id, nil
 	}
@@ -400,7 +430,7 @@ func (s *GroupState) applyType(ev Event, id string, owner, admin bool) error {
 		}
 		s.capCount[day]++
 		s.Members[ev.NewMember] = &GroupMember{ID: ev.NewMember, Key: ev.NewMember, Name: CleanText(ev.Name, MaxGroupName),
-			InvitedBy: ev.Member, Joined: ev.Date}
+			InvitedBy: ev.Member, Joined: ev.Date, joinedID: id}
 		// A member that left and comes back keeps counting from its seq.
 		delete(s.removedAt, ev.NewMember)
 	case EventAdmin:
@@ -544,6 +574,11 @@ func (s *GroupState) applyType(ev Event, id string, owner, admin bool) error {
 		if !ok || !verify(k, revocationStatement(k, st.Date), sig) {
 			return errors.New("the revocation statement doesn't verify")
 		}
+		// Only one of the member's own keys, its current one or a former
+		// one (groups section 3.3).
+		if !s.memberKey(ev.Member, st.Key) {
+			return errors.New("the revoked key isn't one of the member's keys")
+		}
 		if r, ok := s.revoked[ev.Member]; !ok || *ev.LastSeq < r.seq {
 			s.revoked[ev.Member] = keyFrom{seq: *ev.LastSeq, key: st.Key}
 		}
@@ -578,10 +613,12 @@ func (s *GroupState) Successor() string {
 		return admins[i].ID < admins[j].ID
 	})
 	sort.Slice(others, func(i, j int) bool {
+		// The oldest: the lowest joined date, then the lowest event ID
+		// (groups section 3.3).
 		if others[i].Joined != others[j].Joined {
 			return others[i].Joined < others[j].Joined
 		}
-		return others[i].ID < others[j].ID
+		return others[i].joinedID < others[j].joinedID
 	})
 	if len(admins) > 0 {
 		return admins[0].ID

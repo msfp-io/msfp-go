@@ -2,9 +2,12 @@ package wire
 
 import (
 	"encoding/hex"
+	"encoding/json"
 	"reflect"
 	"slices"
 	"sort"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 )
@@ -126,5 +129,66 @@ func TestMailRoundTrip(t *testing.T) {
 	}
 	if _, err := OpenMail(read, other); err == nil {
 		t.Fatal("opened with another key")
+	}
+}
+
+// signed signs a raw payload as a group event, for payloads SignEvent
+// wouldn't write.
+func signed(k Key, payload string) Envelope {
+	return Envelope{Payload: Encode64([]byte(payload)), Signature: Encode64(k.sign(append([]byte(groupEventLabel), payload...)))}
+}
+
+// Settings with a member absent take its default (groups section 3.3).
+func TestGroupSettingsDefaults(t *testing.T) {
+	a := NewKey()
+	me := Encode64(a.Public())
+	s := NewGroupState()
+	ev := signed(a, `{"type":"founded","signer":"`+me+`","member":"`+me+`","seq":1,"date":1800000000,"ownerSeq":1,"name":"F","nonce":"AAAAAAAAAAAAAAAAAAAAAA","settings":{"capPerDay":7}}`)
+	if _, _, err := s.Apply(ev, time.Unix(1800000000, 0)); err != nil {
+		t.Fatal(err)
+	}
+	if s.Settings != (GroupSettings{WaitDays: 3, CapPerDay: 7}) {
+		t.Errorf("settings %+v, want waitDays's default 3 and capPerDay 7", s.Settings)
+	}
+}
+
+// A group's name that fits 80 code points but not the length byte is cut
+// a whole code point at a time, and the code reads back.
+func TestGroupCodeLongName(t *testing.T) {
+	k := NewKey()
+	c := Code{Address: "https://media.example.org", Key: k.Public(), Secret: make([]byte, 32), Expires: time.Unix(1800000000, 0),
+		Group: make([]byte, 32), GroupName: strings.Repeat("😀", 80)}
+	back, err := ParseCode(c.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if back.GroupName != strings.Repeat("😀", 63) || back.Address != c.Address {
+		t.Errorf("name %d bytes, address %q", len(back.GroupName), back.Address)
+	}
+}
+
+// A member's revoked event names one of its own keys only.
+func TestGroupRevokedOwnKeyOnly(t *testing.T) {
+	a, other := NewKey(), NewKey()
+	me := Encode64(a.Public())
+	now := time.Unix(1800000000, 0)
+	s := NewGroupState()
+	founded, _, _ := SignEvent(a, Event{Type: EventFounded, Signer: me, Member: me, Seq: 1, Date: now.Unix(), OwnerSeq: 1, Name: "F", Nonce: "AAAAAAAAAAAAAAAAAAAAAA"})
+	if _, _, err := s.Apply(founded, now); err != nil {
+		t.Fatal(err)
+	}
+	g := s.ID
+	statement := func(k Key) json.RawMessage {
+		r := SignRevocation(k, now)
+		return json.RawMessage(`{"key":"` + Encode64(r.Key) + `","date":` + strconv.FormatInt(r.Date, 10) + `,"signature":"` + Encode64(r.Signature) + `"}`)
+	}
+	last := int64(1)
+	foreign, _, _ := SignEvent(a, Event{Group: g, Type: EventRevoked, Signer: me, Member: me, Seq: 2, Date: now.Unix(), LastSeq: &last, Statement: statement(other)})
+	if _, _, err := s.Apply(foreign, now); err == nil {
+		t.Error("another key's revocation was kept")
+	}
+	own, _, _ := SignEvent(a, Event{Group: g, Type: EventRevoked, Signer: me, Member: me, Seq: 2, Date: now.Unix(), LastSeq: &last, Statement: statement(a)})
+	if _, _, err := s.Apply(own, now); err != nil {
+		t.Errorf("its own key's revocation: %v", err)
 	}
 }
