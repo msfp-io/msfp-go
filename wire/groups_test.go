@@ -240,3 +240,36 @@ func TestGroupOrderIndependent(t *testing.T) {
 		}
 	}
 }
+
+// An owner event replayed without counting takes its ownerSeq all the
+// same (groups section 3.5): the owner names B admin while B leaves, B's
+// left replayed first, so the admin event can't count; the owner's next
+// event is still ready, and counts. Before, it waited forever.
+func TestGroupOwnerEventNotCountingTakesOwnerSeq(t *testing.T) {
+	a, b := NewKey(), NewKey()
+	am, bm := Encode64(a.Public()), Encode64(b.Public())
+	now := time.Unix(1800000000, 0).Unix()
+	founded, g, _ := SignEvent(a, Event{Type: EventFounded, Signer: am, Member: am, Seq: 1, Date: now, OwnerSeq: 1, Name: "F", Nonce: "AAAAAAAAAAAAAAAAAAAAAA"})
+	joined, _, _ := SignEvent(a, Event{Group: g, Type: EventJoined, Signer: am, Member: am, Seq: 2, Date: now, OwnerSeq: 2, NewMember: bm, Name: "B"})
+	left, leftID, _ := SignEvent(b, Event{Group: g, Type: EventLeft, Signer: bm, Member: bm, Seq: 1, Date: now})
+	on := true
+	var admin Envelope
+	var adminID string
+	for d := now; ; d++ {
+		admin, adminID, _ = SignEvent(a, Event{Group: g, Type: EventAdmin, Signer: am, Member: am, Seq: 3, Date: d, OwnerSeq: 3, Target: bm, On: &on})
+		if leftID < adminID {
+			break // B's left is replayed first
+		}
+	}
+	settings, settingsID, _ := SignEvent(a, Event{Group: g, Type: EventSettings, Signer: am, Member: am, Seq: 4, Date: now, OwnerSeq: 4, Name: "G", Settings: &GroupSettings{WaitDays: 1, CapPerDay: 5}})
+	s, results := ComputeGroup(g, []Envelope{founded, joined, left, admin, settings})
+	if results[adminID].Verdict == Counted {
+		t.Fatalf("the admin event counts: %+v", results[adminID])
+	}
+	if r := results[settingsID]; r.Verdict != Counted {
+		t.Fatalf("the owner's next event: %+v", r)
+	}
+	if s.OwnerSeq != 4 || s.Name != "G" {
+		t.Fatalf("state: ownerSeq %d, name %q", s.OwnerSeq, s.Name)
+	}
+}

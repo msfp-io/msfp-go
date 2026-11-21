@@ -10,6 +10,15 @@
   `GroupsCutBy(peer)` lists the groups that ending a pairing would cut
   off, so a panel can say so before it ends.
 
+### Fixed
+
+- An owner event replayed without counting didn't take its `ownerSeq`, so
+  every later owner event waited forever and the owner could no longer
+  act in the group. It happened when, for example, the owner named an
+  admin who was leaving at the same moment, with the `left` replayed
+  first. It now takes its `ownerSeq` as any replayed event takes its `seq`
+  (groups section 3.5).
+
 ### Changed
 
 - A request mail is refused with `ErrNoWayIn` when this server has no

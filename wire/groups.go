@@ -537,6 +537,12 @@ func (s *GroupState) step(k *kept, bySeq map[string][]*kept, final bool) (Verdic
 	}
 	refuse := func(reason string) (Verdict, string) {
 		s.keep(ev, k.b, id)
+		// An owner event replayed without counting takes its ownerSeq
+		// all the same, as any replayed event its seq (section 3.5): the
+		// owner's next one is ready after it.
+		if ev.Member == s.Owner && isOwnerEvent(ev.Type) && ev.OwnerSeq == s.OwnerSeq+1 {
+			s.OwnerSeq = ev.OwnerSeq
+		}
 		return Refused, reason
 	}
 	// What may hold later: the event waits while others can count.
