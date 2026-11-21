@@ -175,6 +175,38 @@ type RemotePlaybackEnded struct {
 	Reason               EndReason
 }
 
+// Groups (MSFP groups part). Their PeerID is "": a group's members
+// aren't peers until linked. Their state is in Groups and Group too.
+
+// GroupRequestWaiting: a member's request waits for this server's
+// operator: AcceptRequest or RefuseRequest with Mail (groups section
+// 4.1). Not sent for one the server accepts itself.
+type GroupRequestWaiting struct {
+	Group, GroupName, Mail, Member, Name, Fingerprint string
+}
+
+// GroupJoined: the list arrived and names this server: it is a member,
+// and has sent its requests to the others (groups section 4).
+type GroupJoined struct{ Group, GroupName string }
+
+// GroupChanged: members' events changed a group: Types are their types
+// (joined, admin, owner, banned, left…), once each. Not sent for this
+// server's own actions.
+type GroupChanged struct {
+	Group, GroupName string
+	Types            []string
+}
+
+// GroupLeft: this server is no longer in a group, and has removed it:
+// Why is "left" (LeaveGroup), "dissolved" (by its owner, maybe this
+// server) or "banned", with the ban's Reason ("" for none).
+type GroupLeft struct{ Group, GroupName, Why, Reason string }
+
+func (GroupRequestWaiting) PeerID() string { return "" }
+func (GroupJoined) PeerID() string         { return "" }
+func (GroupChanged) PeerID() string        { return "" }
+func (GroupLeft) PeerID() string           { return "" }
+
 func (e PeerWaiting) PeerID() string         { return e.Peer }
 func (e PeerPaired) PeerID() string          { return e.Peer }
 func (e PeerGone) PeerID() string            { return e.Peer }

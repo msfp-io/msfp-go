@@ -25,7 +25,8 @@ with room. `PeerRecord` gains `Groups`, `NotByHand`, `GroupOffers`,
 `Pools` and `JoiningGroup`; `CodeRecord`, `Uses` and `Group`.
 `PeerView` gains `Groups` and `ByHand`; `CodeView`, `Uses` and `Group`;
 `CodePreview`, `Group` and `GroupName`. Errors `CodeOptions`,
-`NoGroups`, `NoRight`, `NotMember`. No group events yet.
+`NoGroups`, `NoRight`, `NotMember`. Events `GroupRequestWaiting`,
+`GroupJoined`, `GroupChanged`, `GroupLeft`.
 
 
 ## v0.3.0 (2026-11-19)

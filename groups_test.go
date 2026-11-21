@@ -84,6 +84,9 @@ func TestGroupJoinAndPair(t *testing.T) {
 	if gb.Role != "member" || len(gb.Members) != 2 || gb.Owner != g.Me {
 		t.Fatalf("B's copy: %+v", gb)
 	}
+	if ev, ok := has[msfp.GroupJoined](b.events); !ok || ev.Group != g.ID || ev.GroupName != "Family" {
+		t.Errorf("B's GroupJoined: %+v", ev)
+	}
 
 	joinGroup(t, a, n, g.ID)
 	settle(a, b, n)
@@ -95,6 +98,15 @@ func TestGroupJoinAndPair(t *testing.T) {
 	}
 	if len(gb.Requests) != 1 || gb.Requests[0].Name != "N" {
 		t.Fatalf("B's requests: %+v", gb.Requests)
+	}
+	if ev, ok := has[msfp.GroupRequestWaiting](b.events); !ok || ev.Mail != gb.Requests[0].Mail || ev.Name != "N" {
+		t.Errorf("B's GroupRequestWaiting: %+v", ev)
+	}
+	if !slices.ContainsFunc(b.events.all(), func(ev msfp.Event) bool {
+		c, ok := ev.(msfp.GroupChanged)
+		return ok && slices.Contains(c.Types, "joined")
+	}) {
+		t.Errorf("B saw no GroupChanged with joined: %+v", b.events.all())
 	}
 	if err := b.eng.AcceptRequest(ctx, g.ID, gb.Requests[0].Mail); err != nil {
 		t.Fatal(err)
@@ -172,6 +184,9 @@ func TestGroupBanLeaveDissolve(t *testing.T) {
 	if _, err := n.eng.Group(ctx, g.ID); err == nil {
 		t.Error("N still has the group")
 	}
+	if ev, ok := has[msfp.GroupLeft](n.events); !ok || ev.Why != "banned" || ev.Reason != "testing" {
+		t.Errorf("N's GroupLeft: %+v", ev)
+	}
 	ga, _ := a.eng.Group(ctx, g.ID)
 	if len(ga.Banned) != 1 || ga.Banned[0].Reason != "testing" {
 		t.Errorf("A's bans: %+v", ga.Banned)
@@ -183,6 +198,9 @@ func TestGroupBanLeaveDissolve(t *testing.T) {
 	settle(a, b, n)
 	if _, err := b.eng.Group(ctx, g.ID); err == nil {
 		t.Error("B still has the group it left")
+	}
+	if ev, ok := has[msfp.GroupLeft](b.events); !ok || ev.Why != "left" {
+		t.Errorf("B's GroupLeft: %+v", ev)
 	}
 	if p := mustPeers(t, b); len(p) != 1 || p[0].State != msfp.Paired {
 		t.Errorf("B's link with A, kept by hand: %+v", p)
@@ -197,6 +215,9 @@ func TestGroupBanLeaveDissolve(t *testing.T) {
 	settle(a, b, n)
 	if _, err := a.eng.Group(ctx, g.ID); err == nil {
 		t.Error("A still has the dissolved group")
+	}
+	if ev, ok := has[msfp.GroupLeft](a.events); !ok || ev.Why != "dissolved" {
+		t.Errorf("A's GroupLeft: %+v", ev)
 	}
 }
 

@@ -600,7 +600,7 @@ func (e *Engine) LeaveGroup(ctx context.Context, id string, end []string) error 
 	if err := e.act(ctx, id, wire.Event{Type: wire.EventLeft}); err != nil {
 		return err
 	}
-	return e.dropGroup(ctx, id, end, true)
+	return e.dropGroup(ctx, id, end, true, "left", "")
 }
 
 // DissolveGroup dissolves the group (the owner only): every member removes
@@ -612,14 +612,19 @@ func (e *Engine) DissolveGroup(ctx context.Context, id string, keepPairings bool
 // dropGroup removes a group from this server: its record, and from every
 // link's sources. Links in end end; a link with no other source ends when
 // keep is false, and becomes a pairing by hand when it is true.
-func (e *Engine) dropGroup(ctx context.Context, id string, end []string, keep bool) error {
+func (e *Engine) dropGroup(ctx context.Context, id string, end []string, keep bool, why, reason string) error {
 	var ending []string
+	var left *GroupLeft
 	err := e.cfg.Store.Update(ctx, func(tx Tx) error {
+		left = nil
 		gt, err := groupsTx(tx)
 		if err != nil {
 			return err
 		}
 		g, _ := gt.Group(id)
+		if g != nil {
+			left = &GroupLeft{Group: id, GroupName: e.stateOf(g).Name, Why: why, Reason: reason}
+		}
 		peers, err := tx.Peers()
 		if err != nil {
 			return err
@@ -650,6 +655,9 @@ func (e *Engine) dropGroup(ctx context.Context, id string, end []string, keep bo
 	})
 	if err != nil {
 		return err
+	}
+	if left != nil {
+		e.notify(*left)
 	}
 	for _, p := range ending {
 		if err := e.End(ctx, p); err != nil && !errors.Is(err, ErrNotFound) {
@@ -874,7 +882,10 @@ func (e *Engine) receive(ctx context.Context, id string, events []wire.Envelope,
 	var newEvents []StoredEvent
 	var newMail []StoredMail
 	var effects []func()
+	var told []Event
 	err := e.cfg.Store.Update(ctx, func(tx Tx) error {
+		newEvents, newMail, effects, told = nil, nil, nil, nil
+		var types []string
 		gt, err := groupsTx(tx)
 		if err != nil {
 			return err
@@ -896,9 +907,12 @@ func (e *Engine) receive(ctx context.Context, id string, events []wire.Envelope,
 			progress = false
 			var still []StoredEvent
 			for _, p := range pending {
-				_, _, err := s.Apply(wire.Envelope{Payload: p.Event, Signature: p.Signature}, now)
+				ev, _, err := s.Apply(wire.Envelope{Payload: p.Event, Signature: p.Signature}, now)
 				switch {
 				case err == nil:
+					if !slices.Contains(types, ev.Type) {
+						types = append(types, ev.Type)
+					}
 					g.Events = append(g.Events, p)
 					newEvents = append(newEvents, p)
 					progress = true
@@ -929,7 +943,11 @@ func (e *Engine) receive(ctx context.Context, id string, events []wire.Envelope,
 		if err := e.afterEvents(tx, g, s, &effects); err != nil {
 			return err
 		}
+		if len(types) > 0 && wasMember {
+			told = append(told, GroupChanged{Group: id, GroupName: s.Name, Types: types})
+		}
 		if !wasMember && s.Members[g.Me] != nil {
+			told = append(told, GroupJoined{Group: id, GroupName: s.Name})
 			// The list says this server joined: its profile, then its
 			// requests (groups section 4, steps 5 and 6).
 			effects = append(effects, func() { e.background(func(ctx context.Context) { e.joined(ctx, id) }) })
@@ -945,6 +963,7 @@ func (e *Engine) receive(ctx context.Context, id string, events []wire.Envelope,
 	if err != nil {
 		return err
 	}
+	e.notify(told...)
 	for _, f := range effects {
 		f()
 	}
@@ -1018,7 +1037,9 @@ func (e *Engine) gotMail(ctx context.Context, id string, m wire.Mail) {
 	var opened wire.Sealed
 	var accept bool
 	var req GroupRequest
+	var waiting *GroupRequestWaiting
 	err := e.cfg.Store.Update(ctx, func(tx Tx) error {
+		waiting = nil
 		gt, err := groupsTx(tx)
 		if err != nil {
 			return err
@@ -1064,11 +1085,16 @@ func (e *Engine) gotMail(ctx context.Context, id string, m wire.Mail) {
 		}
 		if !slices.ContainsFunc(g.Requests, func(r GroupRequest) bool { return r.Mail == m.ID }) {
 			g.Requests = append(g.Requests, req)
+			waiting = &GroupRequestWaiting{Group: id, GroupName: s.Name, Mail: m.ID, Member: m.From,
+				Name: req.Name, Fingerprint: wire.Fingerprint(key)}
 		}
 		return gt.PutGroup(*g)
 	})
 	if err != nil {
 		return
+	}
+	if waiting != nil {
+		e.notify(*waiting)
 	}
 	switch {
 	case m.Kind == "request" && accept:
@@ -1093,15 +1119,16 @@ func (e *Engine) afterEvents(tx Tx, g *GroupRecord, s *wire.GroupState, effects 
 		if effects != nil {
 			keep := s.Keep
 			*effects = append(*effects, func() {
-				e.background(func(ctx context.Context) { _ = e.dropGroup(ctx, id, nil, keep) })
+				e.background(func(ctx context.Context) { _ = e.dropGroup(ctx, id, nil, keep, "dissolved", "") })
 			})
 		}
 		return nil
 	case s.Banned[g.Me] != "":
 		e.log.Info("msfp: this server was banned from a group", "group", id, "reason", s.Reasons[g.Me])
 		if effects != nil {
+			reason := s.Reasons[g.Me]
 			*effects = append(*effects, func() {
-				e.background(func(ctx context.Context) { _ = e.dropGroup(ctx, id, nil, false) })
+				e.background(func(ctx context.Context) { _ = e.dropGroup(ctx, id, nil, false, "banned", reason) })
 			})
 		}
 		return nil
