@@ -43,7 +43,7 @@ The only dependency beyond the standard library is
 ## Install
 
 ```sh
-go get github.com/msfp-io/msfp-go@v0.4.0
+go get github.com/msfp-io/msfp-go@v0.4.1
 ```
 
 It needs the Go version in [go.mod](go.mod) or later.
