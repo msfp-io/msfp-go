@@ -31,6 +31,9 @@ type State struct {
 	LibraryIDs map[string]string          `json:"libraryIds"`
 	Leftovers  map[string]msfp.Leftover   `json:"leftovers"` // by peer, a line feed, playback ID
 	Groups     map[string]json.RawMessage `json:"groups,omitempty"`
+	// Downloads are kept for their late reports, by downloadKey; absent
+	// from a state.json written before the revision of version 0.
+	Downloads map[string]msfp.DownloadRecord `json:"downloads,omitempty"`
 
 	// Catalogs are the peers' titles and the keys each was sent, by peer
 	// ID: kept apart, since they are big and change on their own.
@@ -67,7 +70,7 @@ type Own struct {
 func New() *State {
 	s := &State{Peers: map[string]json.RawMessage{}, Codes: map[string]json.RawMessage{},
 		Forgotten: map[string]json.RawMessage{}, LibraryIDs: map[string]string{},
-		Leftovers: map[string]msfp.Leftover{}, Catalogs: map[string]*Catalog{}, Own: &Own{}}
+		Leftovers: map[string]msfp.Leftover{}, Downloads: map[string]msfp.DownloadRecord{}, Catalogs: map[string]*Catalog{}, Own: &Own{}}
 	s.Index()
 	return s
 }
@@ -170,6 +173,11 @@ func (t *tx) own(name string) error {
 		t.s.Leftovers = maps.Clone(t.s.Leftovers)
 	case "groups":
 		t.s.Groups = maps.Clone(t.s.Groups)
+	case "downloads":
+		t.s.Downloads = maps.Clone(t.s.Downloads)
+		if t.s.Downloads == nil {
+			t.s.Downloads = map[string]msfp.DownloadRecord{}
+		}
 	case "catalogs":
 		t.s.Catalogs = maps.Clone(t.s.Catalogs)
 	case "own":
@@ -289,6 +297,10 @@ func (t *tx) DeletePeer(id string) error {
 		return err
 	}
 	maps.DeleteFunc(t.s.Leftovers, func(_ string, l msfp.Leftover) bool { return l.Peer == id })
+	if err := t.own("downloads"); err != nil {
+		return err
+	}
+	maps.DeleteFunc(t.s.Downloads, func(_ string, d msfp.DownloadRecord) bool { return d.Peer == id })
 	return nil
 }
 
@@ -416,6 +428,42 @@ func (t *tx) MarkSent(peer string, keys []string) error {
 	for _, k := range keys {
 		c.Sent[k] = true
 	}
+	return nil
+}
+
+// downloadKey is a download's key: its side, then its ID.
+func downloadKey(viewer bool, id string) string {
+	if viewer {
+		return "viewer\n" + id
+	}
+	return "owner\n" + id
+}
+
+// Downloads, kept for their late reports (msfp.DownloadsTx).
+func (t *tx) Downloads() ([]msfp.DownloadRecord, error) {
+	out := make([]msfp.DownloadRecord, 0, len(t.s.Downloads))
+	for _, k := range slices.Sorted(maps.Keys(t.s.Downloads)) {
+		d := t.s.Downloads[k]
+		d.Queue = slices.Clone(d.Queue)
+		out = append(out, d)
+	}
+	return out, nil
+}
+
+func (t *tx) PutDownload(d msfp.DownloadRecord) error {
+	if err := t.own("downloads"); err != nil {
+		return err
+	}
+	d.Queue = slices.Clone(d.Queue)
+	t.s.Downloads[downloadKey(d.Viewer, d.ID)] = d
+	return nil
+}
+
+func (t *tx) DeleteDownload(viewer bool, id string) error {
+	if err := t.own("downloads"); err != nil {
+		return err
+	}
+	delete(t.s.Downloads, downloadKey(viewer, id))
 	return nil
 }
 
@@ -599,8 +647,9 @@ func (t *tx) BumpOwnSeq() (int64, error) {
 
 // The checks that the stores are what the engine needs.
 var (
-	_ msfp.Tx       = (*tx)(nil)
-	_ msfp.OwnLogTx = (*tx)(nil)
+	_ msfp.Tx          = (*tx)(nil)
+	_ msfp.OwnLogTx    = (*tx)(nil)
+	_ msfp.DownloadsTx = (*tx)(nil)
 )
 
 // Groups, for the part groups (msfp.GroupsTx).

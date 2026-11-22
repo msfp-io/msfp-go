@@ -50,8 +50,8 @@ type Tx interface {
 	PeerByKey(key []byte) (*PeerRecord, error)
 	// PutPeer adds or replaces a peer.
 	PutPeer(PeerRecord) error
-	// DeletePeer removes a peer, its catalog, the keys it was sent and
-	// its leftovers. A peer that isn't there is no error.
+	// DeletePeer removes a peer, its catalog, the keys it was sent, its
+	// leftovers and its downloads (DownloadsTx). A peer that isn't there is no error.
 	DeletePeer(id string) error
 
 	Codes() ([]CodeRecord, error)
@@ -109,6 +109,20 @@ type GroupsTx interface {
 	Group(id string) (*GroupRecord, error)
 	PutGroup(GroupRecord) error
 	DeleteGroup(id string) error
+}
+
+// DownloadsTx is what a Tx implements, besides Tx, to keep downloads for
+// their late reports across restarts (MSFP playback section 7): those
+// of peers here, and this server's on peers. The shipped stores
+// implement it; without it, downloads are kept in memory only, and a
+// restart forgets them (a late report then gets 410, or ErrNotFound).
+type DownloadsTx interface {
+	// Downloads is every download kept, of both sides.
+	Downloads() ([]DownloadRecord, error)
+	// PutDownload adds or replaces one, by its Viewer and ID.
+	PutDownload(DownloadRecord) error
+	// DeleteDownload removes one; one that isn't there is no error.
+	DeleteDownload(viewer bool, id string) error
 }
 
 // OwnLogTx is what a Tx implements, besides Tx, when the engine keeps the
@@ -285,6 +299,15 @@ type SealerProvider interface {
 // call RunOnce to make time's work happen.
 type Clock interface {
 	Now() time.Time
+}
+
+// Timers is what a Clock implements, besides, when its time isn't the
+// system's (a test's clock): After gives a channel that receives once d
+// passed on that clock. The engine waits with it where it waits on time
+// in a request (a download's pace); without it, it waits d of the
+// system's time.
+type Timers interface {
+	After(d time.Duration) <-chan time.Time
 }
 
 // Dialer makes the connections to peers. The default is the engine's

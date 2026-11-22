@@ -355,3 +355,21 @@ type Leftover struct {
 	Peer       string `json:"peer"`
 	PlaybackID string `json:"playbackId"`
 }
+
+// DownloadRecord is a download kept for its late reports, 30 days after
+// it started (MSFP playback section 7), so that a restart keeps them.
+// Of a peer's download here (Viewer false): ID is the playback ID given
+// to the peer, Handle the host's, LastAt the at of the latest report
+// kept. Of this server's download on a peer (Viewer true): ID is the
+// engine's ID of it, TheirID the peer's playback ID.
+type DownloadRecord struct {
+	ID       string    `json:"id"`
+	Viewer   bool      `json:"viewer,omitempty"`
+	Peer     string    `json:"peer"`
+	TheirID  string    `json:"theirId,omitempty"`
+	Title    string    `json:"title"`
+	Queue    []string  `json:"queue,omitempty"`
+	Handle   string    `json:"handle,omitempty"`
+	PlayedAt time.Time `json:"playedAt"`
+	LastAt   time.Time `json:"lastAt,omitzero"`
+}

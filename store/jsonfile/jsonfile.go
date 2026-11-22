@@ -7,7 +7,7 @@
 //
 // The files:
 //
-//	state.json        the server record, peers, codes, forgotten keys, library IDs, leftovers
+//	state.json        the server record, peers, codes, forgotten keys, library IDs, leftovers, downloads
 //	peers/<id>.json   a peer's titles, and the keys of ours it was sent
 //	own.json          the change log of the host's own catalog, when the engine keeps it
 //	sealing.key       the key the seeds and secrets are sealed with (KeyFile)
@@ -145,6 +145,10 @@ func (st *Store) load() (*state.State, error) {
 	}
 	if s.Leftovers == nil {
 		s.Leftovers = map[string]msfp.Leftover{}
+	}
+	if s.Downloads == nil {
+		// A state.json from before the revision of version 0: none kept.
+		s.Downloads = map[string]msfp.DownloadRecord{}
 	}
 	s.Catalogs, s.Own = map[string]*state.Catalog{}, &state.Own{}
 	if err := readJSON(filepath.Join(st.dir, "own.json"), s.Own); err != nil {
