@@ -26,8 +26,10 @@ type fakeHost struct {
 	// info is what Describe gives, by copy handle.
 	info map[string]msfp.CopyInfo
 	// method and protocol of Start; startErr fails it; noAdmit starts
-	// without Admit; started and stopped note what happened.
+	// without Admit; started and stopped note what happened. Without
+	// delivery, a transcode the engine decided is one, unless lies.
 	method, protocol string
+	lies             bool
 	noRenditions     bool // Start makes no audio renditions
 	startErr         error
 	noAdmit          bool
@@ -69,11 +71,16 @@ func (h *fakeHost) film(lib, key string, audio ...string) {
 		handle := key + "#" + strconv.Itoa(i)
 		t.Copies = append(t.Copies, wire.Copy{ID: handle, DurationMs: 5_400_000, MediaType: "video/matroska",
 			Size: 20, ETag: "e" + strconv.Itoa(i),
-			Video:          &wire.VideoStream{Codec: "h264", Codecs: "avc1.640028", Width: 1920, Height: 1080, BitDepth: 8},
-			AudioTracks:    []wire.CopyAudio{{ID: "a0", Language: a, Channels: 2, Default: true, Codec: "aac", Codecs: "mp4a.40.2"}},
+			Video: &wire.VideoStream{Codec: "h264", Codecs: "avc1.640028", Width: 1920, Height: 1080, BitDepth: 8,
+				Colour: &wire.VideoColour{Primaries: &bt709, Transfer: &bt709, Matrix: &bt709}},
+			AudioTracks: []wire.CopyAudio{{ID: "a0", Language: a, Channels: 2, SampleRate: 48000, Default: true, Codec: "aac",
+				Codecs: "mp4a.40.2"}},
 			SubtitleTracks: []wire.CopySubtitle{{ID: "s0", Language: "fr", Format: "subrip"}, {ID: "s1", Language: "fr", Format: "hdmv_pgs_subtitle"}}})
 	}
 }
+
+// bt709 is H.273's code point 1, for primaries, transfer and matrix.
+var bt709 = 1
 
 // copyOf is a pointer to copy n of a video title, to change it.
 func (h *fakeHost) copyOf(key string, n int) *wire.Copy {
@@ -145,6 +152,7 @@ func (h *fakeHost) Describe(_ context.Context, copy string) (msfp.CopyInfo, erro
 func (h *fakeHost) Start(_ context.Context, req msfp.StartRequest) (msfp.Started, error) {
 	h.mu.Lock()
 	method, protocol, err, noAdmit, hold, entered, queue := h.method, h.protocol, h.startErr, h.noAdmit, h.hold, h.entered, h.queue
+	lies := h.lies
 	h.mu.Unlock()
 	if hold != nil {
 		if entered != nil {
@@ -163,6 +171,10 @@ func (h *fakeHost) Start(_ context.Context, req msfp.StartRequest) (msfp.Started
 		method, protocol = "remux", "hls"
 	case msfp.DeliveryTranscode:
 		method, protocol = "transcode", "hls"
+	default:
+		if req.Served.Method == wire.MethodTranscode && !lies {
+			method = "transcode"
+		}
 	}
 	if !noAdmit {
 		if _, err := req.Admit(method); err != nil {
@@ -185,6 +197,10 @@ func (h *fakeHost) Start(_ context.Context, req msfp.StartRequest) (msfp.Started
 				m, p = "remux", "hls"
 			case msfp.DeliveryTranscode:
 				m, p = "transcode", "hls"
+			default:
+				if q.Served.Method == wire.MethodTranscode && !lies {
+					m = "transcode"
+				}
 			}
 			st.Queue = append(st.Queue, msfp.StartedEntry{Place: q.Place, Method: m, Protocol: p})
 		}

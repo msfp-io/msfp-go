@@ -21,6 +21,10 @@ import (
 // stop, the limits counted in one step, and every way a playback ends.
 
 const master = "#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-STREAM-INF:BANDWIDTH=5000000\nv0.m3u8\n"
+
+// filledMaster is master as the engine sends it of a film's copy left
+// unchanged: CODECS and RESOLUTION filled from the copy (media 3.1).
+const filledMaster = "#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-STREAM-INF:BANDWIDTH=5000000,CODECS=\"avc1.640028,mp4a.40.2\",RESOLUTION=1920x1080\nv0.m3u8\n"
 const media = "#EXTM3U\n#EXT-X-TARGETDURATION:6\n#EXT-X-PLAYLIST-TYPE:VOD\n#EXT-X-MAP:URI=\"init.mp4\"\n#EXTINF:6.0,\nseg0.m4s\n#EXT-X-ENDLIST\n"
 
 func filmHost() *fakeHost {
@@ -58,7 +62,7 @@ func TestPlayAndRelay(t *testing.T) {
 	}
 	// The media, through B.
 	var out sink
-	if err := s.b.eng.Fetch(ctx, pb.ID, msfp.MediaPath{Kind: msfp.MediaMaster}, "", &out); err != nil || string(out.body) != master ||
+	if err := s.b.eng.Fetch(ctx, pb.ID, msfp.MediaPath{Kind: msfp.MediaMaster}, "", &out); err != nil || string(out.body) != filledMaster ||
 		out.contentType != "application/vnd.apple.mpegurl" {
 		t.Errorf("master: %v %q %q", err, out.body, out.contentType)
 	}
@@ -453,7 +457,7 @@ func TestMusicPlay(t *testing.T) {
 	if _, err := s.b.eng.Play(ctx, s.onB.ID, msfp.PlayRequest{Title: track}); !errors.Is(err, msfp.ErrStreamLimitReached) {
 		t.Errorf("a second track at once: %v", err)
 	}
-	if _, err := s.b.eng.Play(ctx, s.onB.ID, msfp.PlayRequest{Title: track, Replaces: pb.ID}); err != nil {
+	if _, err := s.b.eng.Play(ctx, s.onB.ID, msfp.PlayRequest{Title: track, Delivery: msfp.DeliveryFile, Replaces: pb.ID}); err != nil {
 		t.Errorf("the next track, replacing the first: %v", err)
 	}
 	// A film counts in streams: 0 here.
@@ -498,13 +502,13 @@ func TestPlaylistSameEachFetch(t *testing.T) {
 	}
 	url := lastStream(t, s)
 	first, body := get(t, s, http.MethodGet, url)
-	if first.StatusCode != 200 || body != master {
+	if first.StatusCode != 200 || body != filledMaster {
 		t.Fatalf("the master playlist: %d %q", first.StatusCode, body)
 	}
 	h.mu.Lock()
 	h.files["master.m3u8"] = []byte("#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1\nother.m3u8\n")
 	h.mu.Unlock()
-	if res, again := get(t, s, http.MethodGet, url); res.StatusCode != 200 || again != master {
+	if res, again := get(t, s, http.MethodGet, url); res.StatusCode != 200 || again != filledMaster {
 		t.Errorf("fetched again: %d %q", res.StatusCode, again)
 	}
 }
@@ -742,4 +746,36 @@ func musicTrack(key, copy string) *msfp.MusicTitle {
 	return &msfp.MusicTitle{TitleCommon: msfp.TitleCommon{Key: key, Kind: "track", Libraries: []string{"music"}}, Name: "x",
 		Album: "album/mb/0b000000-0000-4000-8000-000000000002", Disc: 1, Number: 1,
 		Copies: []wire.MusicCopy{{ID: copy, DurationMs: 200_000, MediaType: "audio/flac", Codec: "flac", Size: 20, Etag: "m-" + copy}}}
+}
+
+// A host's start of another method than the engine decided is the
+// host's failure: without delivery, a copy outside the baseline (here no
+// colour stated, so not known BT.709) must be transcoded; a host that
+// says remux is stopped, and the peer gets a 500, never the method
+// (MSFP playback sections 2.3, 2.7).
+func TestStartedMethodAsDecided(t *testing.T) {
+	ctx := context.Background()
+	h := filmHost()
+	h.copyOf("movie/tmdb/949", 0).Video.Colour = nil
+	s := newSharing(t, h, msfp.Config{}, msfp.Config{})
+	h.mu.Lock()
+	h.method, h.lies = "remux", true
+	h.mu.Unlock()
+	_, err := s.b.eng.Play(ctx, s.onB.ID, msfp.PlayRequest{Title: "movie/tmdb/949"})
+	if !errors.Is(err, msfp.ErrPeerFailed) {
+		t.Fatalf("a remux of a copy outside the baseline: %v", err)
+	}
+	h.mu.Lock()
+	if len(h.started) != 1 || h.started[0].Served.Method != "transcode" || h.stopped["h1"] != msfp.EndStopped {
+		t.Errorf("started %+v, stopped %v", h.started, h.stopped)
+	}
+	h.lies = false
+	h.mu.Unlock()
+	if plays := s.a.exchanges("play"); len(plays) != 1 || strings.Contains(plays[0].resBody, `"remux"`) {
+		t.Errorf("the answers: %+v", plays)
+	}
+	pb, err := s.b.eng.Play(ctx, s.onB.ID, msfp.PlayRequest{Title: "movie/tmdb/949"})
+	if err != nil || pb.Method != "transcode" {
+		t.Errorf("the transcode decided: %+v %v", pb, err)
+	}
 }

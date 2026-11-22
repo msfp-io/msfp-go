@@ -619,8 +619,9 @@ func (e *Engine) play(req *request) response {
 		}
 		return e.hostRefusal(err, "start")
 	}
-	if why := startedBreaks(in, chosen, started, queued); why != "" {
-		e.log.Warn("msfp: the host started a playback MSFP doesn't allow; it is stopped", "why", why)
+	if why := startedBreaks(in, chosen, served, started, queued); why != "" {
+		e.log.Error("msfp: the host started a playback MSFP doesn't allow; it is stopped", "why", why,
+			"decided", served.Method, "method", started.Method, "protocol", started.Protocol)
 		if slot != nil {
 			slot.Release()
 		}
@@ -701,19 +702,24 @@ func offeredIn(libs, offered []string) bool {
 var methodOf = map[string]string{wire.DeliveryFile: "direct", wire.DeliveryRemux: "remux", wire.DeliveryTranscode: "transcode"}
 
 // startedBreaks says what the host's start breaks of MSFP, "" for
-// nothing: a method or protocol MSFP doesn't have, another delivery than
-// the one asked (file is direct as file; remux, transcode and the
-// baseline without delivery are hls),
+// nothing: a method or protocol MSFP doesn't have, another method than
+// a transcode the engine decided (Served: without delivery, a copy
+// outside the baseline is transcoded; one within it may be served
+// direct, remux or transcode: section 2.3), another delivery than the one
+// asked (file is direct as file; remux, transcode and the baseline
+// without delivery are hls),
 // file of a copy of several parts, file played otherwise than direct; a
 // queue entry of a place not asked, twice, or served against the same
 // rules for its own delivery.
-func startedBreaks(in wire.PlayRequest, c offeredCopy, s Started, asked []QueuedCopy) string {
-	check := func(delivery, method, protocol string, parts int) string {
+func startedBreaks(in wire.PlayRequest, c offeredCopy, served wire.Served, s Started, asked []QueuedCopy) string {
+	check := func(delivery, decided, method, protocol string, parts int) string {
 		switch {
 		case method != "direct" && method != "remux" && method != "transcode" || protocol != "hls" && protocol != "file":
 			return "a method or protocol MSFP doesn't have"
 		case delivery != "" && method != methodOf[delivery]:
 			return "another method than the delivery asked"
+		case decided == wire.MethodTranscode && method != decided:
+			return "another method than the transcode decided"
 		case delivery == wire.DeliveryFile && protocol != "file" || delivery != wire.DeliveryFile && protocol == "file":
 			return "another protocol than the delivery asked"
 		case protocol == "file" && method != "direct":
@@ -723,7 +729,7 @@ func startedBreaks(in wire.PlayRequest, c offeredCopy, s Started, asked []Queued
 		}
 		return ""
 	}
-	if why := check(in.Delivery, s.Method, s.Protocol, c.copy.FileCount()); why != "" {
+	if why := check(in.Delivery, served.Method, s.Method, s.Protocol, c.copy.FileCount()); why != "" {
 		return why
 	}
 	seen := map[int]bool{}
@@ -733,7 +739,7 @@ func startedBreaks(in wire.PlayRequest, c offeredCopy, s Started, asked []Queued
 			return "a queue entry of no place asked"
 		}
 		seen[q.Place] = true
-		if why := check(asked[i].Delivery, q.Method, q.Protocol, 1); why != "" {
+		if why := check(asked[i].Delivery, asked[i].Served.Method, q.Method, q.Protocol, 1); why != "" {
 			return "a queue entry: " + why
 		}
 	}

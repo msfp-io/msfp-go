@@ -15,6 +15,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/msfp-io/msfp-go"
 	"github.com/msfp-io/msfp-go/wire"
@@ -45,13 +46,19 @@ import (
 //
 // Files are served as they are: by byte ranges (delivery file), or as
 // their HLS copy (a remux made beforehand) when the viewer doesn't play
-// their container. Nothing is transcoded. A copy is described from its
-// file (probe.go).
+// their container. A play without delivery of a copy outside the
+// baseline is transcoded by ffmpeg before the answer (baseline.go). A
+// copy is described from its file (probe.go).
 type folder struct {
 	dir string
 	// opaque is the engine's OpaqueKeyPart, set once it is open.
 	opaque func(string) string
 	probes probes
+	// made are the baseline HLS copies ffmpeg made, by playback handle:
+	// their temporary folders, removed when the playback stops.
+	mu   sync.Mutex
+	made map[string]string
+	n    int
 }
 
 // item is a title the folder holds: its title; for a film, an episode
@@ -287,16 +294,18 @@ func (f *folder) Describe(context.Context, string) (msfp.CopyInfo, error) {
 	return msfp.CopyInfo{}, nil
 }
 
-// Start serves the file when the viewer's server asks it (delivery file,
-// always that of a download or a scan); its HLS copy, made beside it, for
-// a remux to its segments' media type (video/mp2t for .ts segments,
-// video/mp4 otherwise) or without delivery (the baseline: this example
-// counts on its HLS copies being within it, H.264 High 4.1 8-bit SDR and
-// AAC-LC stereo, as an operator makes them); it makes
-// no transcode, and no audio renditions, which the answer then says
+// Start serves what the engine decided (req.Served), or refuses: the
+// file when the viewer's server asks it (delivery file, always that of a
+// download or a scan); its HLS copy, made beside it, for a remux to its
+// segments' media type (video/mp2t for .ts segments, video/mp4
+// otherwise), and without delivery when the engine found the copy within
+// the baseline (H.264 High 4.1 8-bit SDR BT.709 and AAC-LC stereo, the
+// HLS copy then taken to be the same streams); without delivery outside
+// it, a transcode ffmpeg makes (baseline.go). It makes no transcode
+// asked by delivery, and no audio renditions, which the answer then says
 // (Started.AudioRenditions false: MSFP playback section 2.3). The handle
 // is the protocol and the file's path.
-func (f *folder) Start(_ context.Context, req msfp.StartRequest) (msfp.Started, error) {
+func (f *folder) Start(ctx context.Context, req msfp.StartRequest) (msfp.Started, error) {
 	if !filepath.IsLocal(req.Copy) {
 		return msfp.Started{}, msfp.ErrNotFound
 	}
@@ -319,6 +328,9 @@ func (f *folder) Start(_ context.Context, req msfp.StartRequest) (msfp.Started, 
 		}
 		method, protocol = "remux", "hls"
 	default:
+		if req.Served.Method == wire.MethodTranscode {
+			return f.baseline(ctx, req, path)
+		}
 		if !hls {
 			return msfp.Started{}, msfp.ErrNotPlayable
 		}
@@ -330,8 +342,18 @@ func (f *folder) Start(_ context.Context, req msfp.StartRequest) (msfp.Started, 
 	return msfp.Started{Handle: protocol + " " + req.Copy, Method: method, Protocol: protocol, PositionMs: req.StartMs}, nil
 }
 
-func (*folder) Progress(context.Context, msfp.Report) error        { return nil }
-func (*folder) Stop(context.Context, string, msfp.EndReason) error { return nil }
+func (*folder) Progress(context.Context, msfp.Report) error { return nil }
+
+func (f *folder) Stop(_ context.Context, handle string, _ msfp.EndReason) error {
+	f.mu.Lock()
+	dir, ok := f.made[handle]
+	delete(f.made, handle)
+	f.mu.Unlock()
+	if ok {
+		return os.RemoveAll(dir)
+	}
+	return nil
+}
 
 // Serve answers what a playback's ticket opens (or, for a sheet under a
 // previews ticket, OfCopy, a copy's: its handle is then the file's path).
@@ -344,14 +366,22 @@ func (f *folder) Serve(_ context.Context, handle string, p msfp.MediaPath, rng *
 		return msfp.ErrNotFound
 	}
 	path := filepath.Join(f.dir, rel)
+	hlsDir := videoExt.ReplaceAllString(path, "") + ".hls"
 	base := videoExt.ReplaceAllString(path, "")
+	if !p.OfCopy {
+		f.mu.Lock()
+		if dir, ok := f.made[handle]; ok {
+			hlsDir = dir
+		}
+		f.mu.Unlock()
+	}
 	switch p.Kind {
 	case msfp.MediaFile:
 		return serveFile(path, rng, out)
 	case msfp.MediaMaster:
-		return serveFile(filepath.Join(base+".hls", "master.m3u8"), nil, out)
+		return serveFile(filepath.Join(hlsDir, "master.m3u8"), nil, out)
 	case msfp.MediaPlaylist, msfp.MediaSegment:
-		return serveFile(filepath.Join(base+".hls", p.Name), rng, out)
+		return serveFile(filepath.Join(hlsDir, p.Name), rng, out)
 	case msfp.MediaSheet:
 		return serveFile(filepath.Join(base+".trickplay", strconv.Itoa(p.Sheet)+".jpg"), nil, out)
 	case msfp.MediaSubtitles:
