@@ -37,7 +37,7 @@ func track(pic []byte) []byte {
 }
 
 // A well-formed track passes; what's cut, bent or too large doesn't.
-func TestCheckPGS(t *testing.T) {
+func TestMediaPGS(t *testing.T) {
 	// 3 by 2: a pixel of color 1, a run of 2 of color 0, end of line;
 	// a run of 3 of color 1, end of line.
 	ok := track(object(3, 2, []byte{1, 0, 2, 0, 0, 0, 0x83, 1, 0, 0}))
@@ -85,7 +85,7 @@ func TestCheckPGS(t *testing.T) {
 
 // Real tracks pass, when there are some to try (PGS_SAMPLES: files of a
 // film's PGS tracks, as Jellyfin extracts them; none ships here).
-func TestCheckPGSSamples(t *testing.T) {
+func TestMediaPGSSamples(t *testing.T) {
 	dir := os.Getenv("PGS_SAMPLES")
 	if dir == "" {
 		t.Skip("PGS_SAMPLES unset")
@@ -107,12 +107,14 @@ func TestCheckPGSSamples(t *testing.T) {
 	}
 }
 
-// Any bytes: no panic, never accepted when they aren't segments.
+// Any bytes: no panic, never accepted when they aren't segments (or
+// nothing).
 func FuzzCheckPGS(f *testing.F) {
 	f.Add(track(object(3, 2, []byte{1, 0, 2, 0, 0, 0, 0x83, 1, 0, 0})))
 	f.Add([]byte("PG"))
 	f.Fuzz(func(t *testing.T, raw []byte) {
-		if CheckPGS(raw) == nil && (len(raw) < 13 || raw[0] != 'P' || raw[1] != 'G') {
+		// An empty part is valid: a stretch with no subtitles.
+		if CheckPGS(raw) == nil && len(raw) > 0 && (len(raw) < 13 || raw[0] != 'P' || raw[1] != 'G') {
 			t.Fatalf("accepted %x", raw[:min(len(raw), 16)])
 		}
 	})

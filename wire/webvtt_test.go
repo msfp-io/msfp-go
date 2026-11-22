@@ -1,6 +1,7 @@
 package wire
 
 import (
+	"regexp"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -14,7 +15,7 @@ func TestRebuildWebVTT(t *testing.T) {
 	if !ok {
 		t.Fatal("refused a valid file")
 	}
-	want := "WEBVTT\n\n00:00:01.000 --> 00:00:04.000\nHello alert(1)\n\n00:01:00.500 --> 00:01:02.000\nWorld\n"
+	want := "WEBVTT\n\n00:00:01.000 --> 00:00:04.000 position:10% align:start\n<i>Hello</i> alert(1)\n\n00:01:00.500 --> 00:01:02.000\n<c.yellow>World</c>\n"
 	if string(out) != want {
 		t.Errorf("got:\n%q\nwant:\n%q", out, want)
 	}
@@ -28,7 +29,10 @@ func TestRebuildWebVTT(t *testing.T) {
 	}
 }
 
-// Subtitles come out as WebVTT holding cue timings and plain text only.
+var keptTags = regexp.MustCompile(`</?[ibc]>|<c\.[a-z_]+(?:\.[a-z_]+)?>`)
+
+// Subtitles come out as WebVTT holding cue timings, their kept settings,
+// and text with the kept tags only.
 func FuzzRebuildWebVTTPlain(f *testing.F) {
 	f.Add("WEBVTT\n\n00:00:01.000 --> 00:00:02.000\n<b>Hi</b>\n")
 	f.Add("WEBVTT\n\nSTYLE\n::cue { color: red }\n\n1\n00:01.000 --> 00:02.000 align:start\n<script>x</script>&lt;i&gt;\n")
@@ -42,7 +46,7 @@ func FuzzRebuildWebVTTPlain(f *testing.F) {
 			t.Fatalf("not WebVTT: %q", s)
 		}
 		for _, line := range strings.Split(s, "\n") {
-			if strings.ContainsAny(line, "<\r\x00") && !cueTiming.MatchString(line) {
+			if strings.ContainsAny(keptTags.ReplaceAllString(line, ""), "<\r\x00") && !cueTiming.MatchString(line) {
 				t.Fatalf("markup or control characters: %q", line)
 			}
 			if strings.Contains(strings.NewReplacer("&amp;", "", "&lt;", "", "&gt;", "").Replace(line), "&") {
