@@ -121,7 +121,8 @@ func (e *Engine) sharedImage(ctx context.Context, p *PeerRecord, key string) (Ti
 }
 
 // image answers a paired peer's image call (MSFP catalog section 4.4):
-// the URL of a local title's image, under a ticket of its own.
+// a ticket of its own for a local title's image: the caller builds its
+// URL, <stream root><ticket>/image (MSFP catalog section 4.4).
 func (e *Engine) image(req *request) response {
 	p := req.peer
 	if p == nil || p.State != Paired {
@@ -151,8 +152,8 @@ func (e *Engine) image(req *request) response {
 	ticket := wire.Encode64(b)
 	e.images.add(ticket, imageTicket{kind: ticketImage, peer: p.ID, key: title, expires: e.now().Add(imageTicketTime)}, e.now())
 	return answer(struct {
-		URL string `json:"url"`
-	}{wire.ImageURL(e.streamBase(req), ticket)})
+		Ticket string `json:"ticket"`
+	}{ticket})
 }
 
 // serveImage serves an image ticket's one URL, <ticket>/image, checked
@@ -272,9 +273,9 @@ func (e *Engine) TitleImage(ctx context.Context, peer, key string) ([]byte, stri
 	if r.status != http.StatusOK {
 		return nil, "", e.refused(p, r)
 	}
-	ticket, ok := wire.ReadImageAnswer(raw, e.peerStreamRoot(p))
+	ticket, ok := wire.ReadImageAnswer(raw)
 	if !ok {
-		return nil, "", ErrUnreachable.with(errors.New("an image answer not under its stream root"))
+		return nil, "", ErrUnreachable.with(errors.New("an image answer without a ticket"))
 	}
 	ctx, cancel := context.WithTimeout(ctx, smallReadTime)
 	defer cancel()

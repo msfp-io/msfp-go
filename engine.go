@@ -83,6 +83,7 @@ type Engine struct {
 	reading                    readings
 	plays                      plays
 	images                     imageTickets
+	sheets                     sheetCache
 	remotes                    remotes
 	fetchSlots, peerFetchSlots *slots
 	relaySlots, peerRelaySlots *slots

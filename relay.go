@@ -183,7 +183,7 @@ func (e *Engine) relayName(rm *remote, path MediaPath) (string, bool) {
 	case MediaFont:
 		return "fonts/" + strconv.Itoa(path.Font), path.Font >= 0 && path.Font < v.Fonts && path.Entry == 0
 	case MediaSheet:
-		if v.Trickplay == nil || path.Sheet < 0 || path.Sheet >= v.Trickplay.Sheets || path.Entry != 0 {
+		if rm.layout == nil || path.Sheet < 0 || path.Sheet >= v.Sheets || path.Entry != 0 {
 			return "", false
 		}
 		return wire.SheetURL("", path.Sheet), true
@@ -321,7 +321,8 @@ func (e *Engine) relayFile(rm *remote, entry int, res *http.Response, rng string
 	if es, ok := out.(ETagSink); ok {
 		es.SetETag(ent.etag)
 	}
-	out.Start(res.StatusCode, wire.RelayedMediaType(res.Header.Get("Content-Type")), length, contentRange)
+	// The copy's own mediaType, from the catalog (MSFP media section 3).
+	out.Start(res.StatusCode, wire.RelayedFileType(ent.mediaType), length, contentRange)
 	_, err := io.Copy(out, io.LimitReader(res.Body, length))
 	if err != nil && rm.ctx.Err() == nil {
 		return fmt.Errorf("msfp: a relayed file was cut: %w", err)
@@ -423,7 +424,7 @@ func (e *Engine) relaySmall(rm *remote, path MediaPath, res *http.Response, out 
 		}
 		body, contentType = again, ct
 	case path.Kind == MediaSheet:
-		tp := rm.view.Trickplay
+		tp := rm.layout
 		w, h := tp.Columns*tp.TileWidth, tp.Rows*tp.TileHeight
 		if !sheetFits(body, w, h) {
 			return ErrNotFound

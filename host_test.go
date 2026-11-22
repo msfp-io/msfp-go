@@ -58,8 +58,8 @@ func newFakeHost() *fakeHost {
 
 // film adds a film to library lib, with one copy per audio language
 // given (handle "<key>#<n>", size 20, the size of files["file"]), each
-// with an audio track, a French text subtitle track and a French PGS
-// one.
+// with an H.264 picture, an audio track, a French text subtitle track
+// and a French PGS one.
 func (h *fakeHost) film(lib, key string, audio ...string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -67,9 +67,10 @@ func (h *fakeHost) film(lib, key string, audio ...string) {
 	h.titles[key] = t
 	for i, a := range audio {
 		handle := key + "#" + strconv.Itoa(i)
-		t.Copies = append(t.Copies, wire.Copy{ID: handle, Name: "Copy " + a, DurationMs: 5_400_000, Container: "mkv",
+		t.Copies = append(t.Copies, wire.Copy{ID: handle, DurationMs: 5_400_000, MediaType: "video/matroska",
 			Size: 20, ETag: "e" + strconv.Itoa(i),
-			AudioTracks:    []wire.CopyAudio{{ID: "a0", Language: a, Channels: 2, Default: true, Codec: "aac"}},
+			Video:          &wire.VideoStream{Codec: "h264", Codecs: "avc1.640028", Width: 1920, Height: 1080, BitDepth: 8},
+			AudioTracks:    []wire.CopyAudio{{ID: "a0", Language: a, Channels: 2, Default: true, Codec: "aac", Codecs: "mp4a.40.2"}},
 			SubtitleTracks: []wire.CopySubtitle{{ID: "s0", Language: "fr", Format: "subrip"}, {ID: "s1", Language: "fr", Format: "hdmv_pgs_subtitle"}}})
 	}
 }
@@ -172,11 +173,20 @@ func (h *fakeHost) Start(_ context.Context, req msfp.StartRequest) (msfp.Started
 	defer h.mu.Unlock()
 	h.handles++
 	h.started = append(h.started, req)
-	st := msfp.Started{Handle: "h" + strconv.Itoa(h.handles), Method: method, Protocol: protocol, MimeType: "video/mp4",
+	st := msfp.Started{Handle: "h" + strconv.Itoa(h.handles), Method: method, Protocol: protocol,
 		PositionMs: req.StartMs, AudioRenditions: req.AudioRenditions && !h.noRenditions}
 	if queue {
 		for _, q := range req.Queue {
-			st.Queue = append(st.Queue, msfp.StartedEntry{Place: q.Place, Method: method, Protocol: protocol, MimeType: "audio/flac"})
+			m, p := method, protocol
+			switch q.Delivery {
+			case msfp.DeliveryFile:
+				m, p = "direct", "file"
+			case msfp.DeliveryRemux:
+				m, p = "remux", "hls"
+			case msfp.DeliveryTranscode:
+				m, p = "transcode", "hls"
+			}
+			st.Queue = append(st.Queue, msfp.StartedEntry{Place: q.Place, Method: m, Protocol: p})
 		}
 	}
 	return st, nil
@@ -323,7 +333,7 @@ func newSharing(t *testing.T, h *fakeHost, cfgA, cfgB msfp.Config) *sharing {
 	t.Helper()
 	ctx := context.Background()
 	if h.libs == nil {
-		h.libs = []msfp.Library{{ID: "films", Name: "Films", Kind: "movies"}}
+		h.libs = []msfp.Library{{ID: "films", Name: "Films"}}
 	}
 	cfgA.Catalog, cfgA.Playback, cfgA.Media = h, h, h
 	s := &sharing{h: h, a: newServer(t, cfgA), b: newServer(t, cfgB)}

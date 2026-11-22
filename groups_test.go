@@ -389,7 +389,7 @@ func memberNamed(v msfp.GroupView, name string) string {
 func TestGroupOffersAndPool(t *testing.T) {
 	ctx := context.Background()
 	h := filmHost()
-	h.libs = []msfp.Library{{ID: "films", Name: "Films", Kind: "movies"}}
+	h.libs = []msfp.Library{{ID: "films", Name: "Films"}}
 	a, b, n, g := trio(t, msfp.Config{}, msfp.Config{Catalog: h, Playback: h, Media: h}, msfp.Config{}, msfp.GroupSettingsDefault)
 	gb, _ := b.eng.Group(ctx, g.ID)
 	if err := b.eng.AcceptRequest(ctx, g.ID, gb.Requests[0].Mail); err != nil {
@@ -987,7 +987,7 @@ func TestGroupBackIn(t *testing.T) {
 func TestGroupShows(t *testing.T) {
 	ctx := context.Background()
 	h := filmHost()
-	h.libs = []msfp.Library{{ID: "films", Name: "Films", Kind: "movies"}}
+	h.libs = []msfp.Library{{ID: "films", Name: "Films"}}
 	a, b, n, g := trio(t, msfp.Config{}, msfp.Config{Catalog: h, Playback: h, Media: h}, msfp.Config{}, msfp.GroupSettingsDefault)
 	gb, _ := b.eng.Group(ctx, g.ID)
 	if err := b.eng.AcceptRequest(ctx, g.ID, gb.Requests[0].Mail); err != nil {

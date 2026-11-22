@@ -26,8 +26,8 @@ type GroupMemberShows struct {
 
 // ShownLibrary is a library and whether it is shown.
 type ShownLibrary struct {
-	ID, Name, Kind string
-	Shown          bool
+	ID, Name string
+	Shown    bool
 }
 
 // GroupShows is what a group shows here. Error: ErrNotFound.
@@ -63,7 +63,7 @@ func (e *Engine) GroupShows(ctx context.Context, id string) (GroupShowsView, err
 						continue
 					}
 					hidden := slices.Contains(g.Hidden, HiddenLibrary{Member: m.ID, Library: w.ID})
-					ms.Libraries = append(ms.Libraries, ShownLibrary{ID: w.ID, Name: w.Name, Kind: w.Kind, Shown: !hidden})
+					ms.Libraries = append(ms.Libraries, ShownLibrary{ID: w.ID, Name: w.Name, Shown: !hidden})
 				}
 			}
 			out.Members = append(out.Members, ms)

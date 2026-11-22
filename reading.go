@@ -189,20 +189,18 @@ func (e *Engine) theirLibraries(ctx context.Context, p *PeerRecord, background b
 		var l struct {
 			ID   string          `json:"id"`
 			Name json.RawMessage `json:"name"`
-			Kind json.RawMessage `json:"kind"`
 		}
 		if wire.DecodeEntry(raw, &l) != nil || !wire.ID(l.ID) ||
 			slices.ContainsFunc(libs, func(o WantedLibrary) bool { return o.ID == l.ID }) {
 			continue
 		}
-		var name, kind string
+		var name string
 		_ = json.Unmarshal(l.Name, &name) // not a string: none
-		_ = json.Unmarshal(l.Kind, &kind)
 		name = cleanName(name, "")
 		if name == "" {
 			name = "?"
 		}
-		libs = append(libs, WantedLibrary{ID: l.ID, Name: name, Kind: cleanKind(kind)})
+		libs = append(libs, WantedLibrary{ID: l.ID, Name: name})
 	}
 	limits := readLimits(ans.Limits, e.on(p, wire.PartMusic))
 	var events []Event
@@ -245,8 +243,8 @@ func (e *Engine) theirLibraries(ctx context.Context, p *PeerRecord, background b
 
 // readLimits reads a peer's limits (MSFP playback section 5, music
 // section 5.1): nil when they aren't an object of integers in range.
-// ScanBytes is the floor, 4 MiB, when the peer sent none: what this
-// server lets its media server read in one scan of that peer.
+// ScanBytes is never a peer's limit: each scan's answer states its own
+// (RemotePlayback.ScanBytes).
 func readLimits(raw json.RawMessage, music bool) *Limits {
 	if raw == nil {
 		return nil
@@ -256,7 +254,7 @@ func readLimits(raw json.RawMessage, music bool) *Limits {
 		return nil
 	}
 	l := Limits{Streams: k.Streams, Transcodes: k.Transcodes, BitrateKbps: k.BitrateKbps, Downloads: k.Downloads,
-		DownloadsPerDay: k.DownloadsPerDay, DownloadKbps: k.DownloadKbps, ScansPerDay: k.ScansPerDay, ScanBytes: k.ScanBytes}
+		DownloadsPerDay: k.DownloadsPerDay, DownloadKbps: k.DownloadKbps, ScansPerDay: k.ScansPerDay}
 	if music && k.HasAudioStreams && k.HasAudioTranscodes {
 		l.Audio, l.AudioStreams, l.AudioTranscodes = true, k.AudioStreams, k.AudioTranscodes
 	}
@@ -536,7 +534,7 @@ func (e *Engine) readTitle(p *PeerRecord, raw json.RawMessage, libs []string) (T
 			return nil, false
 		}
 		t := &VideoTitle{TitleCommon: TitleCommon{Key: v.Key, Kind: v.Kind, Libraries: []string{v.Library}},
-			Copies: v.Copies, With: v.With, IDs: v.IDs, ExtraType: v.ExtraType, Name: v.Name}
+			Copies: v.Copies, With: v.With, IDs: v.IDs, ExtraType: v.ExtraType}
 		if v.Place != nil {
 			t.Place = &Place{Season: v.Place.Season, Episode: v.Place.Episode}
 		}
@@ -550,7 +548,7 @@ func (e *Engine) readTitle(p *PeerRecord, raw json.RawMessage, libs []string) (T
 			return nil, false
 		}
 		return &MusicTitle{TitleCommon: TitleCommon{Key: m.Key, Kind: m.Kind, Libraries: []string{m.Library}},
-			Name: m.Name, SortName: m.SortName, Artists: m.Artists, ArtistNames: m.ArtistNames,
+			Name: m.Name, Artists: m.Artists, ArtistNames: m.ArtistNames,
 			PrimaryType: m.PrimaryType, SecondaryTypes: m.SecondaryTypes, Compilation: m.Compilation, Date: m.Date, OriginalDate: m.OriginalDate,
 			Genres: m.Genres, Album: m.Album, Disc: m.Disc, Number: m.Number, Copies: m.Copies,
 			Image: m.Image != nil && *m.Image, IDs: m.IDs}, true

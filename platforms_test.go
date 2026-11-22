@@ -20,15 +20,15 @@ import (
 func TestSeveralPartsNeverFile(t *testing.T) {
 	ctx := context.Background()
 	h := filmHost()
-	h.copyOf("movie/tmdb/949", 0).Parts = []wire.CopyPart{{Size: 10, DurationMs: 2_700_000}, {Size: 10, DurationMs: 2_700_000}}
+	h.copyOf("movie/tmdb/949", 0).Parts = 2
 	h.protocol = "file"
 	s := newSharing(t, h, msfp.Config{}, msfp.Config{})
 	// Asked as file: refused before the host is asked.
-	if _, err := s.b.eng.Play(ctx, s.onB.ID, msfp.PlayRequest{Title: "movie/tmdb/949", AudioLanguage: "en",
+	if _, err := s.b.eng.Play(ctx, s.onB.ID, msfp.PlayRequest{Title: "movie/tmdb/949",
 		Delivery: msfp.DeliveryFile}); !errors.Is(err, msfp.ErrDeliveryRefused) {
 		t.Fatalf("a copy of two parts asked as file: %v", err)
 	}
-	if _, err := s.b.eng.Play(ctx, s.onB.ID, msfp.PlayRequest{Title: "movie/tmdb/949", AudioLanguage: "en"}); err == nil {
+	if _, err := s.b.eng.Play(ctx, s.onB.ID, msfp.PlayRequest{Title: "movie/tmdb/949"}); err == nil {
 		t.Fatal("a copy of two parts played as file")
 	}
 	if len(h.started) != 1 || h.started[0].Parts != 2 {
@@ -42,10 +42,10 @@ func TestSeveralPartsNeverFile(t *testing.T) {
 	}
 	// As hls, it plays; a copy of one file still plays as file.
 	h.protocol = "hls"
-	if pb, err := s.b.eng.Play(ctx, s.onB.ID, msfp.PlayRequest{Title: "movie/tmdb/949", AudioLanguage: "en"}); err != nil || pb.Protocol != "hls" {
+	if pb, err := s.b.eng.Play(ctx, s.onB.ID, msfp.PlayRequest{Title: "movie/tmdb/949"}); err != nil || pb.Protocol != "hls" {
 		t.Errorf("as hls: %+v, %v", pb, err)
 	}
-	pb, err := s.b.eng.Play(ctx, s.onB.ID, msfp.PlayRequest{Title: "movie/tmdb/949", AudioLanguage: "fr", Delivery: msfp.DeliveryFile})
+	pb, err := s.b.eng.Play(ctx, s.onB.ID, msfp.PlayRequest{Title: "movie/tmdb/949", VersionID: copyID(t, s, "movie/tmdb/949", 1), Delivery: msfp.DeliveryFile})
 	if err != nil || pb.Protocol != "file" || h.started[len(h.started)-1].Parts != 1 {
 		t.Errorf("a copy of one file: %+v, %v, %+v", pb, err, h.started)
 	}
@@ -68,17 +68,26 @@ func TestMediaServerLanguageCodes(t *testing.T) {
 	if !slices.Equal(v.AudioLanguages(), []string{"en", "fr"}) || !slices.Equal(v.SubtitleLanguages(), []string{"de", "fr-CA"}) {
 		t.Errorf("the title's languages: %q %q", v.AudioLanguages(), v.SubtitleLanguages())
 	}
-	pb, err := s.b.eng.Play(ctx, s.onB.ID, msfp.PlayRequest{Title: key, AudioLanguage: "fr", SubtitleLanguage: "de"})
+	pb, err := s.b.eng.Play(ctx, s.onB.ID, msfp.PlayRequest{Title: key, AudioTrack: "a1"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	// The first copy whose audio has the language: the English one's
-	// second track, fra (MSFP playback section 2.6).
-	if h.started[0].Copy != key+"#0" || pb.AudioTrack != "a1" || pb.AudioTracks[1].Language != "fr" || pb.SubtitleTrack != "s0" ||
-		pb.SubtitleTracks[0].Language != "de" || pb.SubtitleTracks[1].Language != "fr-CA" {
+	// The first copy, the track named (MSFP playback section 2.6).
+	if h.started[0].Copy != key+"#0" || pb.AudioTrack != "a1" || v.Copies[0].AudioTracks[1].Language != "fr" ||
+		v.Copies[0].SubtitleTracks[0].Language != "de" || v.Copies[0].SubtitleTracks[1].Language != "fr-CA" {
 		t.Errorf("the playback: %+v, started %+v", pb, h.started[0])
 	}
 	if body := s.a.exchanges("play")[0].resBody; strings.Contains(body, `"fre"`) || strings.Contains(body, `"und"`) {
 		t.Errorf("a code left in the answer: %s", body)
 	}
+}
+
+// copyID is the version ID of copy n of a title B keeps.
+func copyID(t *testing.T, s *sharing, key string, n int) string {
+	t.Helper()
+	v, ok := s.peerTitles(t)[key].(*msfp.VideoTitle)
+	if !ok || len(v.Copies) <= n {
+		t.Fatalf("no copy %d of %s", n, key)
+	}
+	return v.Copies[n].ID
 }

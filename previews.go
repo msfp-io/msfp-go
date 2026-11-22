@@ -4,27 +4,32 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"slices"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/msfp-io/msfp-go/wire"
 )
 
 // The previews call (MSFP video section 5.6) and the lyrics call (music
-// section 6), both ways: a copy's seek-bar previews before a first
-// play, under a short ticket of their own that is no playback; a track's
-// lyrics, with no ticket at all.
+// section 6), both ways: a ticket for a copy's seek-bar previews outside
+// a playback, which is no playback; a track's lyrics, with no ticket at
+// all.
 
 const (
 	callPreviews = "previews"
 	callLyrics   = "lyrics"
 )
 
-// previews answers a paired peer's previews call: the copy's trickplay
-// object, its sheets under a ticket that opens them only, for 10
-// minutes.
+// previews answers a paired peer's previews call (MSFP video section
+// 5.6): a ticket that opens the copy's sheets only, for 10 minutes, and
+// the copy's etag as the host holds it now; 404 for a copy without a
+// previewLayout in the catalog. The layout is the catalog's: the answer
+// carries no URL.
 func (e *Engine) previews(req *request) response {
 	p := req.peer
 	if p == nil || p.State != Paired {
@@ -45,27 +50,18 @@ func (e *Engine) previews(req *request) response {
 	if err != nil {
 		return refuse(probInternal)
 	}
-	if c == nil || !c.previews {
+	if c == nil || c.copy.PreviewLayout == nil {
 		return refuse(probNotFound)
 	}
-	info, err := e.cfg.Playback.Describe(ctx, c.handle)
-	if err != nil {
-		return e.hostRefusal(err, "describe")
-	}
-	t, ok := trickplayOf(info.Trickplay)
-	if !ok {
-		return refuse(probNotFound)
-	}
+	t := c.copy.PreviewLayout
 	b, err := e.random(32)
 	if err != nil {
 		return refuse(probInternal)
 	}
 	ticket := wire.Encode64(b)
-	e.images.add(ticket, imageTicket{kind: ticketPreviews, peer: p.ID, key: in.Title, handle: c.handle, sheets: t.Sheets,
+	e.images.add(ticket, imageTicket{kind: ticketPreviews, peer: p.ID, key: in.Title, handle: c.handle, sheets: t.SheetCount(),
 		sheetWidth: t.Columns * t.TileWidth, sheetHeight: t.Rows * t.TileHeight, expires: e.now().Add(imageTicketTime)}, e.now())
-	return answer(struct {
-		Trickplay *trickplayWire `json:"trickplay"`
-	}{sheetsWire(t, e.streamBase(req)+ticket+"/")})
+	return answer(wire.PreviewsAnswer{Ticket: ticket, ETag: c.copy.ETag})
 }
 
 // offeredCopy is the copy of that ID of a title the peer may play here,
@@ -75,15 +71,15 @@ func (e *Engine) offeredCopy(ctx context.Context, p *PeerRecord, key, id string)
 	if err != nil {
 		return nil, err
 	}
-	if i := slices.IndexFunc(copies, func(c offeredCopy) bool { return c.id == id }); i >= 0 {
+	if i := slices.IndexFunc(copies, func(c offeredCopy) bool { return c.id() == id }); i >= 0 {
 		return &copies[i], nil
 	}
 	return nil, nil
 }
 
 // servePreviewSheet serves a sheet under a previews ticket: only its
-// copy's sheets, while the title is still sent to the peer (MSFP media
-// section 4).
+// copy's sheets, below the sheet count of its layout, while the title
+// is still sent to the peer with that layout (MSFP media section 4).
 func (e *Engine) servePreviewSheet(w http.ResponseWriter, r *http.Request, it imageTicket, name string) {
 	notFound := func() { e.cfg.NotFound.ServeHTTP(w, r) }
 	path, ok := ParseMediaPath(name)
@@ -98,7 +94,10 @@ func (e *Engine) servePreviewSheet(w http.ResponseWriter, r *http.Request, it im
 		return
 	}
 	copies, _, err := e.offeredCopies(ctx, p, it.key)
-	if err != nil || !slices.ContainsFunc(copies, func(c offeredCopy) bool { return c.handle == it.handle && c.previews }) {
+	if err != nil || !slices.ContainsFunc(copies, func(c offeredCopy) bool {
+		l := c.copy.PreviewLayout
+		return c.handle == it.handle && l != nil && l.SheetCount() == it.sheets
+	}) {
 		notFound()
 		return
 	}
@@ -154,14 +153,6 @@ func (e *Engine) lyrics(req *request) response {
 	return answer(wire.LyricsAnswer{StructuredLyrics: kept})
 }
 
-// PreviewSheets are a peer's copy's seek-bar previews, fetched before a
-// first play: their layout, and each sheet, checked and re-encoded as a
-// JPEG (sheet n at index n).
-type PreviewSheets struct {
-	Trickplay Trickplay
-	Sheets    [][]byte
-}
-
 // keptTitle is a peer's title as this server keeps it; nil for none.
 func (e *Engine) keptTitle(ctx context.Context, peer, key string) (Title, error) {
 	var t Title
@@ -173,74 +164,175 @@ func (e *Engine) keptTitle(ctx context.Context, peer, key string) (Title, error)
 	return t, err
 }
 
-// Previews asks a peer for the seek-bar previews of one of its copies
-// kept here whose description says it has some (MSFP video section
-// 5.6), and fetches every sheet at once under the answer's ticket, each
-// checked and re-encoded, so that a viewer sees them from the first
-// play. The host keeps them while the copy's etag holds, and asks again
-// only when it changes. One call at a time per peer. Errors:
-// ErrNotFound (no such copy kept, none with previews, or the peer's
-// refusal), ErrNotPaired, ErrUncallable, ErrSuspended, ErrNotSupported,
-// ErrUnreachable (an answer or a sheet refused), ErrRateLimited,
-// ErrBackingOff, ErrServerBusy.
-func (e *Engine) Previews(ctx context.Context, peer, key, versionID string) (PreviewSheets, error) {
-	var out PreviewSheets
+// sheetCacheBytes bounds the sheets kept of peers' copies (MSFP video
+// section 5.5: caching recommended, keyed by the copy's etag and its
+// previewLayout).
+const sheetCacheBytes = 64 << 20
+
+// sheetCache are the sheets fetched of peers' copies, re-encoded, and the
+// previews tickets of copies, each used until it expires.
+type sheetCache struct {
+	mu      sync.Mutex
+	sheets  map[string][]byte
+	order   []string // first kept first, for room
+	bytes   int
+	tickets map[string]previewsTicket
+}
+
+// previewsTicket is a peer's previews ticket for a copy, and the etag its
+// answer gave.
+type previewsTicket struct {
+	ticket, etag string
+	expires      time.Time
+}
+
+func (c *sheetCache) get(key string) ([]byte, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	b, ok := c.sheets[key]
+	return b, ok
+}
+
+func (c *sheetCache) put(key string, b []byte) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.sheets == nil {
+		c.sheets = map[string][]byte{}
+	}
+	if _, ok := c.sheets[key]; ok || len(b) > sheetCacheBytes {
+		return
+	}
+	for c.bytes+len(b) > sheetCacheBytes && len(c.order) > 0 {
+		c.bytes -= len(c.sheets[c.order[0]])
+		delete(c.sheets, c.order[0])
+		c.order = c.order[1:]
+	}
+	c.sheets[key], c.order, c.bytes = b, append(c.order, key), c.bytes+len(b)
+}
+
+// PreviewSheet fetches sheet n of the seek-bar previews of a peer's copy
+// kept here with a previewLayout (MSFP video section 5.5), checked
+// against that layout and re-encoded as a JPEG. Previews are fetched on
+// demand, for a copy someone opened (its page, its chapters, a
+// playback, a scrub), never for a whole library nor in bulk for copies
+// nobody opened: call it only so (fetching a copy's sheets together
+// hides where the viewer is). During a live playback of the copy the
+// playback's ticket opens its sheets; outside one, a previews call is
+// made once per copy and its ticket used for all viewers until it
+// expires, at most one call per copy at a time. Sheets fetched are kept
+// (in memory, within 64 MiB) while the copy's etag and layout hold.
+// Errors: ErrNotFound (no such copy kept, no layout, a sheet past its
+// count, or the peer's refusal), ErrNotPaired, ErrUncallable,
+// ErrSuspended, ErrNotSupported, ErrCopyChanged (the previews answer's
+// etag isn't the catalog's: the title is read again), ErrUnreachable (an
+// answer or a sheet refused), ErrRateLimited, ErrBackingOff (a 429: no
+// previews of that peer until then), ErrServerBusy.
+func (e *Engine) PreviewSheet(ctx context.Context, peer, key, versionID string, n int) ([]byte, error) {
 	p, err := e.peerRecord(ctx, peer)
 	if err != nil {
-		return out, err
+		return nil, err
 	}
 	if err := e.usablePeer(p, wire.PartCatalog); err != nil {
-		return out, err
+		return nil, err
 	}
 	if !e.on(p, wire.PartMedia) || !e.on(p, wire.PartVideo) {
-		return out, ErrNotSupported
+		return nil, ErrNotSupported
 	}
-	t, err := e.keptTitle(ctx, peer, key)
+	c, known := e.catalogCopy(ctx, peer, key, versionID)
+	l := c.PreviewLayout
+	if !known || l == nil || n < 0 || n >= l.SheetCount() {
+		return nil, ErrNotFound
+	}
+	cacheKey := fmt.Sprintf("%s\n%s\n%s\n%s\n%+v\n%d", peer, key, versionID, c.ETag, *l, n)
+	if b, ok := e.sheets.get(cacheKey); ok {
+		return b, nil
+	}
+	base := ""
+	if rm := e.playingCopy(peer, key, versionID); rm != nil {
+		base = rm.base
+	} else {
+		t, err := e.previewsTicket(ctx, p, key, versionID, c.ETag)
+		if err != nil {
+			return nil, err
+		}
+		base = wire.TicketBase(e.peerStreamRoot(p), t)
+	}
+	sheet, err := e.fetchWhole(ctx, p, wire.SheetURL(base, n), wire.MaxSheetBytes)
 	if err != nil {
-		return out, err
+		return nil, err
 	}
-	v, ok := t.(*VideoTitle)
-	if !ok || !slices.ContainsFunc(v.Copies, func(c wire.Copy) bool { return c.ID == versionID && c.Previews }) {
-		return out, ErrNotFound
+	w, h := l.Columns*l.TileWidth, l.Rows*l.TileHeight
+	if !sheetFits(sheet, w, h) {
+		return nil, ErrUnreachable.with(errors.New("a sheet that isn't a JPEG within its layout"))
 	}
-	l := e.imageLock(peer)
+	again, err := e.cfg.SheetEncoder.Reencode(sheet, w, h)
+	if err != nil {
+		return nil, ErrUnreachable.with(err)
+	}
+	e.sheets.put(cacheKey, again)
+	return again, nil
+}
+
+// playingCopy is a live playback on a peer of that copy whose ticket
+// opens its sheets; nil for none.
+func (e *Engine) playingCopy(peer, key, versionID string) *remote {
+	rs := &e.remotes
+	rs.mu.Lock()
+	defer rs.mu.Unlock()
+	for _, rm := range rs.byID {
+		if rm.peer == peer && rm.view.Title == key && rm.view.VersionID == versionID && rm.layout != nil {
+			return rm
+		}
+	}
+	return nil
+}
+
+// previewsTicket is a previews ticket of a peer's copy: the one kept
+// while it works, else a new previews call's, one call per copy at a
+// time (MSFP video section 5.6).
+func (e *Engine) previewsTicket(ctx context.Context, p *PeerRecord, key, versionID, etag string) (string, error) {
+	id := p.ID + "\n" + key + "\n" + versionID
+	l := e.imageLock("previews\n" + id)
 	l.Lock()
 	defer l.Unlock()
+	sc := &e.sheets
+	sc.mu.Lock()
+	t, ok := sc.tickets[id]
+	sc.mu.Unlock()
+	if ok && e.now().Before(t.expires) && t.etag == etag {
+		return t.ticket, nil
+	}
 	var raw json.RawMessage
 	r, err := e.call(ctx, p, callPreviews, wire.PreviewsRequest{Title: key, VersionID: versionID}, &raw, false)
 	if err != nil {
-		return out, err
+		return "", err
 	}
 	if r.status != http.StatusOK {
-		return out, e.refused(p, r)
+		return "", e.refused(p, r)
 	}
-	root := e.peerStreamRoot(p)
-	pv, err := wire.ReadPreviewsAnswer(raw, root)
+	a, err := wire.ReadPreviewsAnswer(raw)
 	if err != nil {
-		return out, ErrUnreachable.with(err)
+		return "", ErrUnreachable.with(err)
 	}
-	if pv == nil {
-		return out, ErrNotFound
+	if a.ETag != etag {
+		// The copy changed: the title is read again before any sheet.
+		e.readSoon(p.ID)
+		return "", ErrCopyChanged
 	}
-	tp := pv.Trickplay
-	out.Trickplay = Trickplay{TileWidth: tp.TileWidth, TileHeight: tp.TileHeight, Columns: tp.Columns, Rows: tp.Rows,
-		IntervalMs: tp.IntervalMs, TileCount: tp.TileCount, Sheets: tp.Sheets}
-	w, h := tp.Columns*tp.TileWidth, tp.Rows*tp.TileHeight
-	for _, u := range pv.URLs {
-		sheet, err := e.fetchWhole(ctx, p, u, wire.MaxSheetBytes)
-		if err != nil {
-			return PreviewSheets{}, err
-		}
-		if !sheetFits(sheet, w, h) {
-			return PreviewSheets{}, ErrUnreachable.with(errors.New("a sheet that isn't a JPEG within its layout"))
-		}
-		again, err := e.cfg.SheetEncoder.Reencode(sheet, w, h)
-		if err != nil {
-			return PreviewSheets{}, ErrUnreachable.with(err)
-		}
-		out.Sheets = append(out.Sheets, again)
+	sc.mu.Lock()
+	if sc.tickets == nil {
+		sc.tickets = map[string]previewsTicket{}
 	}
-	return out, nil
+	now := e.now()
+	for k, old := range sc.tickets {
+		if !now.Before(old.expires) {
+			delete(sc.tickets, k)
+		}
+	}
+	// A little short of the ticket's 10 minutes, for the time a fetch takes.
+	sc.tickets[id] = previewsTicket{ticket: a.Ticket, etag: a.ETag, expires: now.Add(imageTicketTime - 30*time.Second)}
+	sc.mu.Unlock()
+	return a.Ticket, nil
 }
 
 // fetchWhole fetches a URL of a peer's stream whole, within most bytes

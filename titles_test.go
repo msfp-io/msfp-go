@@ -109,7 +109,7 @@ func TestLocalTitlesAndExtras(t *testing.T) {
 		t.Errorf("an image of a title not kept: %v", err)
 	}
 	x := s.peerTitles(t)["movie/tmdb/1/x/Tr7aQ1"].(*msfp.VideoTitle)
-	if x.ExtraType != "trailer" || x.Name != "Teaser" || len(x.Copies) != 1 {
+	if x.ExtraType != "trailer" || x.Name != "" || len(x.Copies) != 1 { // an extra carries no name
 		t.Errorf("an extra kept: %+v", x)
 	}
 	if err := s.a.eng.SetLocal(ctx, s.onA.ID, true); err != nil {
@@ -180,11 +180,12 @@ func TestLocalTitleImage(t *testing.T) {
 	if len(calls) != 1 || calls[0].status != 200 {
 		t.Fatalf("image calls: %+v", calls)
 	}
-	var ans struct{ URL string }
+	var ans struct{ URL, Ticket string }
 	json.Unmarshal([]byte(calls[0].resBody), &ans)
-	if !strings.HasSuffix(ans.URL, "/image") || !strings.Contains(ans.URL, "/api/v1/stream/") {
+	if ans.Ticket == "" || strings.Contains(calls[0].resBody, "url") {
 		t.Errorf("the answer: %s", calls[0].resBody)
 	}
+	ans.URL = wire.ImageURL(s.a.srv.URL+"/api/v1/stream/", ans.Ticket)
 	// The ticket opens that image only: another name, a HEAD, a browser.
 	get := func(method, url string, header ...string) int {
 		path := url[strings.Index(url, "/api/v1/stream/"):]
@@ -263,7 +264,7 @@ func TestLocalTitleImage(t *testing.T) {
 func TestGroupLocalTitles(t *testing.T) {
 	ctx := context.Background()
 	h, local, _ := localHost(t)
-	h.libs = []msfp.Library{{ID: "films", Name: "Films", Kind: "movies"}}
+	h.libs = []msfp.Library{{ID: "films", Name: "Films"}}
 	a, b, n, g := trio(t, msfp.Config{}, msfp.Config{Catalog: h, Playback: h, Media: h}, msfp.Config{}, msfp.GroupSettingsDefault)
 	gb, _ := b.eng.Group(ctx, g.ID)
 	if err := b.eng.AcceptRequest(ctx, g.ID, gb.Requests[0].Mail); err != nil {

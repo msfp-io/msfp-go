@@ -7,8 +7,6 @@ import (
 	"net/http"
 	"net/netip"
 	"time"
-
-	"github.com/msfp-io/msfp-go/wire"
 )
 
 // Config is what the host gives Open. Only Address (but for a server
@@ -116,32 +114,14 @@ type Config struct {
 	// MaxBitrateKbps is this server's own cap on what peers play here; 0,
 	// by default, for none.
 	MaxBitrateKbps int
-	// Encoders are the codecs Playback converts to, as ffmpeg names them
-	// (h264, hevc, av1; aac, ac3, eac3, opus…): a peer's transcode to
-	// another is refused, 409 delivery-refused (MSFP playback section
-	// 2.7). By default, the baseline's only: h264 and aac.
+	// Encoders are what Playback makes (MSFP playback section 2.7): the
+	// codecs it encodes, registry tokens (h264, hevc, av1; aac, ac3, eac3,
+	// opus…), the ranges it makes (sdr, keep), and the codecs each HLS
+	// segment format carries (mp2t, mp4). A peer's transcode to another
+	// codec or range, and a remux or a copied stream a segment format
+	// can't carry, are refused, 409 delivery-refused. By default, the
+	// baseline's only: h264 and aac, sdr, and wire.DefaultSegments.
 	Encoders Encoders
-	// ChooseCopy chooses the copy a peer's play plays when its versionId
-	// names none of the title's copies (MSFP playback section 2.6): an
-	// index in copies, which are in the host's order of preference, as
-	// the catalog sends them (an index out of range is taken as 0).
-	// DefaultChooseCopy, the recommended default, by default.
-	ChooseCopy func(copies []wire.Copy, req wire.PlayRequest) int
-	// ChooseTracks chooses, of the copy chosen, the audio track and the
-	// subtitles shown when the request names none of its tracks (or, for
-	// the subtitles, "off"): a track ID of the copy, "" for the subtitles
-	// to show none (another ID is taken as the default's).
-	// DefaultChooseTracks, the recommended default, by default.
-	ChooseTracks func(c wire.Copy, req wire.PlayRequest) (audio, subtitle string)
-	// CopyName is a copy's name as it leaves toward a peer, "" to send
-	// none, and TrackTitle a track's title (MSFP video section 3.6: what
-	// they say is the owner's choice, a matter of its privacy; the
-	// engine then makes them plain text of at most 64 characters).
-	// DefaultCopyName and DefaultTrackTitle by default: only edition or
-	// quality labels, and only descriptions of the track, never a file
-	// name or a release group's.
-	CopyName   func(name string) string
-	TrackTitle func(title string) string
 	// LongestPlayback ends a peer's playback here that lasts longer; 24
 	// hours by default (MSFP playback section 6.3).
 	LongestPlayback time.Duration
@@ -224,18 +204,6 @@ func (c Config) withDefaults() Config {
 	}
 	if c.SheetEncoder == nil {
 		c.SheetEncoder = JPEGSheets{}
-	}
-	if c.ChooseCopy == nil {
-		c.ChooseCopy = DefaultChooseCopy
-	}
-	if c.ChooseTracks == nil {
-		c.ChooseTracks = DefaultChooseTracks
-	}
-	if c.CopyName == nil {
-		c.CopyName = DefaultCopyName
-	}
-	if c.TrackTitle == nil {
-		c.TrackTitle = DefaultTrackTitle
 	}
 	if c.LongestPlayback <= 0 {
 		c.LongestPlayback = 24 * time.Hour

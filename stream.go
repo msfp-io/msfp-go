@@ -134,8 +134,13 @@ func mediaPath(rest string, pb *playback) (MediaPath, bool) {
 	switch p.Kind {
 	case MediaFile, MediaMaster, MediaPlaylist, MediaSegment:
 		ent, ok := pb.entries[p.Entry]
-		if !ok || pb.purpose == wire.PurposeScan && (p.Kind != MediaFile || p.Entry != 0) {
+		if !ok || pb.purpose == wire.PurposeScan && (p.Kind != MediaFile || p.Entry != 0) ||
+			p.Entry > 0 && pb.purpose != wire.PurposePlay {
 			return MediaPath{}, false
+		}
+		if p.Kind == MediaPlaylist || p.Kind == MediaSegment {
+			// Exactly the names its playlists gave (media section 1).
+			return p, ent.protocol == "hls" && pb.names[strconv.Itoa(p.Entry)+"/"+p.Name]
 		}
 		return p, ent.protocol == "file" == (p.Kind == MediaFile)
 	case MediaSheet:
@@ -346,7 +351,8 @@ func (e *Engine) serveFile(w http.ResponseWriter, r *http.Request, pb *playback,
 		}
 		start, end = s, en
 	}
-	sink := &fileSink{w: w, ctx: r.Context(), etag: ent.etag, left: end - start + 1, pace: pb.pace, status: http.StatusOK}
+	sink := &fileSink{w: w, ctx: r.Context(), etag: ent.etag, mediaType: ent.mediaType, left: end - start + 1, pace: pb.pace,
+		status: http.StatusOK}
 	var rng *Range
 	if h != "" {
 		rng = &Range{First: start, Last: end}
@@ -364,13 +370,13 @@ func (e *Engine) serveFile(w http.ResponseWriter, r *http.Request, pb *playback,
 }
 
 // fileSink is the ResponseSink of the file: the engine's status and
-// headers (the host's content type alone kept), at most left bytes, paced
+// headers (the copy's media type from the catalog), at most left bytes, paced
 // for a download.
 type fileSink struct {
 	w            http.ResponseWriter
 	ctx          context.Context
 	status       int
-	contentType  string
+	mediaType    string // the copy's, from the catalog
 	contentRange string
 	etag         string
 	left         int64
@@ -378,9 +384,8 @@ type fileSink struct {
 	started      bool
 }
 
-func (s *fileSink) Start(_ int, contentType string, _ int64, _ string) {
+func (s *fileSink) Start(int, string, int64, string) {
 	if !s.started {
-		s.contentType = contentType
 		s.begin()
 	}
 }
@@ -392,7 +397,7 @@ func (s *fileSink) begin() {
 	}
 	s.started = true
 	h := s.w.Header()
-	h.Set("Content-Type", wire.RelayedMediaType(s.contentType))
+	h.Set("Content-Type", wire.RelayedFileType(s.mediaType))
 	h.Set("Content-Length", strconv.FormatInt(s.left, 10))
 	h.Set("Accept-Ranges", "bytes")
 	h.Set("ETag", `"`+s.etag+`"`)
@@ -505,7 +510,19 @@ func (e *Engine) servePlaylist(w http.ResponseWriter, r *http.Request, pb *playb
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
+	if path.Kind == MediaMaster && path.Entry == 0 {
+		var missing []string
+		if kept, missing = masterAttributes(kept, pb.facts); len(missing) > 0 {
+			e.log.Warn("msfp: the host's master playlist lacks attributes MSFP asks for", "missing", strings.Join(missing, ","))
+		}
+	}
 	ps.mu.Lock()
+	for _, n := range playlistNames(kept) {
+		if pb.names == nil {
+			pb.names = map[string]bool{}
+		}
+		pb.names[strconv.Itoa(path.Entry)+"/"+n] = true
+	}
 	if first, ok := pb.playlists[key]; ok {
 		kept = first // another fetch kept it meanwhile
 	} else if len(pb.playlists) < playlistsKept && pb.playlistBytes+len(kept) <= playlistBytesKept {
@@ -517,6 +534,19 @@ func (e *Engine) servePlaylist(w http.ResponseWriter, r *http.Request, pb *playb
 	}
 	ps.mu.Unlock()
 	writePlaylist(w, kept)
+}
+
+// uriValues are the URI= values of a playlist's tags.
+var uriValues = regexp.MustCompile(`URI="([^"]*)"`)
+
+// playlistNames are the names a checked playlist gives: its URI lines
+// and the URI= values of its tags (renditions, EXT-X-MAP).
+func playlistNames(kept []byte) []string {
+	names := wire.URILines(kept)
+	for _, m := range uriValues.FindAllSubmatch(kept, -1) {
+		names = append(names, string(m[1]))
+	}
+	return names
 }
 
 // Bounds of the playlists a playback keeps, to serve them the same.

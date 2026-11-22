@@ -35,14 +35,13 @@ func TestPlayAndRelay(t *testing.T) {
 	ctx := context.Background()
 	h := filmHost()
 	s := newSharing(t, h, msfp.Config{}, msfp.Config{})
-	pb, err := s.b.eng.Play(ctx, s.onB.ID, msfp.PlayRequest{Title: "movie/tmdb/949", AudioLanguage: "fr",
-		MaxBitrateKbps: 12345, SubtitleLanguage: "fr"})
+	pb, err := s.b.eng.Play(ctx, s.onB.ID, msfp.PlayRequest{Title: "movie/tmdb/949", VersionID: copyID(t, s, "movie/tmdb/949", 1),
+		MaxBitrateKbps: 12345})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if pb.Method != "direct" || pb.Protocol != "hls" || pb.AudioTrack != "a0" || pb.SubtitleTrack != "s0" ||
-		pb.VersionID == "" || len(pb.SubtitleTracks) != 2 || pb.SubtitleStretchSeconds != 120 ||
-		strings.HasPrefix(pb.ID, "play_") {
+	if pb.Method != "direct" || pb.Protocol != "hls" || pb.AudioTrack != "a0" || pb.DurationMs != 5_400_000 ||
+		pb.VersionID == "" || len(pb.Subtitles) != 2 || pb.Subtitles[1].Form != "picture" || strings.HasPrefix(pb.ID, "play_") {
 		t.Errorf("the playback as B keeps it: %+v", pb)
 	}
 	// A heard the French copy and the cap, as asked; nothing of the device.
@@ -87,7 +86,7 @@ func TestPlayAndRelay(t *testing.T) {
 	// Progress and stop.
 	s.b.eng.Progress(pb.ID, 60_000, true)
 	waitAll(s.b)
-	if p := s.a.exchanges("progress"); len(p) != 1 || p[0].status != 200 || !strings.Contains(p[0].reqBody, `"paused":true`) {
+	if p := s.a.exchanges("progress"); len(p) != 1 || p[0].status != 200 || strings.Contains(p[0].reqBody, "paused") {
 		t.Errorf("progress: %+v", p)
 	}
 	if v := s.a.eng.Playbacks(); len(v) != 1 || v[0].State != "active" || v[0].Title != "movie/tmdb/949" || v[0].PeerName == "" {
@@ -122,9 +121,9 @@ func TestPlayRefusalsAndTickets(t *testing.T) {
 	}
 	for _, body := range []string{`{}`, `{"title":7}`, `{"title":"series/tmdb/1399"}`, `{"title":"movie/tmdb/0949"}`,
 		`{"title":"movie/tmdb/949","startPositionMs":-1}`, `{"title":"movie/tmdb/949","audioTrack":"a01"}`,
-		`{"title":"movie/tmdb/949","subtitleTrack":"s007"}`, `{"title":"movie/tmdb/949","delivery":"File"}`,
-		`{"title":"movie/tmdb/949","delivery":"remux","container":""}`,
-		`{"title":"movie/tmdb/949","audioLanguage":"fr_CA"}`, `{"title":"movie/tmdb/949","maxBitrateKbps":10000001}`} {
+		`{"title":"movie/tmdb/949","delivery":"transcode","transcode":{"burnSubtitle":"s007"}}`, `{"title":"movie/tmdb/949","delivery":"File"}`,
+		`{"title":"movie/tmdb/949","delivery":"remux","mediaType":"video/MP4"}`, `{"title":"movie/tmdb/949","delivery":"remux"}`,
+		`{"title":"movie/tmdb/949","maxBitrateKbps":10000001}`} {
 		if code := call(body); code != 400 {
 			t.Errorf("%s: %d", body, code)
 		}
@@ -133,7 +132,8 @@ func TestPlayRefusalsAndTickets(t *testing.T) {
 		t.Errorf("a title not offered: %d", code)
 	}
 	// Unknown values and members ignored; a track the copy hasn't, as absent.
-	if code := call(`{"title":"movie/tmdb/949","capabilities":{"containers":["MP4","x"]},"audioTrack":"a7","other":1}`); code != 200 {
+	if code := call(`{"title":"movie/tmdb/949","capabilities":{"containers":["MP4","x"]},"audioTrack":"a7","other":1,
+		"audioLanguage":"fr_CA","subtitleTrack":"s007","container":"x"}`); code != 200 {
 		t.Errorf("unknown values: %d", code)
 	}
 	if got := h.started[0]; got.AudioTrack != "a0" {
@@ -142,7 +142,7 @@ func TestPlayRefusalsAndTickets(t *testing.T) {
 	var ans struct {
 		Stream struct{ URL string }
 	}
-	json.Unmarshal([]byte(s.a.exchanges("play")[len(s.a.exchanges("play"))-1].resBody), &ans)
+	ans.Stream.URL = lastStream(t, s)
 	if !strings.HasPrefix(ans.Stream.URL, s.a.srv.URL+"/api/v1/stream/") {
 		t.Fatalf("stream URL %q", ans.Stream.URL)
 	}
@@ -164,6 +164,13 @@ func TestPlayRefusalsAndTickets(t *testing.T) {
 	base := strings.TrimSuffix(ans.Stream.URL, "master.m3u8")
 	if code := get(ans.Stream.URL); code != 200 {
 		t.Errorf("master: %d", code)
+	}
+	// A name no playlist gave yet: not served (MSFP media section 1).
+	if code := get(base + "seg0.m4s"); code != 404 {
+		t.Errorf("a segment before its playlist: %d", code)
+	}
+	if code := get(base + "v0.m3u8"); code != 200 {
+		t.Errorf("the media playlist: %d", code)
 	}
 	cases := []struct {
 		url  string
@@ -372,7 +379,7 @@ func TestNoMediaFromUncallable(t *testing.T) {
 	h := filmHost()
 	var conns atomic.Int32
 	cfgA := msfp.Config{Catalog: h, Playback: h, Media: h}
-	h.libs = []msfp.Library{{ID: "films", Name: "Films", Kind: "movies"}}
+	h.libs = []msfp.Library{{ID: "films", Name: "Films"}}
 	a := newServerWith(t, cfgA, serverOpts{conn: func() { conns.Add(1) }})
 	b := newServer(t, msfp.Config{})
 	onA, onB := pair(t, a, b)
@@ -426,16 +433,17 @@ func TestNoMediaFromUncallable(t *testing.T) {
 func TestMusicPlay(t *testing.T) {
 	ctx := context.Background()
 	h := newFakeHost()
-	h.libs = []msfp.Library{{ID: "music", Name: "Music", Kind: "music"}}
+	h.libs = []msfp.Library{{ID: "music", Name: "Music"}}
 	track := "track/mb/0c000000-0000-4000-8000-000000000003"
 	h.titles[track] = musicTrack(track, "t")
-	h.info["t"] = msfp.CopyInfo{Fonts: 2, Trickplay: &msfp.Trickplay{TileWidth: 10, TileHeight: 10, Columns: 1, Rows: 1, IntervalMs: 1000, TileCount: 1}}
+	h.info["t"] = msfp.CopyInfo{Fonts: 2}
 	s := newSharing(t, h, msfp.Config{NewPairing: &msfp.Limits{Streams: 0, Audio: true, AudioStreams: 1}}, msfp.Config{})
-	pb, err := s.b.eng.Play(ctx, s.onB.ID, msfp.PlayRequest{Title: track, SubtitleTrack: "s0", Delivery: msfp.DeliveryFile})
+	pb, err := s.b.eng.Play(ctx, s.onB.ID, msfp.PlayRequest{Title: track, Delivery: msfp.DeliveryFile})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !h.started[0].AudioOnly || len(pb.SubtitleTracks) != 0 || pb.Trickplay != nil || pb.Protocol != "file" {
+	if !h.started[0].AudioOnly || len(pb.Subtitles) != 0 || pb.Sheets != 0 || pb.Fonts != 0 || pb.Protocol != "file" ||
+		pb.MimeType != "audio/flac" {
 		t.Errorf("a track's playback: %+v / %+v", h.started[0], pb)
 	}
 	if strings.Contains(s.a.exchanges("play")[0].resBody, "subtitle") || strings.Contains(s.a.exchanges("play")[0].reqBody, "subtitle") {
@@ -733,5 +741,5 @@ func TestPairingEndsWhilePlayStarts(t *testing.T) {
 func musicTrack(key, copy string) *msfp.MusicTitle {
 	return &msfp.MusicTitle{TitleCommon: msfp.TitleCommon{Key: key, Kind: "track", Libraries: []string{"music"}}, Name: "x",
 		Album: "album/mb/0b000000-0000-4000-8000-000000000002", Disc: 1, Number: 1,
-		Copies: []wire.MusicCopy{{ID: copy, Name: "FLAC", DurationMs: 200_000, Container: "flac", Codec: "flac", Size: 20, Etag: "m-" + copy}}}
+		Copies: []wire.MusicCopy{{ID: copy, DurationMs: 200_000, MediaType: "audio/flac", Codec: "flac", Size: 20, Etag: "m-" + copy}}}
 }

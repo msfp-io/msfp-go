@@ -82,6 +82,21 @@ func (e Encoders) Carries(sub string, codecs ...string) bool {
 	return true
 }
 
+// CheckCodecs is the refusal, 409 delivery-refused, of a transcode's
+// codecs the owning server doesn't encode (the video codec only for a
+// copy with video, video): nil when it encodes them, or they are copy.
+// Serve checks it; for a queue entry's own transcode, a codec not made
+// refuses the request as the request's own would (music section 5.2).
+func (e Encoders) CheckCodecs(t TranscodeTargets, video bool) error {
+	switch {
+	case video && t.VideoCodec != CodecCopy && t.VideoCodec != "" && !e.video(t.VideoCodec):
+		return refusedDelivery("a video codec the owning server doesn't encode")
+	case t.AudioCodec != CodecCopy && t.AudioCodec != "" && !e.audio(t.AudioCodec):
+		return refusedDelivery("an audio codec the owning server doesn't encode")
+	}
+	return nil
+}
+
 // Served is what an owning server makes of a copy for a play (playback
 // section 2.7): the method; what it serves of the video (none for a copy
 // with no video) and of the audio, CodecCopy for a stream left
@@ -185,13 +200,10 @@ func Serve(r PlayRequest, c Copy, audio string, capKbps int, enc Encoders) (Serv
 		if r.Transcode != nil {
 			t = *r.Transcode
 		}
-		videoCopy, audioCopy := hasVideo && t.VideoCodec == CodecCopy, t.AudioCodec == CodecCopy
-		switch {
-		case hasVideo && !videoCopy && t.VideoCodec != "" && !enc.video(t.VideoCodec):
-			return s, refusedDelivery("a video codec the owning server doesn't encode")
-		case !audioCopy && t.AudioCodec != "" && !enc.audio(t.AudioCodec):
-			return s, refusedDelivery("an audio codec the owning server doesn't encode")
+		if err := enc.CheckCodecs(t, hasVideo); err != nil {
+			return s, err
 		}
+		videoCopy, audioCopy := hasVideo && t.VideoCodec == CodecCopy, t.AudioCodec == CodecCopy
 		var copied []string
 		if videoCopy {
 			copied = append(copied, c.Video.Codec)

@@ -1074,7 +1074,7 @@ func (e *Engine) sendMail(ctx context.Context, id, to, kind, answers string) err
 		mid := wire.MailID(raw)
 		expires := e.now().Add(wire.MailLifetime)
 		mail := wire.Mail{Group: id, ID: mid, Kind: kind, From: g.Me, To: to, Answers: answers, Expires: expires.Unix()}
-		content := wire.Sealed{Address: e.named(e.address()), Name: e.name(), NextCommitment: wire.Encode64(e.commitment()),
+		content := wire.Sealed{Address: e.named(e.address()), NextCommitment: wire.Encode64(e.commitment()),
 			Inbound: !e.saysUncallable(), Certificates: pins}
 		sealed, err := wire.SealMail(e.current(), mail, m.EncryptionKey, content)
 		if err != nil {
@@ -1308,7 +1308,11 @@ func (e *Engine) gotMail(ctx context.Context, id string, m wire.Mail) {
 			return err
 		}
 		commitment, _ := wire.Decode64(opened.NextCommitment, 32)
-		req = GroupRequest{Mail: m.ID, From: m.From, Name: wire.CleanText(opened.Name, 80), Address: opened.Address,
+		name := ""
+		if sender := s.Members[m.From]; sender != nil {
+			name = sender.Name // its profile's (groups section 5): the mail carries none
+		}
+		req = GroupRequest{Mail: m.ID, From: m.From, Name: wire.CleanText(name, 80), Address: opened.Address,
 			NextCommitment: commitment, Inbound: opened.Inbound, Pins: wire.CleanPins(opened.Certificates), Received: e.now()}
 		if g.Accept && e.waited(s, m.From) {
 			accept = true
@@ -1737,13 +1741,13 @@ type groupPairRequest struct {
 	Group          string `json:"group"`
 	Answers        string `json:"answers"`
 	Address        string `json:"address"`
-	Name           string `json:"name,omitempty"`
 	NextCommitment string `json:"nextCommitment"`
 	Inbound        *bool  `json:"inbound,omitempty"`
 }
 
+// groupPairAnswer is group-pair's answer: no name, each side knows the
+// other's from its profile (MSFP groups section 8.3).
 type groupPairAnswer struct {
-	Name           string `json:"name"`
 	NextCommitment string `json:"nextCommitment"`
 	Inbound        *bool  `json:"inbound,omitempty"`
 }
@@ -1857,11 +1861,12 @@ func (e *Engine) groupPairServed(req *request) response {
 		return e.pairRefused(req)
 	}
 	_ = used
-	if _, err := e.linkThrough(req.r.Context(), body.Group, member, key, body.Address, body.Name, commitment, inbound, nil); err != nil {
+	name := e.memberName(req.r.Context(), body.Group, member)
+	if _, err := e.linkThrough(req.r.Context(), body.Group, member, key, body.Address, name, commitment, inbound, nil); err != nil {
 		return refuse(probInternal)
 	}
 	t := !e.saysUncallable()
-	return answer(groupPairAnswer{Name: e.name(), NextCommitment: wire.Encode64(e.commitment()), Inbound: &t})
+	return answer(groupPairAnswer{NextCommitment: wire.Encode64(e.commitment()), Inbound: &t})
 }
 
 var errUsed = errors.New("msfp: a mail already used")
@@ -1972,7 +1977,7 @@ func (e *Engine) groupPair(ctx context.Context, id, member, mailID, address stri
 		return err
 	}
 	t := !e.saysUncallable()
-	body := groupPairRequest{Group: id, Answers: mailID, Address: e.named(e.address()), Name: e.name(),
+	body := groupPairRequest{Group: id, Answers: mailID, Address: e.named(e.address()),
 		NextCommitment: wire.Encode64(e.commitment()), Inbound: &t}
 	// Its certificate is checked as for any call after pairing: trusted,
 	// or named by the pins its mail carried (MSFP groups section 8.3).
@@ -1985,8 +1990,22 @@ func (e *Engine) groupPair(ctx context.Context, id, member, mailID, address stri
 	if r.status != http.StatusOK {
 		return ErrUnreachable.with(errors.New(r.problem))
 	}
-	_, err = e.linkThrough(ctx, id, member, key, address, ans.Name, commitment, inbound, pins)
+	_, err = e.linkThrough(ctx, id, member, key, address, e.memberName(ctx, id, member), commitment, inbound, pins)
 	return err
+}
+
+// memberName is a member's name in a group: its latest profile's, or
+// its joined's until its profile arrives (MSFP groups section 3.3); ""
+// when not known.
+func (e *Engine) memberName(ctx context.Context, id, member string) string {
+	name := ""
+	_ = e.withState(ctx, id, func(_ *GroupRecord, s *wire.GroupState) error {
+		if m := s.Members[member]; m != nil {
+			name = m.Name
+		}
+		return nil
+	})
+	return name
 }
 
 // ---- joining (groups section 4) ---------------------------------------------------

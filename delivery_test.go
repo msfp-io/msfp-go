@@ -23,15 +23,16 @@ import (
 // downloads and scans within their limits, a music queue, previews and
 // lyrics before any playback, ASS and fonts.
 
-// lastStream is the stream URL of the last play A answered.
+// lastStream is the stream URL of the last play A answered, built from
+// its ticket as a viewer's server builds it.
 func lastStream(t *testing.T, s *sharing) string {
 	t.Helper()
 	plays := s.a.exchanges("play")
-	var ans struct{ Stream struct{ URL string } }
-	if len(plays) == 0 || json.Unmarshal([]byte(plays[len(plays)-1].resBody), &ans) != nil || ans.Stream.URL == "" {
+	var ans struct{ Ticket, Protocol string }
+	if len(plays) == 0 || json.Unmarshal([]byte(plays[len(plays)-1].resBody), &ans) != nil || ans.Ticket == "" {
 		t.Fatal("no play answered")
 	}
-	return ans.Stream.URL
+	return wire.StreamURL(s.a.srv.URL+"/api/v1/stream/", ans.Ticket, ans.Protocol)
 }
 
 // get fetches a URL of A's stream with headers (name, value…), as a
@@ -93,21 +94,29 @@ func TestDeliveries(t *testing.T) {
 		t.Fatal(err)
 	}
 	if got := h.started[len(h.started)-1].Transcode; got == nil || *got != (msfp.TranscodeTargets{VideoCodec: "h264", MaxHeight: 720,
-		AudioCodec: "aac", AudioChannels: 2}) {
+		AudioCodec: "aac", AudioChannels: 2, Range: "sdr"}) {
 		t.Errorf("the targets the host heard: %+v", got)
 	}
-	// Remux needs a container; the host is told it.
+	// Remux needs a media type; the host is told it.
 	if _, err := play(msfp.PlayRequest{Delivery: msfp.DeliveryRemux}); !errors.Is(err, msfp.ErrInvalidRequest) {
-		t.Errorf("remux without a container: %v", err)
+		t.Errorf("remux without a media type: %v", err)
 	}
-	if pb, err := play(msfp.PlayRequest{Delivery: msfp.DeliveryRemux, Container: "mp4"}); err != nil || pb.Method != "remux" ||
-		h.started[len(h.started)-1].Container != "mp4" {
+	if pb, err := play(msfp.PlayRequest{Delivery: msfp.DeliveryRemux, MediaType: "video/mp4"}); err != nil || pb.Method != "remux" ||
+		h.started[len(h.started)-1].MediaType != "video/mp4" || h.started[len(h.started)-1].Served.Segments != "mp4" {
 		t.Errorf("remux: %+v %v", pb, err)
 	}
+	if _, err := play(msfp.PlayRequest{Delivery: msfp.DeliveryRemux, MediaType: "video/matroska"}); !errors.Is(err, msfp.ErrDeliveryRefused) {
+		t.Errorf("a remux to another media type: %v", err)
+	}
+	// Audio copied, video converted: a transcode the host hears so.
+	if _, err := play(msfp.PlayRequest{Delivery: msfp.DeliveryTranscode, Transcode: &msfp.TranscodeTargets{AudioCodec: "copy"}}); err != nil ||
+		h.started[len(h.started)-1].Served.Audio != "copy" || h.started[len(h.started)-1].Transcode.AudioChannels != 0 {
+		t.Errorf("audio copied: %+v %v", h.started[len(h.started)-1], err)
+	}
 	// A subtitle burned in, of the copy; another refused by MSFP itself.
-	pb, err = play(msfp.PlayRequest{Delivery: msfp.DeliveryTranscode, Transcode: &msfp.TranscodeTargets{BurnSubtitle: "s0", MaxHeight: 1000}})
-	if err != nil || pb.BurnedTrack != "s0" || pb.SubtitleTrack != "s0" || h.started[len(h.started)-1].Transcode.MaxHeight != 720 {
-		t.Errorf("a subtitle burned in: %+v %v", pb, err)
+	_, err = play(msfp.PlayRequest{Delivery: msfp.DeliveryTranscode, Transcode: &msfp.TranscodeTargets{BurnSubtitle: "s0", MaxHeight: 1000}})
+	if err != nil || h.started[len(h.started)-1].Transcode.BurnSubtitle != "s0" || h.started[len(h.started)-1].Transcode.MaxHeight != 720 {
+		t.Errorf("a subtitle burned in: %v", err)
 	}
 	before := len(h.started)
 	if _, err := play(msfp.PlayRequest{Delivery: msfp.DeliveryTranscode, Transcode: &msfp.TranscodeTargets{BurnSubtitle: "s9"}}); !errors.Is(err, msfp.ErrDeliveryRefused) {
@@ -125,7 +134,7 @@ func TestDeliveries(t *testing.T) {
 	h.mu.Unlock()
 	// A file above the pairing's bitrate cap.
 	h.mu.Lock()
-	h.copyOf("movie/tmdb/949", 0).BitrateKbps = 50_000
+	h.copyOf("movie/tmdb/949", 0).Size = 50_000 * 5_400_000 / 8 // 50,000 kbit/s overall
 	h.mu.Unlock()
 	if err := s.a.eng.SetLimits(ctx, s.onA.ID, msfp.Limits{Streams: 2, Transcodes: 1, BitrateKbps: 10_000}); err != nil {
 		t.Fatal(err)
@@ -138,7 +147,7 @@ func TestDeliveries(t *testing.T) {
 	}
 	// Combinations of purpose and delivery MSFP refuses, from the peer.
 	var raw json.RawMessage
-	for _, body := range []string{`{"title":"movie/tmdb/949","purpose":"scan","delivery":"remux","container":"mp4"}`,
+	for _, body := range []string{`{"title":"movie/tmdb/949","purpose":"scan","delivery":"remux","mediaType":"video/mp4"}`,
 		`{"title":"movie/tmdb/949","purpose":"download","delivery":"transcode"}`, `{"title":"movie/tmdb/949","delivery":"HLS"}`,
 		`{"title":"movie/tmdb/949","transcode":{"maxHeight":720}}`, `{"title":"movie/tmdb/949","delivery":"transcode","transcode":{"maxHeight":719}}`,
 		`{"title":"movie/tmdb/949","delivery":"transcode","transcode":{"burnSubtitle":"off"}}`} {
@@ -150,9 +159,8 @@ func TestDeliveries(t *testing.T) {
 	// core section 8.5), before the host is asked.
 	before = len(h.started)
 	for _, body := range []string{`{"title":"movie/tmdb/949","delivery":"hls"}`,
-		`{"title":"movie/tmdb/949","delivery":"remux","container":"matroska"}`,
-		`{"title":"movie/tmdb/949","delivery":"transcode","transcode":{"videoCodec":"vvc"}}`,
-		`{"title":"movie/tmdb/949","delivery":"transcode","transcode":{"audioCodec":"opus"}}`} {
+		`{"title":"movie/tmdb/949","delivery":"remux","mediaType":"video/matroska"}`,
+		`{"title":"movie/tmdb/949","delivery":"transcode","transcode":{"videoCodec":"vvc"}}`} {
 		if code, _ := s.b.eng.CallForTest(ctx, s.onB.ID, "play", json.RawMessage(body), &raw); code != 409 {
 			t.Errorf("%s: %d", body, code)
 		}
@@ -294,7 +302,7 @@ func TestDownloads(t *testing.T) {
 			Delivery: msfp.DeliveryFile, StartMs: 60_000})
 	}
 	if _, err := s.b.eng.Play(ctx, s.onB.ID, msfp.PlayRequest{Title: "movie/tmdb/949", Purpose: msfp.PurposeDownload,
-		Delivery: msfp.DeliveryRemux, Container: "mp4"}); !errors.Is(err, msfp.ErrInvalidRequest) {
+		Delivery: msfp.DeliveryRemux, MediaType: "video/mp4"}); !errors.Is(err, msfp.ErrInvalidRequest) {
 		t.Errorf("a download as a remux: %v", err)
 	}
 	first, err := download()
@@ -568,9 +576,10 @@ func TestDownloadPace(t *testing.T) {
 	}
 }
 
-// Scans: a range of the file only, within the pairing's scanBytes (32
-// MiB here) per ticket, announced in limits, cut at the cap, then 416; a day's count; the idle rule (MSFP playback section 8,
-// media section 4.2).
+// Scans: a range of the file only, within the pool's scanBytes (32 MiB
+// here) per ticket, stated in the scan's answer, cut at the cap, then
+// 416; a day's count; the idle rule (MSFP playback section 8, media
+// section 4.2).
 func TestScans(t *testing.T) {
 	ctx := context.Background()
 	clock := newClock(time.Now().Unix())
@@ -581,16 +590,19 @@ func TestScans(t *testing.T) {
 	}
 	h.files["file"] = big
 	h.copyOf("movie/tmdb/949", 0).Size = int64(len(big))
-	h.copyOf("movie/tmdb/949", 0).Previews = true
-	h.info["movie/tmdb/949#0"] = msfp.CopyInfo{Trickplay: &msfp.Trickplay{TileWidth: 10, TileHeight: 10, Columns: 2, Rows: 1, IntervalMs: 10_000, TileCount: 3}}
+	h.copyOf("movie/tmdb/949", 0).PreviewLayout = &wire.PreviewLayout{TileWidth: 10, TileHeight: 10, Columns: 2, Rows: 1, IntervalMs: 10_000, TileCount: 3}
 	s := newSharing(t, h, msfp.Config{Clock: clock, NewPairing: &msfp.Limits{Streams: 1, Transcodes: 1, ScansPerDay: 2,
 		ScanBytes: wire.RecommendedScanBytes}}, msfp.Config{Clock: clock})
 	scan, err := s.b.eng.Play(ctx, s.onB.ID, msfp.PlayRequest{Title: "movie/tmdb/949", Purpose: msfp.PurposeScan})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if scan.Delivery != msfp.DeliveryFile || scan.Protocol != "file" || len(scan.SubtitleTracks) != 0 || scan.Trickplay != nil {
+	if scan.Delivery != msfp.DeliveryFile || scan.Protocol != "file" || len(scan.Subtitles) != 0 || scan.Sheets != 0 ||
+		scan.ScanBytes != wire.RecommendedScanBytes {
 		t.Errorf("a scan's playback: %+v", scan)
+	}
+	if strings.Contains(s.a.exchanges("libraries")[0].resBody, "scanBytes") {
+		t.Errorf("scanBytes in limits: %s", s.a.exchanges("libraries")[0].resBody)
 	}
 	if !strings.Contains(s.a.exchanges("play")[0].reqBody, `"purpose":"scan","delivery":"file"`) {
 		t.Errorf("a scan's request: %s", s.a.exchanges("play")[0].reqBody)
@@ -649,12 +661,13 @@ func TestScans(t *testing.T) {
 	}
 }
 
-// lastStreamOf is the stream URL of play answer n of A.
+// lastStreamOf is the stream URL of play answer n of A, built from its
+// ticket.
 func lastStreamOf(t *testing.T, s *sharing, n int) string {
 	t.Helper()
-	var ans struct{ Stream struct{ URL string } }
+	var ans struct{ Ticket, Protocol string }
 	json.Unmarshal([]byte(s.a.exchanges("play")[n].resBody), &ans)
-	return ans.Stream.URL
+	return wire.StreamURL(s.a.srv.URL+"/api/v1/stream/", ans.Ticket, ans.Protocol)
 }
 
 // A music play's queue: its entries prepared under one playback, each at
@@ -663,7 +676,7 @@ func lastStreamOf(t *testing.T, s *sharing, n int) string {
 func TestMusicQueue(t *testing.T) {
 	ctx := context.Background()
 	h := newFakeHost()
-	h.libs = []msfp.Library{{ID: "music", Name: "Music", Kind: "music"}}
+	h.libs = []msfp.Library{{ID: "music", Name: "Music"}}
 	key := func(n string) string { return "track/mb/0c000000-0000-4000-8000-00000000000" + n }
 	for _, n := range []string{"3", "5", "6"} {
 		h.titles[key(n)] = musicTrack(key(n), "c"+n)
@@ -671,20 +684,23 @@ func TestMusicQueue(t *testing.T) {
 	h.protocol, h.queue = "file", true
 	h.files["file"], h.files["queue/0/file"], h.files["queue/2/file"] = []byte("0123456789abcdefghij"), []byte("queue entry zero...."), []byte("queue entry two....!")
 	s := newSharing(t, h, msfp.Config{NewPairing: &msfp.Limits{Streams: 1, Transcodes: 1}}, msfp.Config{})
-	pb, err := s.b.eng.Play(ctx, s.onB.ID, msfp.PlayRequest{Title: key("3"), Delivery: msfp.DeliveryFile, Queue: []string{key("5"), key("7"), key("6")}})
+	pb, err := s.b.eng.Play(ctx, s.onB.ID, msfp.PlayRequest{Title: key("3"), Delivery: msfp.DeliveryFile,
+		Queue: []msfp.QueueEntry{{Title: key("5")}, {Title: key("7")}, {Title: key("6"), Delivery: msfp.DeliveryRemux, MediaType: "audio/mp4"}}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(pb.Queue) != 2 || pb.Queue[0].Place != 0 || pb.Queue[0].Title != key("5") || pb.Queue[1].Place != 2 || pb.Queue[1].DurationMs != 200_000 {
+	if len(pb.Queue) != 2 || pb.Queue[0].Place != 0 || pb.Queue[0].Title != key("5") || pb.Queue[1].Place != 2 || pb.Queue[1].DurationMs != 200_000 ||
+		pb.Queue[0].Protocol != "file" || pb.Queue[1].Protocol != "hls" || pb.Queue[1].Method != "remux" {
 		t.Fatalf("the queue kept: %+v", pb.Queue)
 	}
-	if got := h.started[0].Queue; len(got) != 2 || got[0].Copy != "c5" || got[1].Place != 2 {
+	if got := h.started[0].Queue; len(got) != 2 || got[0].Copy != "c5" || got[1].Place != 2 || got[1].Delivery != msfp.DeliveryRemux ||
+		got[1].MediaType != "audio/mp4" {
 		t.Errorf("the host was asked %+v", got)
 	}
-	if body := s.a.exchanges("play")[0].resBody; !strings.Contains(body, "/queue/0/file") || !strings.Contains(body, "/queue/2/file") {
-		t.Errorf("the queue's URLs: %s", body)
+	if body := s.a.exchanges("play")[0].resBody; strings.Contains(body, "/queue/") || strings.Contains(body, "url") {
+		t.Errorf("an answer with URLs: %s", body)
 	}
-	for entry, want := range map[int]string{0: "0123456789abcdefghij", 1: "queue entry zero....", 3: "queue entry two....!"} {
+	for entry, want := range map[int]string{0: "0123456789abcdefghij", 1: "queue entry zero...."} {
 		var out sink
 		if err := s.b.eng.Fetch(ctx, pb.ID, msfp.MediaPath{Kind: msfp.MediaFile, Entry: entry}, "", &out); err != nil || string(out.body) != want {
 			t.Errorf("entry %d: %v %q", entry, err, out.body)
@@ -713,57 +729,70 @@ func TestMusicQueue(t *testing.T) {
 		t.Errorf("the host's report: %+v", last)
 	}
 	// A queue MSFP refuses.
-	long := []string{key("5"), key("6"), key("7"), key("8"), key("9"), "track/mb/0c000000-0000-4000-8000-000000000010"}
+	var long []msfp.QueueEntry
+	for _, n := range []string{"5", "6", "7", "8", "9", "a"} {
+		long = append(long, msfp.QueueEntry{Title: key(n)})
+	}
 	if _, err := s.b.eng.Play(ctx, s.onB.ID, msfp.PlayRequest{Title: key("3"), Queue: long, Replaces: pb.ID}); !errors.Is(err, msfp.ErrInvalidRequest) {
 		t.Errorf("a queue of 6: %v", err)
 	}
 	var raw json.RawMessage
-	if code, _ := s.b.eng.CallForTest(ctx, s.onB.ID, "play", json.RawMessage(`{"title":"`+key("3")+`","queue":["`+key("3")+`"]}`), &raw); code != 400 {
+	if code, _ := s.b.eng.CallForTest(ctx, s.onB.ID, "play", json.RawMessage(`{"title":"`+key("3")+`","queue":[{"title":"`+key("3")+`"}]}`), &raw); code != 400 {
 		t.Errorf("a queue holding the title: %d", code)
 	}
 }
 
-// previews before a first play, under a ticket of their own that is no
-// playback; lyrics with none (MSFP video section 5.6, music section 6).
+// previews on demand, under a ticket of their own that is no playback,
+// or under a playback's; lyrics with none (MSFP video sections 5.5 and
+// 5.6, music section 6).
 func TestPreviewsAndLyrics(t *testing.T) {
 	ctx := context.Background()
 	h := filmHost()
-	h.libs = []msfp.Library{{ID: "films", Name: "Films", Kind: "movies"}, {ID: "music", Name: "Music", Kind: "music"}}
-	h.copyOf("movie/tmdb/949", 0).Previews = true
-	h.info["movie/tmdb/949#0"] = msfp.CopyInfo{Trickplay: &msfp.Trickplay{TileWidth: 10, TileHeight: 10, Columns: 2, Rows: 1, IntervalMs: 10_000, TileCount: 3}}
+	h.libs = []msfp.Library{{ID: "films", Name: "Films"}, {ID: "music", Name: "Music"}}
+	layout := &wire.PreviewLayout{TileWidth: 10, TileHeight: 10, Columns: 2, Rows: 1, IntervalMs: 10_000, TileCount: 3}
+	h.copyOf("movie/tmdb/949", 0).PreviewLayout = layout
 	sheet := jpegOf(t, 20, 10)
 	h.files["trickplay/0"], h.files["trickplay/1"] = sheet, sheet
 	track := "track/mb/0c000000-0000-4000-8000-000000000003"
 	h.titles[track] = musicTrack(track, "t")
 	h.titles[track].(*msfp.MusicTitle).Copies[0].Lyrics = "synced"
 	zero, later := int64(0), int64(1500)
-	h.lyrics = map[string][]wire.Lyrics{"t": {{Lang: "en", Kind: "main", Synced: true,
+	h.lyrics = map[string][]wire.Lyrics{"t": {{Lang: "en", Kind: "main",
 		Line: []wire.LyricsLine{{Start: &zero, Value: "Hello\u0007"}, {Start: &later, Value: ""}}}}}
 	s := newSharing(t, h, msfp.Config{}, msfp.Config{})
 	titles := s.peerTitles(t)
 	copies := titles["movie/tmdb/949"].(*msfp.VideoTitle).Copies
-	if !copies[0].Previews || copies[1].Previews {
+	if copies[0].PreviewLayout == nil || *copies[0].PreviewLayout != *layout || copies[1].PreviewLayout != nil {
 		t.Fatalf("the copies kept: %+v", copies)
 	}
-	pv, err := s.b.eng.Previews(ctx, s.onB.ID, "movie/tmdb/949", copies[0].ID)
-	if err != nil || pv.Trickplay.Sheets != 2 || len(pv.Sheets) != 2 || pv.Trickplay.TileCount != 3 {
-		t.Fatalf("the previews: %+v %v", pv.Trickplay, err)
+	if len(s.a.exchanges("previews")) != 0 {
+		t.Error("previews fetched before anyone opened the copy")
+	}
+	for n := range 2 {
+		if b, err := s.b.eng.PreviewSheet(ctx, s.onB.ID, "movie/tmdb/949", copies[0].ID, n); err != nil || len(b) == 0 {
+			t.Fatalf("sheet %d: %v", n, err)
+		}
+	}
+	if got := len(s.a.exchanges("previews")); got != 1 {
+		t.Errorf("%d previews calls for one copy", got)
 	}
 	if len(s.a.eng.Playbacks()) != 0 || len(h.started) != 0 {
 		t.Error("previews started a playback")
 	}
-	if _, err := s.b.eng.Previews(ctx, s.onB.ID, "movie/tmdb/949", copies[1].ID); !errors.Is(err, msfp.ErrNotFound) {
+	if _, err := s.b.eng.PreviewSheet(ctx, s.onB.ID, "movie/tmdb/949", copies[0].ID, 2); !errors.Is(err, msfp.ErrNotFound) {
+		t.Errorf("a sheet past the count: %v", err)
+	}
+	if _, err := s.b.eng.PreviewSheet(ctx, s.onB.ID, "movie/tmdb/949", copies[1].ID, 0); !errors.Is(err, msfp.ErrNotFound) {
 		t.Errorf("a copy without previews: %v", err)
 	}
-	// The ticket opens the sheets only, of that copy.
-	var ans struct {
-		Trickplay struct{ Sheets []string }
+	// The ticket opens the sheets only, of that copy; the answer has no
+	// URL.
+	var ans wire.PreviewsAnswer
+	body := s.a.exchanges("previews")[0].resBody
+	if json.Unmarshal([]byte(body), &ans) != nil || ans.ETag != "e0" || strings.Contains(body, "trickplay") {
+		t.Fatalf("the previews answer: %s", body)
 	}
-	json.Unmarshal([]byte(s.a.exchanges("previews")[0].resBody), &ans)
-	if len(ans.Trickplay.Sheets) != 2 {
-		t.Fatalf("the previews answer: %s", s.a.exchanges("previews")[0].resBody)
-	}
-	base := strings.TrimSuffix(ans.Trickplay.Sheets[0], "trickplay/0")
+	base := s.a.srv.URL + "/api/v1/stream/" + ans.Ticket + "/"
 	for name, want := range map[string]int{"trickplay/1": 200, "trickplay/2": 404, "file": 404, "master.m3u8": 404, "image": 404} {
 		if res, _ := get(t, s, http.MethodGet, base+name); res.StatusCode != want {
 			t.Errorf("%s under a previews ticket: %d, want %d", name, res.StatusCode, want)
@@ -788,6 +817,17 @@ func TestPreviewsAndLyrics(t *testing.T) {
 	h.mu.Lock()
 	h.files["trickplay/0"], h.files["trickplay/1"] = sheet, sheet
 	h.mu.Unlock()
+	// During a playback of the copy, its ticket opens the sheets: no
+	// previews call.
+	pb, err := s.b.eng.Play(ctx, s.onB.ID, msfp.PlayRequest{Title: "movie/tmdb/949", VersionID: copies[0].ID})
+	if err != nil || pb.Sheets != 2 {
+		t.Fatalf("a playback with previews: %+v %v", pb, err)
+	}
+	var out sink
+	if err := s.b.eng.Fetch(ctx, pb.ID, msfp.MediaPath{Kind: msfp.MediaSheet, Sheet: 1}, "", &out); err != nil || out.contentType != "image/jpeg" {
+		t.Errorf("a sheet under the playback's ticket: %v", err)
+	}
+	s.b.eng.Stop(ctx, pb.ID, -1)
 	var raw json.RawMessage
 	for body, want := range map[string]int{`{"title":"movie/tmdb/949"}`: 400, `{"title":"series/tmdb/1","versionId":"x"}`: 400,
 		`{"title":"movie/tmdb/949","versionId":"nope"}`: 404, `{"title":"movie/tmdb/949","versionId":"` + copies[1].ID + `"}`: 404} {
@@ -853,12 +893,12 @@ func TestASSAndFonts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	byID := map[string]msfp.Track{}
-	for _, t := range pb.SubtitleTracks {
+	byID := map[string]wire.ServedSubtitle{}
+	for _, t := range pb.Subtitles {
 		byID[t.ID] = t
 	}
-	if s2 := byID["s2"]; !s2.ASS || !s2.Text || s2.Format != "ass" || pb.Fonts != 1 || byID["s1"].Pictures || byID["s3"].Text || len(byID) != 4 {
-		t.Fatalf("the subtitles kept: %+v, %d fonts", pb.SubtitleTracks, pb.Fonts)
+	if s2 := byID["s2"]; !s2.ASS || s2.Form != "text" || pb.Fonts != 1 || byID["s0"].Form != "text" || len(byID) != 2 {
+		t.Fatalf("the subtitles served apart: %+v, %d fonts", pb.Subtitles, pb.Fonts)
 	}
 	fetch := func(p msfp.MediaPath) (sink, error) {
 		var out sink

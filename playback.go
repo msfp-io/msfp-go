@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"errors"
 	"slices"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -78,11 +77,13 @@ type endedPlay struct {
 type subtitleServed struct{ text, ass, pictures bool }
 
 // entryServed is a stream of a playback: its own (entry 0) or a queue
-// entry's: how it is served, and for a file its exact size and etag.
+// entry's: how it is served, and for a file its exact size, etag and
+// media type (the copy's, from the catalog).
 type entryServed struct {
-	protocol string
-	size     int64
-	etag     string
+	protocol  string
+	size      int64
+	etag      string
+	mediaType string
 }
 
 // playback is a peer's live playback here. Its fields are set once it
@@ -118,6 +119,8 @@ type playback struct {
 	fontBytes               map[int]int       // the fonts served, by index: 64 MiB in all
 	playlists               map[string][]byte // served, by entry/name: served the same again
 	playlistBytes           int
+	names                   map[string]bool // entry/name: the names its playlists gave
+	facts                   servedFacts     // its own stream's, for its master playlist
 }
 
 // countSlot is what a play counted in a pool (Admit): a stream, and when
@@ -314,32 +317,15 @@ func (e *Engine) versionID(peer, handle string) string {
 
 // offeredCopy is a copy of a title as the catalog sends it to a peer
 // (cleaned, in the host's order of preference, its ID the version ID),
-// with the host's handle of it; copy is it whole, as the choice hooks
-// see it (a track's as a copy of one audio stream).
+// with the host's handle of it; copy is it whole (a track's as a copy
+// with no video, its one audio track a0).
 type offeredCopy struct {
-	handle     string
-	copy       wire.Copy
-	id, name   string
-	etag       string
-	size       int64
-	parts      int
-	bitrate    int
-	durationMs int64
-	startMs    *int64
-	previews   bool
-	lyrics     string
-	audio      []wire.CopyAudio
-	subtitles  []wire.CopySubtitle
+	handle string
+	copy   wire.Copy
+	lyrics string
 }
 
-// playCopy is what wire's choices need of it.
-func (c offeredCopy) playCopy() wire.PlayCopy {
-	pc := wire.PlayCopy{ID: c.id, Parts: c.parts, BitrateKbps: c.bitrate, Audio: c.audio}
-	for _, s := range c.subtitles {
-		pc.Subtitles = append(pc.Subtitles, s.ID)
-	}
-	return pc
-}
+func (c offeredCopy) id() string { return c.copy.ID }
 
 // offeredCopies are the copies of exactly that title the peer may play
 // here, as the catalog sends them to it (MSFP playback section 2.2, step
@@ -375,9 +361,7 @@ func (e *Engine) offeredCopies(ctx context.Context, p *PeerRecord, key string) (
 			return nil, nil, nil
 		}
 		for _, c := range v.Copies {
-			out = append(out, offeredCopy{handle: handles[c.ID], copy: c, id: c.ID, name: c.Name, etag: c.ETag, size: c.Size,
-				parts: max(len(c.Parts), 1), bitrate: int(c.BitrateKbps), durationMs: c.DurationMs, startMs: c.StartMs,
-				previews: c.Previews, audio: c.AudioTracks, subtitles: c.SubtitleTracks})
+			out = append(out, offeredCopy{handle: handles[c.ID], copy: c})
 		}
 	case *MusicTitle:
 		for _, c := range t.Copies {
@@ -388,12 +372,7 @@ func (e *Engine) offeredCopies(ctx context.Context, p *PeerRecord, key string) (
 			return nil, nil, nil
 		}
 		for _, c := range m.Copies {
-			audio := []wire.CopyAudio{{ID: "a0", Channels: c.Channels, Default: true, Codec: c.Codec, Codecs: c.Codecs,
-				SampleRate: c.SampleRate, BitDepth: c.BitDepth}}
-			whole := wire.Copy{ID: c.ID, Name: c.Name, DurationMs: c.DurationMs, Container: c.Container, Size: c.Size,
-				ETag: c.Etag, BitrateKbps: int64(c.BitrateKbps), AudioTracks: audio, Added: c.Added}
-			out = append(out, offeredCopy{handle: handles[c.ID], copy: whole, id: c.ID, name: c.Name, etag: c.Etag, size: c.Size,
-				parts: 1, bitrate: c.BitrateKbps, durationMs: c.DurationMs, lyrics: c.Lyrics, audio: audio})
+			out = append(out, offeredCopy{handle: handles[c.ID], copy: c.AsCopy(), lyrics: c.Lyrics})
 		}
 	}
 	out = slices.DeleteFunc(out, func(c offeredCopy) bool { return c.handle == "" })
@@ -423,150 +402,38 @@ func (e *Engine) senderFor(ctx context.Context, p *PeerRecord, libs []string) (*
 	return &sender{e: e, ctx: ctx, p: p, libs: libs, local: localOffered(p), pub: pub, parents: map[string]string{}}, nil
 }
 
-// sameLanguage says whether a tag matches the one asked: exactly
-// (compared without case) when exact, else by base language.
-func sameLanguage(tag, asked string, exact bool) bool {
-	if tag == "" || asked == "" {
-		return false
-	}
-	if exact {
-		return strings.EqualFold(tag, asked)
-	}
-	base := func(s string) string { b, _, _ := strings.Cut(s, "-"); return strings.ToLower(b) }
-	return base(tag) == base(asked)
-}
-
-// chooseSubtitles picks the subtitles shown (MSFP video section 5.4):
-// none for "off"; the track asked, if the copy has it; else the first in
-// the language (same tag then same base language, forced ones last);
-// else none.
-func chooseSubtitles(tracks []wire.CopySubtitle, id, language string) string {
-	if id == "off" {
-		return ""
-	}
-	if slices.ContainsFunc(tracks, func(t wire.CopySubtitle) bool { return t.ID == id }) {
-		return id
-	}
-	for _, forced := range []bool{false, true} {
-		for _, exact := range []bool{true, false} {
-			for _, t := range tracks {
-				if t.Forced == forced && sameLanguage(t.Language, language, exact) {
-					return t.ID
-				}
-			}
-		}
-	}
-	return ""
-}
-
-// forcedFor is the forced subtitle track in the language of the audio
-// played, when the copy has one (MSFP video section 5.4).
-func forcedFor(tracks []wire.CopySubtitle, audio string) string {
-	for _, exact := range []bool{true, false} {
-		for _, t := range tracks {
-			if t.Forced && sameLanguage(t.Language, audio, exact) {
-				return t.ID
-			}
-		}
-	}
-	return ""
-}
-
-// How each subtitle format, ffmpeg's codec_name, is served apart (MSFP
-// video section 5.4): text as WebVTT, ASS and SSA as ASS too, pictures
-// (PGS as it is, DVD and DVB subtitles converted) as PGS. A format not
-// listed here is the host's: served apart only when it is, never by the
-// engine's guess.
-var (
-	textFormats    = []string{"subrip", "webvtt", "mov_text", "ttml", "ass", "ssa"}
-	assFormats     = []string{"ass", "ssa"}
-	pictureFormats = []string{"hdmv_pgs_subtitle", "dvd_subtitle", "dvb_subtitle"}
-)
-
-// servedAs is how a subtitle track of format is served apart, unless the
-// host says it can't.
-func servedAs(format string, notApart bool) subtitleServed {
+// servedAs is how a subtitle track of format is served apart (MSFP
+// video section 5.3): the form video section 5.4's table gives a listed
+// format, else the one the host says (form), else none; none either
+// when the host says it can't.
+func servedAs(format, form string, notApart bool) subtitleServed {
 	if notApart {
 		return subtitleServed{}
 	}
-	return subtitleServed{text: slices.Contains(textFormats, format), ass: slices.Contains(assFormats, format),
-		pictures: slices.Contains(pictureFormats, format)}
+	if s, listed := wire.ServedForms[format]; listed {
+		return subtitleServed{text: s.Form == wire.FormText, ass: s.ASS, pictures: s.Form == wire.FormPicture}
+	}
+	return subtitleServed{text: form == wire.FormText, pictures: form == wire.FormPicture}
 }
 
 // playAnswer is play's answer (MSFP playback section 2.3, video section
-// 5.3, music section 5.2).
+// 5.3, music section 5.2): no URL, the viewer's server builds them from
+// the ticket.
 type playAnswer struct {
-	ID              string           `json:"id"`
-	Method          string           `json:"method"`
-	Stream          streamWire       `json:"stream"`
-	Etag            string           `json:"etag"`
-	PositionMs      int64            `json:"positionMs"`
-	DurationMs      int64            `json:"durationMs,omitempty"`
-	VersionID       string           `json:"versionId,omitempty"`
-	AudioTracks     []wire.CopyAudio `json:"audioTracks,omitempty"`
-	AudioTrack      string           `json:"audioTrack,omitempty"`
-	AudioRenditions *bool            `json:"audioRenditions,omitempty"`
-	MaxBitrateKbps  int              `json:"maxBitrateKbps,omitempty"`
-	SubtitleTracks  []subtitleWire   `json:"subtitleTracks,omitempty"`
-	SubtitleTrack   string           `json:"subtitleTrack,omitempty"`
-	BurnedTrack     string           `json:"burnedTrack,omitempty"`
-	ForcedTracks    []subtitleWire   `json:"forcedTracks,omitempty"`
-	ForcedTrack     string           `json:"forcedTrack,omitempty"`
-	Fonts           []string         `json:"fonts,omitempty"`
-	Trickplay       *trickplayWire   `json:"trickplay,omitempty"`
-	Queue           []queueWire      `json:"queue,omitempty"`
-}
-
-type streamWire struct {
-	URL      string `json:"url"`
-	Protocol string `json:"protocol"`
-	MimeType string `json:"mimeType,omitempty"`
-}
-
-type subtitleWire struct {
-	wire.CopySubtitle
-	URL    string `json:"url,omitempty"`
-	AssURL string `json:"assUrl,omitempty"`
-}
-
-type queueWire struct {
-	Title      string     `json:"title"`
-	VersionID  string     `json:"versionId"`
-	Method     string     `json:"method"`
-	Stream     streamWire `json:"stream"`
-	DurationMs int64      `json:"durationMs,omitempty"`
-}
-
-type trickplayWire struct {
-	TileWidth  int      `json:"tileWidth"`
-	TileHeight int      `json:"tileHeight"`
-	Columns    int      `json:"columns"`
-	Rows       int      `json:"rows"`
-	IntervalMs int      `json:"intervalMs"`
-	TileCount  int      `json:"tileCount"`
-	Sheets     []string `json:"sheets"`
-}
-
-// trickplayOf is a copy's previews' layout, in MSFP's bounds; false
-// without, or out of them.
-func trickplayOf(tp *Trickplay) (wire.Trickplay, bool) {
-	if tp == nil {
-		return wire.Trickplay{}, false
-	}
-	t := wire.Trickplay{TileWidth: tp.TileWidth, TileHeight: tp.TileHeight, Columns: tp.Columns, Rows: tp.Rows,
-		IntervalMs: tp.IntervalMs, TileCount: tp.TileCount}
-	t.Sheets = t.SheetCount()
-	return t, t.InBounds()
-}
-
-// sheetsWire is the trickplay object of a layout, its sheets under base.
-func sheetsWire(t wire.Trickplay, base string) *trickplayWire {
-	w := &trickplayWire{TileWidth: t.TileWidth, TileHeight: t.TileHeight, Columns: t.Columns, Rows: t.Rows,
-		IntervalMs: t.IntervalMs, TileCount: t.TileCount, Sheets: []string{}}
-	for n := range t.Sheets {
-		w.Sheets = append(w.Sheets, wire.SheetURL(base, n))
-	}
-	return w
+	ID              string                `json:"id"`
+	Ticket          string                `json:"ticket"`
+	Protocol        string                `json:"protocol"`
+	Method          string                `json:"method"`
+	Etag            string                `json:"etag"`
+	PositionMs      int64                 `json:"positionMs"`
+	VersionID       string                `json:"versionId"`
+	AudioTrack      string                `json:"audioTrack,omitempty"`
+	AudioRenditions *bool                 `json:"audioRenditions,omitempty"`
+	MaxBitrateKbps  int                   `json:"maxBitrateKbps,omitempty"`
+	ScanBytes       int64                 `json:"scanBytes,omitempty"`
+	Subtitles       []wire.ServedSubtitle `json:"subtitles,omitempty"`
+	FontCount       int                   `json:"fontCount,omitempty"`
+	Queue           []wire.QueueEntry     `json:"queue,omitempty"`
 }
 
 // refusalOf is a wire refusal of play, progress or stop as answered.
@@ -608,23 +475,20 @@ func (e *Engine) play(req *request) response {
 	}
 	k, _ := wire.ParseKey(in.Title)
 	video, audioOnly := k.Part == wire.PartVideo, k.Part == wire.PartMusic
-	var queue []string
+	var queue []wire.QueueAsk
 	if audioOnly {
 		var q struct {
 			Queue json.RawMessage `json:"queue"`
 		}
 		_ = json.Unmarshal(req.body, &q)
 		if queue, err = wire.CheckQueue(in.Title, q.Queue); err != nil {
-			return refuse(probInvalid)
+			return refusalOf(err)
 		}
 	}
-	if !video {
+	if !video && in.Transcode != nil {
 		// Members of another content part are ignored (playback section
 		// 2.4).
-		in.SubtitleLanguage, in.SubtitleTrack = "", ""
-		if in.Transcode != nil {
-			in.Transcode.BurnSubtitle = ""
-		}
+		in.Transcode.BurnSubtitle = ""
 	}
 	// 2. No room at all for this purpose in any of the link's pools.
 	if _, open := e.poolRoom(p, in.Purpose, audioOnly); !open {
@@ -643,87 +507,105 @@ func (e *Engine) play(req *request) response {
 	if len(copies) == 0 {
 		return refuse(probNotFound)
 	}
-	// 4. The copy (versionId wins; else the host's choice, by default
-	// the recommended one), then malformed track IDs refused.
+	// 4. The copy (the one versionId names, else the first, the host's
+	// preferred), then malformed track IDs refused; the audio (the one
+	// audioTrack names, else the file's default).
 	whole := make([]wire.Copy, len(copies))
 	for i, c := range copies {
 		whole[i] = c.copy
 	}
-	chosen := copies[e.chosenCopy(whole, in)]
+	chosen := copies[wire.PickCopy(whole, in.VersionID)]
 	if !in.TrackIDsOK() {
 		return refuse(probInvalid)
 	}
+	audio := wire.DefaultAudio(chosen.copy.AudioTracks, in.AudioTrack)
 	// 5. The purpose's limits all in use: refused before any work (the
 	// count that matters is Admit's).
 	if room, _ := e.poolRoom(p, in.Purpose, audioOnly); !room {
 		return refuse(probStreamLimit)
 	}
 	// 6 and 7. The bitrate cap (0: none), and the deliveries MSFP itself
-	// refuses: a delivery, a container or a codec not made here among
-	// them.
+	// refuses, or what is served: the baseline's streams left unchanged
+	// when within it, the targets left out the baseline's.
 	kbps := in.BitrateCap(e.cfg.MaxBitrateKbps, generous(p).BitrateKbps)
-	if err := wire.RefuseDelivery(in, chosen.playCopy(), kbps, video, e.cfg.Encoders); err != nil {
+	served, err := wire.Serve(in, chosen.copy, audio, kbps, e.cfg.Encoders)
+	if err != nil {
 		return refusalOf(err)
 	}
 	if in.Delivery == wire.DeliveryTranscode {
-		// The targets left out take the baseline's values (playback
-		// section 2.7).
-		var t wire.TranscodeTargets
-		if in.Transcode != nil {
-			t = *in.Transcode
-		}
-		t = t.WithBaseline(video)
-		in.Transcode = &t
+		in.Transcode = served.Transcode
 	}
 	info, err := e.cfg.Playback.Describe(ctx, chosen.handle)
 	if err != nil {
 		return e.hostRefusal(err, "describe")
 	}
-	audio, shown := e.chosenTracks(chosen.copy, in)
-	forced, burned := "", ""
-	if !video {
-		shown = ""
-	} else {
-		audioLang := ""
-		if i := slices.IndexFunc(chosen.audio, func(a wire.CopyAudio) bool { return a.ID == audio }); i >= 0 {
-			audioLang = chosen.audio[i].Language
-		}
-		forced = forcedFor(chosen.subtitles, audioLang)
-		if in.Transcode != nil && in.Transcode.BurnSubtitle != "" {
-			shown, burned = in.Transcode.BurnSubtitle, in.Transcode.BurnSubtitle
-		}
-	}
 	start := in.StartPositionMs
 	if in.Purpose != wire.PurposePlay {
 		start = 0
-	} else if start == 0 && video && chosen.startMs != nil {
-		start = *chosen.startMs
+	} else if start == 0 && video && chosen.copy.StartMs != nil {
+		start = *chosen.copy.StartMs
 	}
-	// The queue: each entry's first copy; one not offered keeps its place
-	// empty (MSFP music section 5.2).
+	// The queue: each entry's copy (the one it names, else its first) and
+	// its own delivery, else the request's; one not offered, of no such
+	// copy, or that can't be served so keeps its place empty (MSFP music
+	// section 5.2). A codec not made refuses the request.
 	var queued []QueuedCopy
 	queueCopies := map[int]offeredCopy{}
-	for n, key := range queue {
-		qc, _, err := e.offeredCopies(ctx, p, key)
+	queueTranscodes := false
+	for n, ask := range queue {
+		er, err := ask.Request(in)
+		if err != nil {
+			return refusalOf(err)
+		}
+		if er.Transcode != nil {
+			if err := e.cfg.Encoders.CheckCodecs(*er.Transcode, false); err != nil {
+				return refusalOf(err)
+			}
+		}
+		qc, _, err := e.offeredCopies(ctx, p, ask.Title)
 		if err != nil {
 			return refuse(probInternal)
 		}
-		if len(qc) > 0 {
-			queued = append(queued, QueuedCopy{Place: n, Title: key, Copy: qc[0].handle})
-			queueCopies[n] = qc[0]
+		i := slices.IndexFunc(qc, func(c offeredCopy) bool { return c.id() == ask.VersionID })
+		if ask.VersionID == "" && len(qc) > 0 {
+			i = 0
 		}
+		if i < 0 {
+			continue
+		}
+		c := qc[i]
+		s, err := wire.Serve(er, c.copy, wire.DefaultAudio(c.copy.AudioTracks, ""), kbps, e.cfg.Encoders)
+		if err != nil {
+			continue
+		}
+		queueTranscodes = queueTranscodes || s.Transcodes
+		queued = append(queued, QueuedCopy{Place: n, Title: ask.Title, Copy: c.handle, Delivery: er.Delivery,
+			MediaType: er.MediaType, Transcode: s.Transcode, Served: s})
+		queueCopies[n] = c
+	}
+	// counted is the method admitted: a transcode whose video and audio
+	// are both copied takes no transcode; a queue with a track converted
+	// takes one (MSFP playback section 2.6, music section 5.2).
+	counted := func(method string) string {
+		switch {
+		case method == "transcode" && in.Delivery == wire.DeliveryTranscode && !served.Transcodes && !queueTranscodes:
+			return "remux"
+		case method != "transcode" && queueTranscodes:
+			return "transcode"
+		}
+		return method
 	}
 	// 8. The host starts it, admitted by the pool's limits first.
 	var slot *countSlot
 	sr := StartRequest{Copy: chosen.handle, Title: in.Title, AudioOnly: audioOnly, Purpose: in.Purpose, Delivery: in.Delivery,
-		Container: in.Container, Transcode: in.Transcode, AudioRenditions: in.AudioRenditions, Parts: chosen.parts,
-		Peer: PeerRef{ID: p.ID, Name: p.Name}, AudioTrack: audio, SubtitleTrack: shown, StartMs: start, MaxBitrateKbps: kbps,
-		Queue: queued,
+		MediaType: in.MediaType, Transcode: in.Transcode, Served: served, AudioRenditions: in.AudioRenditions,
+		Parts: chosen.copy.FileCount(), Peer: PeerRef{ID: p.ID, Name: p.Name}, AudioTrack: audio, StartMs: start,
+		MaxBitrateKbps: kbps, Queue: queued,
 		Admit: func(method string) (Slot, error) {
 			if slot != nil {
 				return nil, ErrInternal.with(errors.New("admit called twice"))
 			}
-			s, err := e.admitPools(p, in.Purpose, audioOnly, method)
+			s, err := e.admitPools(p, in.Purpose, audioOnly, counted(method))
 			if err != nil {
 				return nil, err
 			}
@@ -737,7 +619,7 @@ func (e *Engine) play(req *request) response {
 		}
 		return e.hostRefusal(err, "start")
 	}
-	if why := startedBreaks(in, chosen, started, queueCopies); why != "" {
+	if why := startedBreaks(in, chosen, started, queued); why != "" {
 		e.log.Warn("msfp: the host started a playback MSFP doesn't allow; it is stopped", "why", why)
 		if slot != nil {
 			slot.Release()
@@ -748,12 +630,12 @@ func (e *Engine) play(req *request) response {
 	if slot == nil {
 		// A host that didn't ask: admitted now, its playback stopped when
 		// the limits refuse it.
-		if slot, err = e.admitPools(p, in.Purpose, audioOnly, started.Method); err != nil {
+		if slot, err = e.admitPools(p, in.Purpose, audioOnly, counted(started.Method)); err != nil {
 			e.hostStop(started.Handle, EndStopped)
 			return e.hostRefusal(err, "admit")
 		}
 	}
-	pb, ticket := e.register(p, in, queue, libs, chosen, info, started, slot, queueCopies, audioOnly)
+	pb, ticket := e.register(p, in, queue, libs, chosen, info, audio, served, started, slot, queueCopies, audioOnly)
 	if pb == nil {
 		return refuse(probInternal)
 	}
@@ -770,12 +652,11 @@ func (e *Engine) play(req *request) response {
 		e.endPlayback(pb, EndNotOffered)
 		return refuse(probNotFound)
 	}
-	// 9. The answer.
-	root := e.streamBase(req)
-	base := root + ticket + "/"
-	out := playAnswer{ID: pb.id, Method: started.Method, Etag: chosen.etag, PositionMs: started.PositionMs,
-		VersionID: chosen.id, AudioTrack: audio, AudioTracks: chosen.audio}
-	if in.AudioRenditions && started.Protocol == "hls" {
+	// 9. The answer: the ticket, and what the catalog can't know (MSFP
+	// playback section 2.3); the viewer's server builds every URL.
+	out := playAnswer{ID: pb.id, Ticket: ticket, Protocol: started.Protocol, Method: started.Method, Etag: chosen.copy.ETag,
+		PositionMs: started.PositionMs, VersionID: chosen.id(), AudioTrack: audio}
+	if in.AudioRenditions && started.Protocol == wire.ProtocolHLS {
 		// Asked for, never refused: the answer says whether the host made
 		// them (MSFP playback section 2.3), false when it made none.
 		made := started.AudioRenditions
@@ -784,54 +665,24 @@ func (e *Engine) play(req *request) response {
 	if in.Purpose == wire.PurposePlay {
 		out.MaxBitrateKbps = kbps
 	}
-	if chosen.durationMs > 0 && chosen.durationMs <= wire.MaxPositionMs {
-		out.DurationMs = chosen.durationMs
+	if in.Purpose == wire.PurposeScan {
+		out.ScanBytes = pb.scanCap
 	}
-	out.Stream = streamWire{URL: base + "file", Protocol: "file", MimeType: wire.RelayedMediaType(started.MimeType)}
-	if started.Protocol == "hls" {
-		out.Stream = streamWire{URL: base + "master.m3u8", Protocol: "hls", MimeType: wire.HLSType}
-	}
-	if video && in.Purpose != wire.PurposeScan {
-		for _, t := range chosen.subtitles {
-			w := subtitleWire{CopySubtitle: t}
-			how := pb.subtitles[t.ID]
-			if how.text || how.pictures {
-				w.URL = wire.SubtitleURL(base, t.ID, how.pictures)
+	for _, t := range chosen.copy.SubtitleTracks {
+		if how, ok := pb.subtitles[t.ID]; ok && (how.text || how.pictures) {
+			s := wire.ServedSubtitle{ID: t.ID, Form: wire.FormText, ASS: how.ass}
+			if how.pictures {
+				s.Form, s.ASS = wire.FormPicture, false
 			}
-			if how.ass {
-				w.AssURL = base + "ass/" + t.ID
-			}
-			out.SubtitleTracks = append(out.SubtitleTracks, w)
-			if t.Forced {
-				out.ForcedTracks = append(out.ForcedTracks, w)
-			}
-		}
-		out.SubtitleTrack, out.ForcedTrack, out.BurnedTrack = shown, forced, burned
-		for n := range pb.fonts {
-			out.Fonts = append(out.Fonts, base+"fonts/"+strconv.Itoa(n))
-		}
-		if pb.sheets > 0 {
-			t, _ := trickplayOf(info.Trickplay)
-			out.Trickplay = sheetsWire(t, base)
+			out.Subtitles = append(out.Subtitles, s)
 		}
 	}
+	out.FontCount = pb.fonts
 	for _, q := range started.Queue {
-		qc := queueCopies[q.Place]
-		entry := queueWire{Title: queue[q.Place], VersionID: qc.id, Method: q.Method,
-			Stream: streamWire{URL: wire.QueueURL(root, ticket, q.Place, q.Protocol), Protocol: q.Protocol}}
-		if q.Protocol == "hls" {
-			entry.Stream.MimeType = wire.HLSType
-		} else {
-			entry.Stream.MimeType = wire.RelayedMediaType(q.MimeType)
-		}
-		if qc.durationMs > 0 && qc.durationMs <= wire.MaxMusicDurationMs {
-			entry.DurationMs = qc.durationMs
-		}
-		out.Queue = append(out.Queue, entry)
+		out.Queue = append(out.Queue, wire.QueueEntry{Title: queue[q.Place].Title, VersionID: queueCopies[q.Place].id(),
+			Method: q.Method, Protocol: q.Protocol, At: q.Place})
 	}
-	slices.SortFunc(out.Queue, func(a, b queueWire) int {
-		return slices.Index(queue, a.Title) - slices.Index(queue, b.Title)
-	})
+	slices.SortFunc(out.Queue, func(a, b wire.QueueEntry) int { return a.At - b.At })
 	e.log.Info("msfp: a peer's playback started", "peer", p.ID, "playback", pb.id, "method", started.Method, "purpose", in.Purpose)
 	e.notify(PlaybackStarted{Peer: p.ID, Name: p.Name, Playback: pb.id, Title: pb.title, Method: pb.method, Purpose: pb.purpose})
 	return answer(out)
@@ -855,15 +706,15 @@ var methodOf = map[string]string{wire.DeliveryFile: "direct", wire.DeliveryRemux
 // baseline without delivery are hls),
 // file of a copy of several parts, file played otherwise than direct; a
 // queue entry of a place not asked, twice, or served against the same
-// rules.
-func startedBreaks(in wire.PlayRequest, c offeredCopy, s Started, asked map[int]offeredCopy) string {
-	check := func(method, protocol string, parts int) string {
+// rules for its own delivery.
+func startedBreaks(in wire.PlayRequest, c offeredCopy, s Started, asked []QueuedCopy) string {
+	check := func(delivery, method, protocol string, parts int) string {
 		switch {
 		case method != "direct" && method != "remux" && method != "transcode" || protocol != "hls" && protocol != "file":
 			return "a method or protocol MSFP doesn't have"
-		case in.Delivery != "" && method != methodOf[in.Delivery]:
+		case delivery != "" && method != methodOf[delivery]:
 			return "another method than the delivery asked"
-		case in.Delivery == wire.DeliveryFile && protocol != "file" || in.Delivery != wire.DeliveryFile && protocol == "file":
+		case delivery == wire.DeliveryFile && protocol != "file" || delivery != wire.DeliveryFile && protocol == "file":
 			return "another protocol than the delivery asked"
 		case protocol == "file" && method != "direct":
 			return "a file that isn't played as it is"
@@ -872,16 +723,17 @@ func startedBreaks(in wire.PlayRequest, c offeredCopy, s Started, asked map[int]
 		}
 		return ""
 	}
-	if why := check(s.Method, s.Protocol, c.parts); why != "" {
+	if why := check(in.Delivery, s.Method, s.Protocol, c.copy.FileCount()); why != "" {
 		return why
 	}
 	seen := map[int]bool{}
 	for _, q := range s.Queue {
-		if _, ok := asked[q.Place]; !ok || seen[q.Place] {
+		i := slices.IndexFunc(asked, func(a QueuedCopy) bool { return a.Place == q.Place })
+		if i < 0 || seen[q.Place] {
 			return "a queue entry of no place asked"
 		}
 		seen[q.Place] = true
-		if why := check(q.Method, q.Protocol, 1); why != "" {
+		if why := check(asked[i].Delivery, q.Method, q.Protocol, 1); why != "" {
 			return "a queue entry: " + why
 		}
 	}
@@ -890,9 +742,10 @@ func startedBreaks(in wire.PlayRequest, c offeredCopy, s Started, asked map[int]
 
 // register makes a started playback live: its ID and its ticket, 128
 // bits and 256 bits of randomness, the ticket kept by its hash only
-// (MSFP media section 1). It gives the ticket's text, for the URLs only.
-func (e *Engine) register(p *PeerRecord, in wire.PlayRequest, queue, libs []string, c offeredCopy, info CopyInfo, s Started,
-	slot *countSlot, queueCopies map[int]offeredCopy, audioOnly bool) (*playback, string) {
+// (MSFP media section 1). It gives the ticket's text, for the answer
+// only.
+func (e *Engine) register(p *PeerRecord, in wire.PlayRequest, queue []wire.QueueAsk, libs []string, c offeredCopy, info CopyInfo,
+	audio string, served wire.Served, s Started, slot *countSlot, queueCopies map[int]offeredCopy, audioOnly bool) (*playback, string) {
 	fail := func() (*playback, string) {
 		slot.Release()
 		e.hostStop(s.Handle, EndStopped)
@@ -908,29 +761,40 @@ func (e *Engine) register(p *PeerRecord, in wire.PlayRequest, queue, libs []stri
 	}
 	ticket := wire.Encode64(ticketBytes)
 	now := e.now()
-	pb := &playback{id: "play_" + lowerBase32.EncodeToString(idBytes), peer: p.ID, peerName: p.Name, title: in.Title, queue: queue,
+	var titles []string
+	for _, q := range queue {
+		titles = append(titles, q.Title)
+	}
+	pb := &playback{id: "play_" + lowerBase32.EncodeToString(idBytes), peer: p.ID, peerName: p.Name, title: in.Title, queue: titles,
 		libraries: libs, handle: s.Handle, method: s.Method, purpose: in.Purpose, audioOnly: audioOnly,
 		ticket: sha256.Sum256([]byte(ticket)), started: now, used: now, slot: slot, audio: map[string]bool{},
-		subtitles: map[string]subtitleServed{}, entries: map[int]entryServed{0: {protocol: s.Protocol, size: c.size, etag: c.etag}}}
+		subtitles: map[string]subtitleServed{}, entries: map[int]entryServed{0: {protocol: s.Protocol, size: c.copy.Size,
+			etag: c.copy.ETag, mediaType: c.copy.MediaType}}}
+	pb.facts = servedFacts{copy: c.copy, audio: audio, served: served}
 	if in.Purpose == wire.PurposeScan {
-		pb.scanCap = wire.Limits{ScanBytes: slot.limits.ScanBytes}.ScanCap()
+		pb.scanCap = wire.ScanCap(int64(slot.limits.ScanBytes))
 	}
 	if in.Purpose == wire.PurposeDownload && slot.limits.DownloadKbps > 0 {
 		pb.pace = newPacer(slot.limits.DownloadKbps, e.cfg.Clock)
 	}
 	if !audioOnly {
-		for _, a := range c.audio {
+		for _, a := range c.copy.AudioTracks {
 			pb.audio[a.ID] = true
 		}
 	}
 	if !audioOnly && in.Purpose != wire.PurposeScan {
-		if t, ok := trickplayOf(info.Trickplay); ok && c.previews && in.Purpose == wire.PurposePlay {
-			pb.sheets, pb.sheetWidth, pb.sheetHeight = t.Sheets, t.Columns*t.TileWidth, t.Rows*t.TileHeight
+		// A playback's ticket opens its copy's sheets (video section 5.5);
+		// a download's opens none.
+		if t := c.copy.PreviewLayout; t != nil && in.Purpose == wire.PurposePlay {
+			pb.sheets, pb.sheetWidth, pb.sheetHeight = t.SheetCount(), t.Columns*t.TileWidth, t.Rows*t.TileHeight
 		}
 		hasASS := false
-		for _, t := range c.subtitles {
-			pb.subtitles[t.ID] = servedAs(t.Format, slices.Contains(info.NotApart, t.ID))
-			hasASS = hasASS || slices.Contains(assFormats, t.Format)
+		for _, t := range c.copy.SubtitleTracks {
+			how := servedAs(t.Format, info.Forms[t.ID], slices.Contains(info.NotApart, t.ID))
+			if how.text || how.pictures {
+				pb.subtitles[t.ID] = how
+			}
+			hasASS = hasASS || how.ass
 		}
 		if hasASS && info.Fonts > 0 && info.Fonts <= wire.MaxFonts {
 			pb.fonts = info.Fonts
@@ -938,7 +802,7 @@ func (e *Engine) register(p *PeerRecord, in wire.PlayRequest, queue, libs []stri
 	}
 	for _, q := range s.Queue {
 		qc := queueCopies[q.Place]
-		pb.entries[q.Place+1] = entryServed{protocol: q.Protocol, size: qc.size, etag: qc.etag}
+		pb.entries[q.Place+1] = entryServed{protocol: q.Protocol, size: qc.copy.Size, etag: qc.copy.ETag, mediaType: qc.copy.MediaType}
 	}
 	pb.ctx, pb.cancel = context.WithCancel(context.Background())
 	ps := &e.plays
@@ -1174,7 +1038,7 @@ func (e *Engine) report(req *request, call string) response {
 		if kept != nil {
 			e.keepDownload(req.r.Context(), *kept)
 		}
-		hr := Report{Handle: handle, Title: out.Title, PositionMs: out.PositionMs, HasPosition: out.HasPosition, Paused: r.Paused,
+		hr := Report{Handle: handle, Title: out.Title, PositionMs: out.PositionMs, HasPosition: out.HasPosition,
 			At: out.At, Stop: call == wire.CallStop, Late: pb == nil}
 		if err := e.cfg.Playback.Progress(req.r.Context(), hr); err != nil {
 			e.log.Info("msfp: the host's Progress failed", "error", err)

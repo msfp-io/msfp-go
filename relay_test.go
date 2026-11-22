@@ -64,6 +64,13 @@ func (s *hostile) play(t *testing.T) msfp.RemotePlayback {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The playlists first: the owning server serves only the names they
+	// give (MSFP media section 1).
+	for _, p := range []msfp.MediaPath{{Kind: msfp.MediaMaster}, {Kind: msfp.MediaPlaylist, Name: "v0.m3u8"}} {
+		if err := s.b.eng.Fetch(context.Background(), pb.ID, p, "", &sink{}); err != nil {
+			t.Fatal(err)
+		}
+	}
 	return pb
 }
 
@@ -71,15 +78,14 @@ func TestRelayHostilePeer(t *testing.T) {
 	ctx := context.Background()
 	h := filmHost()
 	sheet := jpegOf(t, 20, 10)
-	h.copyOf("movie/tmdb/949", 0).Previews = true
-	h.info["movie/tmdb/949#0"] = msfp.CopyInfo{
-		Trickplay: &msfp.Trickplay{TileWidth: 10, TileHeight: 10, Columns: 2, Rows: 1, IntervalMs: 10_000, TileCount: 3}}
+	h.copyOf("movie/tmdb/949", 0).PreviewLayout = &wire.PreviewLayout{TileWidth: 10, TileHeight: 10, Columns: 2, Rows: 1,
+		IntervalMs: 10_000, TileCount: 3}
 	h.files["pictures/s1/0"] = nil
 	h.files["trickplay/0"], h.files["trickplay/1"] = sheet, sheet
 	s := newHostile(t, h)
 	pb := s.play(t)
-	if pb.Trickplay == nil || pb.Trickplay.Sheets != 2 {
-		t.Fatalf("previews: %+v", pb.Trickplay)
+	if pb.Sheets != 2 {
+		t.Fatalf("previews: %+v", pb)
 	}
 	fetch := func(p msfp.MediaPath, rng string) (sink, error) {
 		var out sink
@@ -198,20 +204,13 @@ func TestHostilePlayAnswers(t *testing.T) {
 		})
 	}
 	for name, f := range map[string]func(m map[string]any){
-		"a stream elsewhere": func(m map[string]any) {
-			m["stream"].(map[string]any)["url"] = "https://evil.example/api/v1/stream/x/master.m3u8"
-		},
-		"a stream of another ticket's form": func(m map[string]any) {
-			st := m["stream"].(map[string]any)
-			st["url"] = strings.Replace(st["url"].(string), "/api/v1/stream/", "/api/v1/stream/%41", 1)
-		},
-		"a file stream named otherwise": func(m map[string]any) { m["stream"].(map[string]any)["protocol"] = "file" },
-		"a subtitle URL elsewhere": func(m map[string]any) {
-			m["subtitleTracks"].([]any)[0].(map[string]any)["url"] = "https://evil.example/s"
-		},
-		"a method MSFP lacks":         func(m map[string]any) { m["method"] = "stream" },
-		"a member of the wrong type":  func(m map[string]any) { m["durationMs"] = "5400000" },
-		"trickplay of the wrong type": func(m map[string]any) { m["trickplay"] = []any{} },
+		"a URL for a ticket":               func(m map[string]any) { m["ticket"] = "https://evil.example/api/v1/stream/x/" },
+		"a ticket of another form":         func(m map[string]any) { m["ticket"] = "%41" },
+		"no ticket":                        func(m map[string]any) { delete(m, "ticket") },
+		"a file protocol for the baseline": func(m map[string]any) { m["protocol"] = "file" },
+		"a method MSFP lacks":              func(m map[string]any) { m["method"] = "stream" },
+		"a member of the wrong type":       func(m map[string]any) { m["positionMs"] = "0" },
+		"no versionId":                     func(m map[string]any) { delete(m, "versionId") },
 	} {
 		before := len(s.a.exchanges("stop"))
 		edit(f)
@@ -232,20 +231,19 @@ func TestHostilePlayAnswers(t *testing.T) {
 		s.a.eng.StopPlayback(v.ID, msfp.EndOperator)
 	}
 	edit(func(m map[string]any) {
-		m["audioTracks"] = []any{map[string]any{"id": "a0", "language": "e\u202en"}, map[string]any{"id": "../a1"},
-			map[string]any{"id": "a2", "channels": "2"}, map[string]any{"id": "a3", "role": "evil"}}
+		m["subtitles"] = []any{map[string]any{"id": "s0", "form": "picture"}, map[string]any{"id": "s1", "form": "picture"},
+			map[string]any{"id": "s9", "form": "text"}, map[string]any{"id": "s1", "form": "text"}}
 		m["versions"] = []any{map[string]any{"id": "../x", "name": "x"}, map[string]any{"id": "v1", "name": "<b>HD</b>"}}
 		m["durationMs"] = 9_000_000_000
-		m["title"] = map[string]any{"name": "whatever"}
-		m["trickplay"] = map[string]any{"tileWidth": 5000, "tileHeight": 10, "columns": 1, "rows": 1, "intervalMs": 1000,
-			"tileCount": 1, "sheets": []any{strings.TrimSuffix(m["stream"].(map[string]any)["url"].(string), "master.m3u8") + "trickplay/0"}}
+		m["fontCount"] = 65
+		m["stream"] = map[string]any{"url": "https://evil.example/x"}
+		m["trickplay"] = map[string]any{"tileWidth": 5000}
 	})
 	pb, err := s.b.eng.Play(ctx, s.onB.ID, msfp.PlayRequest{Title: "movie/tmdb/949"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(pb.AudioTracks) != 3 || pb.AudioTracks[0].Language != "" || pb.AudioTracks[1].Channels != 0 || pb.AudioTracks[2].Role != "evil" ||
-		pb.DurationMs != 0 || pb.Trickplay != nil {
+	if len(pb.Subtitles) != 1 || pb.Subtitles[0].ID != "s1" || pb.Fonts != 0 || pb.DurationMs != 5_400_000 || pb.Sheets != 0 {
 		t.Errorf("cleaned: %+v", pb)
 	}
 }
