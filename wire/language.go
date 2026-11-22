@@ -44,12 +44,32 @@ var iso639 = map[string]string{
 	"zul": "zu",
 }
 
+// LanguageTag says whether s is a valid tag (catalog section 3): one
+// already in the form a server sends, which SentTag gives back
+// unchanged ("fr", "fr-CA", "yue", "zh-Hant-TW", "es-419"); "fre" (not
+// yet converted), "fr-ca" or "FR" (another case), "e", "und" and "fr_CA"
+// aren't. It is the one rule wherever a title or a track carries a tag,
+// and for play's audioLanguage and subtitleLanguage: a receiver checks
+// it and never converts the tag; an invalid one counts as absent in what
+// it keeps, and refuses a request. Valid tags compare the same byte for
+// byte and without case.
+func LanguageTag(s string) bool {
+	t, ok := SentTag(s)
+	return ok && t == s
+}
+
+// tagForm says whether s has a tag's form: 2 to 12 characters of
+// A–Z a–z 0–9 -.
+func tagForm(s string) bool {
+	return len(s) >= 2 && len(s) <= 12 && strings.Trim(s, "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-") == ""
+}
+
 // SentTag is the tag sent for code, a media server's language code
 // ("fre" and "fra" give "fr", "fre-ca" "fr-CA"); false for one MSFP
 // doesn't send: not of a tag's form, or und, mul, zxx or mis. Test
 // cases: languageCodes in vectors/v0/strict.json.
 func SentTag(code string) (string, bool) {
-	if !LanguageTag(code) {
+	if !tagForm(code) {
 		return "", false
 	}
 	subtags := strings.Split(code, "-")

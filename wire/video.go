@@ -107,16 +107,9 @@ func (k VideoKey) String() string {
 func (k VideoKey) Playable() bool { return k.Kind == "movie" || k.Kind == "episode" }
 
 // Languages: a title's lists of language tags, as a receiver keeps them
-// (video section 3.1): at most MaxTags, each 2 to 12 characters of
-// A–Z a–z 0–9 -, each once, compared without case.
+// (video section 3.1): at most MaxTags, each a valid tag (LanguageTag),
+// each once.
 const MaxTags = 12
-
-// LanguageTag says whether s may be a language tag of a title's lists,
-// or of play's audioLanguage and subtitleLanguage (which may also be
-// left out).
-func LanguageTag(s string) bool {
-	return len(s) >= 2 && len(s) <= 12 && strings.Trim(s, "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-") == ""
-}
 
 // CleanTags keeps of a peer's tags those LanguageTag allows, each once,
 // at most MaxTags; a bad tag is skipped alone.
@@ -186,12 +179,9 @@ type Picture struct {
 	HDR    []string `json:"hdr,omitempty"`
 }
 
-// The heights a picture is stepped to (video sections 3.2 and 5.1), and
-// the HDR formats it may list, in their order.
-var (
-	Heights    = []int{480, 720, 1080, 1440, 2160, 4320}
-	HDRFormats = []string{"hdr10", "hlg", "dv"}
-)
+// The heights a picture is stepped to (video sections 3.2 and 5.1); its
+// HDR formats are HDRFormats (names.go).
+var Heights = []int{480, 720, 1080, 1440, 2160, 4320}
 
 // StepHeight steps a height down to the greatest of Heights not above
 // it, 480 below 480 (video section 5.1's coarsening); 0 stays 0, unknown.
