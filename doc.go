@@ -1,6 +1,6 @@
 // Package msfp is an engine for MSFP, the Media Server Federation
 // Protocol (https://github.com/msfp-io/msfp-spec), version 0 as revised
-// by proposal 16: still a draft, and one that doesn't pair with the
+// by proposals 16 and 17: still a draft, and one that doesn't pair with the
 // draft before it (this module's v0.7.1 and before). A media
 // server that uses it, the host, pairs with other servers by hand,
 // shares its titles with them and plays theirs for its own people,
@@ -35,14 +35,23 @@
 // # Sharing and playing
 //
 // To share, the host gives Config a Catalog (its libraries and titles,
-// each film, episode, extra and track with its copies described), a
-// Playback (starting and stopping a stream) and a Media (serving it): see
-// host.go. Its operator chooses what each peer is offered (SetOffers),
-// whether local titles go too (SetLocal, SetGroupLocal), what it may use
-// (SetLimits: streams, downloads, scans), and which of a peer's libraries
+// each film, episode, extra and track with its copies described, in its
+// order of preference, with ffmpeg's names and exact values), a Playback
+// (starting and stopping a stream) and a Media (serving it): see host.go.
+// The engine maps no names: a value MSFP doesn't list is sent and kept as
+// it is, any token (MSFP core section 8.5). What the owning side chooses
+// when a peer's play names nothing, and what names and track titles say,
+// are hooks with the recommended defaults (Config.ChooseCopy,
+// ChooseTracks, CopyName, TrackTitle); Config.Encoders lists the codecs
+// its transcodes make. The host's operator chooses what each peer is
+// offered (SetOffers), whether local titles go too (SetLocal,
+// SetGroupLocal), what it may use (SetLimits: streams, downloads, scans
+// and the bytes a scan reads), and which of a peer's libraries
 // this server reads (SetWants); the engine keeps peers' titles in the
 // Store, where the host reads them as it likes. Its viewers play,
-// download or scan a peer's title through Play, Progress, Stop and Fetch,
+// download or scan a peer's title through Play, Progress, Stop and Fetch
+// (the host names the copy and the delivery, from the copy's facts and
+// its device; without a delivery, the baseline: H.264 and AAC in HLS),
 // at a route of the host's own; ReportOffline sends a download's late
 // reports. Events (Config.Notifier) tell the host what happened, for its
 // panel and its logs.

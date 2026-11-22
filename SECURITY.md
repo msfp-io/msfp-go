@@ -49,9 +49,10 @@ version 0 as revised (proposal 16):
   and ending the pairing doesn't take it back. A download's late
   reports are kept in the store for 30 days, with the peer and the
   title.
-- **Scan access.** A scan lets a peer's media server read up to 32 MiB
-  of a copy by ranges, to list it, for 10 minutes. It is off until the
-  operator allows it (`Limits.ScansPerDay`). The engine counts the bytes
+- **Scan access.** A scan lets a peer's media server read up to the
+  pairing's `Limits.ScanBytes` (4 MiB unless the operator sets more, at
+  most 1 GiB) of a copy by ranges, to list it, for 10 minutes. It is off
+  until the operator allows it (`Limits.ScansPerDay`). The engine counts the bytes
   sent under each scan ticket and never passes the cap; scans count
   against no stream, so a host that meters its bandwidth counts them
   too.

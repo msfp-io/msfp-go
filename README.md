@@ -18,7 +18,7 @@ storage, catalog, playback and media through a few interfaces; it writes
 none of the protocol itself.
 
 - The protocol: [msfp-io/msfp-spec](https://github.com/msfp-io/msfp-spec),
-  version 0 as revised by proposal 16, still a draft until version 1
+  version 0 as revised by proposals 16 and 17, still a draft until version 1
   ([spec/v0](https://github.com/msfp-io/msfp-spec/tree/main/spec/v0)).
   The code here, not released yet, speaks the revised draft; v0.7.1 and
   before speak the draft before it, and servers on the two don't pair.
@@ -106,18 +106,35 @@ _, err = eng.Accept(ctx, id)                    // once both compared fingerprin
 
 To share titles, give `Config` a `Catalog` (your libraries and titles,
 each film, episode and extra with its copies described as MSFP lists
-them), a `Playback` (starting and stopping a stream) and a `Media`
-(serving it). The engine serves a copy's file by byte ranges itself,
-against the size and etag the catalog gave, and checks or rebuilds what
-leaves (playlists, subtitles, fonts, preview sheets re-encoded). To play
-a peer's titles, call `Play`, `Progress`, `Stop` and `Fetch` from a route
-of your own; a play asks a delivery (the file as it is, a remux, a
-transcode) and a purpose (a play, a download, a scan).
+them: exact values, ffmpeg's names for containers, codecs and subtitle
+formats, your copies in your order of preference), a `Playback`
+(starting and stopping a stream) and a `Media` (serving it). The engine
+serves a copy's file by byte ranges itself, against the size and etag
+the catalog gave, and checks or rebuilds what leaves (playlists,
+subtitles, fonts, preview sheets re-encoded). It maps no names: a
+media server that names things otherwise maps them to ffmpeg's, and a
+value MSFP doesn't list is sent and kept as it is (any token). What
+the engine chooses for a peer when its play names nothing (the copy,
+the tracks) and what a copy's name and a track's title may say are
+hooks with the recommended defaults (`Config.ChooseCopy`,
+`ChooseTracks`, `CopyName`, `TrackTitle`); `Config.Encoders` lists the
+codecs your transcodes make.
+
+To play a peer's titles, call `Play`, `Progress`, `Stop` and `Fetch`
+from a route of your own. Your server has every copy's facts in the
+catalog and knows its device: a play names the copy and asks a
+delivery (the file as it is, a remux into `mpegts` or `mp4`, a
+transcode to ffmpeg's codecs), or none for the baseline every server
+plays, H.264 and AAC in HLS; and a purpose (a play, a download, a
+scan). Nothing of the device is sent.
 
 Two things are off until the operator turns them on: **local titles**
 (those no public database knows, `SetLocal` per pairing and
 `SetGroupLocal` per group) and **downloads and scans** (`Limits`:
-`Downloads`, `DownloadsPerDay`, `DownloadKbps`, `ScansPerDay`). A
+`Downloads`, `DownloadsPerDay`, `DownloadKbps`, `ScansPerDay`, and
+`ScanBytes`, what one scan may read: 4 MiB unless you say more, 32 MiB
+recommended). Theme songs and theme videos are extras like the others:
+whether you offer them is your operator's choice. A
 download's late reports count for 30 days, across restarts: the shipped
 stores keep downloads (`DownloadsTx`). `Config.Notifier` tells your server what happened, for
 its panel and logs. `CodeText` gives a live code's text again, to send
@@ -195,7 +212,7 @@ msfp-dotnet 0.7.x-preview follow the same API design (the spec's api/). Patch ve
 The module's version is separate from the protocol's: from v0.4.0 it
 speaks MSFP version 0, groups included; v0.3.0 and before speak the
 same protocol numbered 1, and the two don't talk. The next release
-speaks version 0 as revised (proposal 16), which doesn't talk with v0.7.1
+speaks version 0 as revised (proposals 16 and 17), which doesn't talk with v0.7.1
 and before either. Before 1.0, the API may change between minor versions.
 
 ## Testing
