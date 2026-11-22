@@ -260,11 +260,11 @@ type ReplayGain struct {
 // The bounds of a track's copy (music section 3.3).
 const (
 	MaxMusicDurationMs = 86_400_000
-	MaxCopySize        = 999_999_999_999_999
-	MaxCopyName        = 32
-	MaxAudioBitrate    = 100_000 // kbit/s, from 8
-	MaxGain            = 64      // dB, either way
-	MaxPeak            = 10
+	// MaxCopySize (wire/copies.go) bounds a track copy's size too.
+	// MaxCopyName (wire/copies.go) bounds a track copy's name too.
+	MaxAudioBitrate = 100_000 // kbit/s, from 8
+	MaxGain         = 64      // dB, either way
+	MaxPeak         = 10
 )
 
 // R128Gain converts an EBU R128 gain (Opus's R128_TRACK_GAIN: 1/256 dB,

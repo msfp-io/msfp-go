@@ -20,15 +20,10 @@ type PlayCopy struct {
 	Subtitles   []string
 }
 
-// CopyAudio is an audio track of a copy: its ID (a<n>), its language tag,
-// its role (commentary, description, or "" for the title's own sound),
-// and whether the copy's file marks it default.
-type CopyAudio struct {
-	ID       string
-	Language string
-	Role     string
-	Default  bool
-}
+// A copy's audio tracks are video's CopyAudio (wire/copies.go): their ID
+// (a<n>), language tag, role (commentary, description, or "" for the
+// title's own sound) and whether the copy's file marks them default are
+// what choosing one needs.
 
 // baseLanguage is a tag's base language, lowercase: what comes before
 // its first -.

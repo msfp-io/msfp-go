@@ -124,7 +124,7 @@ func TestWebVTTPart(t *testing.T) {
 	for _, c := range []struct {
 		n    int
 		want []string
-	}{{0, []string{"first", "across"}}, {1, []string{"across", "second"}}, {2, []string{"third"}}, {3, nil}} {
+	}{{0, []string{"first", "across"}}, {1, []string{"across", "<b>second</b>"}}, {2, []string{"third"}}, {3, nil}} {
 		out, ok := WebVTTPart([]byte(track), c.n)
 		if !ok {
 			t.Fatalf("part %d refused", c.n)
