@@ -64,7 +64,15 @@ type ffprobeStream struct {
 	Channels          int    `json:"channels"`
 	SampleRate        string `json:"sample_rate"`
 	Disposition       struct {
-		Default, Forced, Comment, Dub, Original, VisualImpaired, HearingImpaired, AttachedPic, Descriptions int
+		Default         int `json:"default"`
+		Forced          int `json:"forced"`
+		Comment         int `json:"comment"`
+		Dub             int `json:"dub"`
+		Original        int `json:"original"`
+		VisualImpaired  int `json:"visual_impaired"`
+		HearingImpaired int `json:"hearing_impaired"`
+		AttachedPic     int `json:"attached_pic"`
+		Descriptions    int `json:"descriptions"`
 	} `json:"disposition"`
 	Tags struct {
 		Language string `json:"language"`
