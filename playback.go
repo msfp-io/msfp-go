@@ -566,13 +566,13 @@ func (e *Engine) play(req *request) response {
 		if err != nil {
 			return refuse(probInternal)
 		}
-		i := slices.IndexFunc(qc, func(c offeredCopy) bool { return c.id() == ask.VersionID })
-		if ask.VersionID == "" && len(qc) > 0 {
-			i = 0
-		}
-		if i < 0 {
+		// The copy the entry names, else its first (MSFP music section
+		// 5.2, as play's versionId: playback section 2.6). A track with
+		// no copy offered is left out.
+		if len(qc) == 0 {
 			continue
 		}
+		i := max(slices.IndexFunc(qc, func(c offeredCopy) bool { return c.id() == ask.VersionID }), 0)
 		c := qc[i]
 		s, err := wire.Serve(er, c.copy, wire.DefaultAudio(c.copy.AudioTracks, ""), kbps, e.cfg.Encoders)
 		if err != nil {
