@@ -1158,14 +1158,14 @@ func (e *Engine) report(req *request, call string) response {
 			pb.lastAt, handle = out.At, pb.handle
 			if pb.purpose == wire.PurposeDownload {
 				kept = &DownloadRecord{ID: pb.id, Peer: pb.peer, Title: pb.title, Queue: pb.queue, Handle: pb.handle,
-					PlayedAt: pb.started, LastAt: pb.lastAt}
+					PlayedAt: pb.started, LastAt: pb.lastAt.UTC()}
 			}
 		} else if ended, ok := ps.ended[r.ID]; ok {
 			ended.lastAt, handle = out.At, ended.handle
 			ps.ended[r.ID] = ended
 			if ended.purpose == wire.PurposeDownload {
 				kept = &DownloadRecord{ID: r.ID, Peer: ended.peer, Title: ended.title, Queue: ended.queue, Handle: ended.handle,
-					PlayedAt: ended.playedAt, LastAt: ended.lastAt}
+					PlayedAt: ended.playedAt, LastAt: ended.lastAt.UTC()}
 			}
 		}
 		ps.mu.Unlock()
