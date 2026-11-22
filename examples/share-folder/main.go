@@ -173,7 +173,7 @@ func main() {
 			var l msfp.Limits
 			_, err := fmt.Sscan(rest, &l.Streams, &l.Transcodes, &l.Downloads, &l.DownloadsPerDay, &l.DownloadKbps, &l.ScansPerDay)
 			if l.ScansPerDay > 0 {
-				l.ScanBytes = wire.RecommendedScanBytes // a scan reads at most 32 MiB
+				l.ScanBytes = wire.RecommendedScanBytes // a scan reads at most 32 MiB: the scan's answer says so
 			}
 			if err == nil || errors.Is(err, io.EOF) {
 				err = eng.SetLimits(ctx, peer, l)
@@ -190,8 +190,8 @@ func main() {
 			show("sent", eng.ReportOffline(ctx, id, msfp.OfflineReport{PositionMs: ms, At: time.Now()}))
 		case "previews":
 			peer, key, _ := strings.Cut(arg, " ")
-			pv, err := previewsOf(ctx, eng, store, peer, key)
-			show(fmt.Sprintf("%d sheets of %d tiles", len(pv.Sheets), pv.Trickplay.TileCount), err)
+			n, err := previewsOf(ctx, eng, store, peer, key)
+			show(fmt.Sprintf("%d sheets fetched", n), err)
 		case "want":
 			libs, err := eng.TheirLibraries(ctx, arg)
 			var ids []string
@@ -312,8 +312,9 @@ func main() {
 	}
 }
 
-// previewsOf fetches the previews of a peer's title's best copy.
-func previewsOf(ctx context.Context, eng *msfp.Engine, store *jsonfile.Store, peer, key string) (msfp.PreviewSheets, error) {
+// previewsOf fetches the seek-bar previews of a peer's title's first
+// copy, sheet by sheet: someone opened it (MSFP video section 5.5).
+func previewsOf(ctx context.Context, eng *msfp.Engine, store *jsonfile.Store, peer, key string) (int, error) {
 	var t msfp.Title
 	err := store.Read(ctx, func(tx msfp.Tx) error {
 		var err error
@@ -321,17 +322,22 @@ func previewsOf(ctx context.Context, eng *msfp.Engine, store *jsonfile.Store, pe
 		return err
 	})
 	if err != nil {
-		return msfp.PreviewSheets{}, err
+		return 0, err
 	}
 	v, ok := t.(*msfp.VideoTitle)
 	if !ok {
-		return msfp.PreviewSheets{}, msfp.ErrNotFound
+		return 0, msfp.ErrNotFound
 	}
 	c, ok := v.BestCopy()
-	if !ok || !c.Previews {
-		return msfp.PreviewSheets{}, msfp.ErrNotFound
+	if !ok || c.PreviewLayout == nil {
+		return 0, msfp.ErrNotFound
 	}
-	return eng.Previews(ctx, peer, key, c.ID)
+	for n := range c.PreviewLayout.SheetCount() {
+		if _, err := eng.PreviewSheet(ctx, peer, key, c.ID, n); err != nil {
+			return n, err
+		}
+	}
+	return c.PreviewLayout.SheetCount(), nil
 }
 
 // readNow reads a peer's titles, unless err.

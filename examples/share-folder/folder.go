@@ -158,7 +158,7 @@ func (f *folder) scanDir(out map[string]item, dir string) {
 			rel := filepath.Join(dir, folderName, x.Name())
 			key := t.Key + "/x/" + f.opaque(rel)
 			out[key] = item{video: rel, title: &msfp.VideoTitle{TitleCommon: msfp.TitleCommon{Key: key, Kind: "extra",
-				Libraries: []string{"folder"}}, ExtraType: kind, Name: cut(videoExt.ReplaceAllString(x.Name(), ""), 64)}}
+				Libraries: []string{"folder"}}, ExtraType: kind}} // an extra carries no name
 		}
 	}
 }
@@ -194,7 +194,7 @@ func (f *folder) series(out map[string]item, dir string, episodes []string) *msf
 }
 
 func (f *folder) Libraries(context.Context) ([]msfp.Library, error) {
-	return []msfp.Library{{ID: "folder", Name: filepath.Base(f.dir), Kind: "mixed"}}, nil
+	return []msfp.Library{{ID: "folder", Name: filepath.Base(f.dir)}}, nil
 }
 
 func (f *folder) Titles(_ context.Context, _ []string, after string, limit int) (msfp.TitlePage, error) {
@@ -233,9 +233,9 @@ func (f *folder) Image(_ context.Context, key string) ([]byte, error) {
 }
 
 // copy describes a video file as the catalog lists a copy (MSFP video
-// section 3.2): its exact size, an etag from its size and its time, its
-// container's ffmpeg name from its extension, what ffprobe says of it (probe.go), its
-// .vtt subtitles, its previews. Its ID is its handle: its path in the
+// section 3.2): its exact size, its media type and etag, what ffprobe
+// says of it (probe.go), its .vtt subtitles (numbered after the file's
+// streams), its previews' layout. Its ID is its handle: its path in the
 // folder.
 func (f *folder) copy(rel string) (wire.Copy, bool) {
 	path := filepath.Join(f.dir, rel)
@@ -243,15 +243,16 @@ func (f *folder) copy(rel string) (wire.Copy, bool) {
 	if err != nil || st.Size() < 1 {
 		return wire.Copy{}, false
 	}
-	c := f.probes.describe(path, st)
+	c, streams := f.probes.describe(path, st)
+	if c.ETag == "" {
+		return wire.Copy{}, false
+	}
 	c.ID, c.Size = rel, st.Size()
-	c.Container = muxers[strings.TrimPrefix(filepath.Ext(rel), ".")]
-	c.ETag = strconv.FormatInt(st.Size(), 36) + "-" + strconv.FormatInt(st.ModTime().UnixNano(), 36)
 	for i, s := range subtitles(path) {
-		c.SubtitleTracks = append(c.SubtitleTracks, wire.CopySubtitle{ID: "s" + strconv.Itoa(i), Language: language(s),
+		c.SubtitleTracks = append(c.SubtitleTracks, wire.CopySubtitle{ID: "s" + strconv.Itoa(streams+i), Language: language(s),
 			Format: "webvtt", External: true})
 	}
-	_, c.Previews = previews(path)
+	c.PreviewLayout = previews(path)
 	return c, true
 }
 
@@ -271,27 +272,27 @@ func language(path string) string {
 // .trickplay folder: {"tileWidth":320,"tileHeight":180,"columns":10,
 // "rows":10,"intervalMs":10000,"tileCount":540}, its sheets beside it
 // named 0.jpg, 1.jpg… (the engine re-encodes each before it leaves).
-func previews(path string) (*msfp.Trickplay, bool) {
+func previews(path string) *wire.PreviewLayout {
 	b, err := os.ReadFile(videoExt.ReplaceAllString(path, "") + ".trickplay/layout.json")
-	var t struct{ TileWidth, TileHeight, Columns, Rows, IntervalMs, TileCount int }
-	if err != nil || json.Unmarshal(b, &t) != nil {
-		return nil, false
+	var t wire.PreviewLayout
+	if err != nil || json.Unmarshal(b, &t) != nil || !t.InBounds() {
+		return nil
 	}
-	return &msfp.Trickplay{TileWidth: t.TileWidth, TileHeight: t.TileHeight, Columns: t.Columns, Rows: t.Rows,
-		IntervalMs: t.IntervalMs, TileCount: t.TileCount}, true
+	return &t
 }
 
-// Describe tells what the catalog doesn't: the previews' layout; no
-// fonts; every .vtt file served apart.
-func (f *folder) Describe(_ context.Context, handle string) (msfp.CopyInfo, error) {
-	t, _ := previews(filepath.Join(f.dir, handle))
-	return msfp.CopyInfo{Trickplay: t}, nil
+// Describe tells what the catalog doesn't: no fonts; every .vtt file is
+// served apart (as text: video section 5.4).
+func (f *folder) Describe(context.Context, string) (msfp.CopyInfo, error) {
+	return msfp.CopyInfo{}, nil
 }
 
 // Start serves the file when the viewer's server asks it (delivery file,
 // always that of a download or a scan); its HLS copy, made beside it, for
-// a remux or without delivery (the baseline: this example counts on its
-// HLS copies being H.264 and AAC, as an operator makes them); it makes
+// a remux to its segments' media type (video/mp2t for .ts segments,
+// video/mp4 otherwise) or without delivery (the baseline: this example
+// counts on its HLS copies being within it, H.264 High 4.1 8-bit SDR and
+// AAC-LC stereo, as an operator makes them); it makes
 // no transcode, and no audio renditions, which the answer then says
 // (Started.AudioRenditions false: MSFP playback section 2.3). The handle
 // is the protocol and the file's path.
@@ -300,8 +301,8 @@ func (f *folder) Start(_ context.Context, req msfp.StartRequest) (msfp.Started, 
 		return msfp.Started{}, msfp.ErrNotFound
 	}
 	path := filepath.Join(f.dir, req.Copy)
-	ext := strings.TrimPrefix(filepath.Ext(path), ".")
-	_, err := os.Stat(videoExt.ReplaceAllString(path, "") + ".hls/master.m3u8")
+	hlsDir := videoExt.ReplaceAllString(path, "") + ".hls"
+	_, err := os.Stat(hlsDir + "/master.m3u8")
 	hls := err == nil
 	method, protocol := "direct", "file"
 	switch req.Delivery {
@@ -309,7 +310,11 @@ func (f *folder) Start(_ context.Context, req msfp.StartRequest) (msfp.Started, 
 	case msfp.DeliveryTranscode:
 		return msfp.Started{}, msfp.ErrDeliveryRefused
 	case msfp.DeliveryRemux:
-		if !hls {
+		segments := "mp4"
+		if ts, _ := filepath.Glob(escapeGlob(hlsDir) + "/*.ts"); len(ts) > 0 {
+			segments = "mp2t"
+		}
+		if !hls || req.Served.Segments != segments {
 			return msfp.Started{}, msfp.ErrDeliveryRefused
 		}
 		method, protocol = "remux", "hls"
@@ -322,8 +327,7 @@ func (f *folder) Start(_ context.Context, req msfp.StartRequest) (msfp.Started, 
 	if _, err := req.Admit(method); err != nil {
 		return msfp.Started{}, err
 	}
-	return msfp.Started{Handle: protocol + " " + req.Copy, Method: method, Protocol: protocol,
-		MimeType: "video/" + strings.Replace(ext, "mkv", "x-matroska", 1), PositionMs: req.StartMs}, nil
+	return msfp.Started{Handle: protocol + " " + req.Copy, Method: method, Protocol: protocol, PositionMs: req.StartMs}, nil
 }
 
 func (*folder) Progress(context.Context, msfp.Report) error        { return nil }
@@ -352,8 +356,13 @@ func (f *folder) Serve(_ context.Context, handle string, p msfp.MediaPath, rng *
 		return serveFile(filepath.Join(base+".trickplay", strconv.Itoa(p.Sheet)+".jpg"), nil, out)
 	case msfp.MediaSubtitles:
 		subs := subtitles(path)
+		st, err := os.Stat(path)
+		if err != nil {
+			return msfp.ErrNotFound
+		}
+		_, streams := f.probes.describe(path, st)
 		n, _ := strconv.Atoi(strings.TrimPrefix(p.Track, "s"))
-		if n >= len(subs) {
+		if n -= streams; n < 0 || n >= len(subs) {
 			return msfp.ErrNotFound
 		}
 		vtt, err := os.ReadFile(subs[n])
@@ -436,13 +445,6 @@ func year(s string) int {
 }
 
 func atoi(s string) int { n, _ := strconv.Atoi(s); return n }
-
-func cut(s string, n int) string {
-	if r := []rune(s); len(r) > n {
-		return string(r[:n])
-	}
-	return s
-}
 
 // escapeGlob escapes what filepath.Glob reads as a pattern, so that a
 // name like "Heat [tmdbid-949]" matches only itself.
