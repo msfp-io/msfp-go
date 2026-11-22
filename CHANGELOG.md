@@ -1,5 +1,32 @@
 # Changelog
 
+## Unreleased: the revision of version 0 (proposal 16)
+
+### Changed
+
+- Titles carry their copies: `VideoTitle.Copies` and `MusicTitle.Copies`
+  are `wire.Copy` and `wire.MusicCopy`, each copy's ID the host's handle
+  (the engine sends the version ID `play` gives). `VideoTitle.Audio`,
+  `Subtitles`, `Pictures`, `Video`, `Picture` and `BestPicture` are gone:
+  `BestCopy`, `AudioLanguages` and `SubtitleLanguages` work them out from
+  the copies. `MusicTitle` has music's new description (`SortName`,
+  `ReleaseType`, `Compilation`, `Date`, `OriginalDate`, `Genres`,
+  `Image`), no `Year` or `DurationMs`.
+- `titles` pages are bounded by size too (5,000 titles, 3 MiB), `next`
+  set whenever titles remain; copies are cleaned before they leave (names
+  and track titles only when they are labels).
+
+### Added
+
+- Extras (`VideoTitle.ExtraType`, `Name`), sent only with their title,
+  and gone with it; the `tvdb` and `local` keys; a local title's
+  description (`Name`, `Year`, `Image`).
+- `SetLocal` and `SetGroupLocal` (`PeerView.Local`, `GroupView.Local`):
+  local titles shared, per pairing and per group, off by default.
+- The `image` call: a host's `Images` gives a local title's image,
+  served under a ticket of its own; `TitleImage` asks a peer for one,
+  checked and re-encoded. `OpaqueKeyPart` makes opaque parts of keys.
+
 ## v0.7.1 (2026-11-21)
 
 ### Added

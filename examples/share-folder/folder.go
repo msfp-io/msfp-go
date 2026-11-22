@@ -73,13 +73,35 @@ func (f folder) Titles(_ context.Context, _ []string, after string, limit int) (
 			page.More = true
 			break
 		}
-		t := &msfp.VideoTitle{TitleCommon: msfp.TitleCommon{Key: key, Kind: "movie", Libraries: []string{"films"}}}
-		for _, s := range films[key].subs {
-			t.Subtitles = append(t.Subtitles, language(s))
+		c, ok := films[key].copy(key)
+		if !ok {
+			continue
 		}
-		page.Titles = append(page.Titles, t)
+		page.Titles = append(page.Titles, &msfp.VideoTitle{
+			TitleCommon: msfp.TitleCommon{Key: key, Kind: "movie", Libraries: []string{"films"}},
+			Copies:      []wire.Copy{c}})
 	}
 	return page, nil
+}
+
+// copy describes the film's one copy, its file, as the catalog lists it
+// (MSFP video section 3.2): its size, an etag from its size and its
+// time, its container from its extension; its length and streams are
+// left unknown (the example reads no file), its subtitles from the .vtt
+// files beside it. Its ID is the handle Copies gives.
+func (fl film) copy(handle string) (wire.Copy, bool) {
+	st, err := os.Stat(fl.file)
+	if err != nil || st.Size() < 1 {
+		return wire.Copy{}, false
+	}
+	c := wire.Copy{ID: handle, Container: wire.NameOrOther(wire.Containers, strings.TrimPrefix(filepath.Ext(fl.file), ".")),
+		Size: st.Size(), ETag: strconv.FormatInt(st.Size(), 36) + "-" + strconv.FormatInt(st.ModTime().UnixNano(), 36),
+		AudioTracks: []wire.CopyAudio{{ID: "a0", Codec: wire.Other, Default: true}}}
+	for i, s := range fl.subs {
+		c.SubtitleTracks = append(c.SubtitleTracks, wire.CopySubtitle{ID: "s" + strconv.Itoa(i), Language: language(s),
+			Format: "webvtt", External: true})
+	}
+	return c, true
 }
 
 // language is a subtitles file's language, from its name.
