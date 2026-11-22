@@ -18,7 +18,11 @@ storage, catalog, playback and media through a few interfaces; it writes
 none of the protocol itself.
 
 - The protocol: [msfp-io/msfp-spec](https://github.com/msfp-io/msfp-spec),
-  version 0, a draft until version 1 ([spec/v0](https://github.com/msfp-io/msfp-spec/tree/main/spec/v0)).
+  version 0 as revised by proposal 16, still a draft until version 1
+  ([spec/v0](https://github.com/msfp-io/msfp-spec/tree/main/spec/v0)).
+  The code here, not released yet, speaks the revised draft; v0.7.1 and
+  before speak the draft before it, and servers on the two don't pair.
+  The [changelog](CHANGELOG.md) says what hosts change.
 - The engine's API in words: [api/](https://github.com/msfp-io/msfp-spec/tree/main/api)
   in the spec's repository, mainly
   [engine.md](https://github.com/msfp-io/msfp-spec/blob/main/api/engine.md)
@@ -35,7 +39,7 @@ none of the protocol itself.
 | `github.com/msfp-io/msfp-go/wire` | the protocol's pieces: keys, pairing codes, signatures, strict JSON, statements, the media checks |
 | `github.com/msfp-io/msfp-go/store/jsonfile` | a ready store: the engine's records in JSON files, sealed with a key file |
 | `github.com/msfp-io/msfp-go/store/memory` | a ready store in memory, for tests |
-| `examples/share-folder` | a whole host in about 600 lines |
+| `examples/share-folder` | a whole host in about 1,000 lines |
 
 The only dependency beyond the standard library is
 [filippo.io/edwards25519](https://pkg.go.dev/filippo.io/edwards25519).
@@ -100,10 +104,22 @@ peer, err := eng.RedeemCode(ctx, pasted)        // a code the other operator sen
 _, err = eng.Accept(ctx, id)                    // once both compared fingerprints
 ```
 
-To share titles, give `Config` a `Catalog` (your libraries and titles), a
-`Playback` (starting and stopping a stream) and a `Media` (serving it). To
-play a peer's titles, call `Play`, `Progress`, `Stop` and `Fetch` from a
-route of your own. `Config.Notifier` tells your server what happened, for
+To share titles, give `Config` a `Catalog` (your libraries and titles,
+each film, episode and extra with its copies described as MSFP lists
+them), a `Playback` (starting and stopping a stream) and a `Media`
+(serving it). The engine serves a copy's file by byte ranges itself,
+against the size and etag the catalog gave, and checks or rebuilds what
+leaves (playlists, subtitles, fonts, preview sheets re-encoded). To play
+a peer's titles, call `Play`, `Progress`, `Stop` and `Fetch` from a route
+of your own; a play asks a delivery (the file as it is, a remux, a
+transcode) and a purpose (a play, a download, a scan).
+
+Two things are off until the operator turns them on: **local titles**
+(those no public database knows, `SetLocal` per pairing and
+`SetGroupLocal` per group) and **downloads and scans** (`Limits`:
+`Downloads`, `DownloadsPerDay`, `DownloadKbps`, `ScansPerDay`). A
+download's late reports count for 30 days, across restarts: the shipped
+stores keep downloads (`DownloadsTx`). `Config.Notifier` tells your server what happened, for
 its panel and logs. `CodeText` gives a live code's text again, to send
 once more. The package documentation and
 [host.md](https://github.com/msfp-io/msfp-spec/blob/main/api/host.md) have
@@ -112,15 +128,20 @@ the details.
 ## The example: two servers that pair
 
 [examples/share-folder](examples/share-folder) is a small host: its records
-in JSON files, a folder of films shared with the servers it pairs with,
-typed commands in place of a panel. It makes a self-signed certificate at
-each start and pins it.
+in JSON files, a folder of films and series shared with the servers it
+pairs with, typed commands in place of a panel. It makes a self-signed
+certificate at each start and pins it. The folder holds films and series
+named with their TMDB (or TheTVDB) IDs, their extras in `Trailers/` and
+`Extras/`, local titles (no ID, an image beside them), `.vtt` subtitles,
+HLS copies and previews made beforehand; copies are described from the
+files, with `ffprobe` when it is installed. The comment at the top of
+[folder.go](examples/share-folder/folder.go) shows the layout.
 
 Run two of them on one machine, in two terminals:
 
 ```sh
 cd examples/share-folder
-go run . -address https://127.0.0.1:8441 -listen :8441 -data a -films ~/films -loopback
+go run . -address https://127.0.0.1:8441 -listen :8441 -data a -folder ~/videos -loopback
 go run . -address https://127.0.0.1:8442 -listen :8442 -data b -loopback
 ```
 
@@ -129,14 +150,20 @@ local addresses otherwise). Then:
 
 1. type `code` in the first, and `redeem <code>` in the second;
 2. compare the fingerprints both print, and type `accept <id>` in the first;
-3. `offer <id>` in the first shares its films; `want <id>` then
-   `titles <id>` in the second lists them;
+3. `offer <id>` in the first shares its folder (`local <id> on` its
+   local titles too); `want <id>` then `titles <id>` in the second lists
+   them;
 4. `play <id> <key>` in the second prints a URL that `curl -k` or
    `ffplay -tls_verify 0` plays through it; `pause <playback>` and
    `resume <playback>` say the viewer paused or resumed, and `stop
    <playback>` ends it. Until then the example reports the playback to
    the first every minute, as a host must: a peer ends a playback it
-   hears nothing of for 2 minutes.
+   hears nothing of for 2 minutes;
+5. `limits <id> 2 1 1 3 8000 2` in the first allows the second 2
+   streams, 1 transcode, 1 download at once, 3 a day at 8,000 kbit/s,
+   and 2 scans a day; `download <id> <key>` in the second then prints the
+   URL of the file to save, and `late <download> <ms>` sends a late
+   report of it.
 
 `peers` lists the pairings and `end <id>` ends one. Groups work the same
 way: `group-create <name>` in the first, `invite <group>` for a code the
@@ -144,7 +171,7 @@ others redeem, `groups` to see the members and the requests waiting, and
 `pair <group> <mail>` to accept one. The comment at the top of
 [main.go](examples/share-folder/main.go) lists every command (key
 rotation, a stolen key, moving address, a server that can't be called,
-groups, relations).
+groups, relations, previews).
 
 ## Groups and relations
 
@@ -167,7 +194,9 @@ msfp-dotnet 0.7.x-preview follow the same API design (the spec's api/). Patch ve
 
 The module's version is separate from the protocol's: from v0.4.0 it
 speaks MSFP version 0, groups included; v0.3.0 and before speak the
-same protocol numbered 1, and the two don't talk. Before 1.0, the API may change between minor versions.
+same protocol numbered 1, and the two don't talk. The next release
+speaks version 0 as revised (proposal 16), which doesn't talk with v0.7.1
+and before either. Before 1.0, the API may change between minor versions.
 
 ## Testing
 

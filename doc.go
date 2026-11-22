@@ -1,5 +1,7 @@
 // Package msfp is an engine for MSFP, the Media Server Federation
-// Protocol (https://github.com/msfp-io/msfp-spec), version 0. A media
+// Protocol (https://github.com/msfp-io/msfp-spec), version 0 as revised
+// by proposal 16: still a draft, and one that doesn't pair with the
+// draft before it (this module's v0.7.1 and before). A media
 // server that uses it, the host, pairs with other servers by hand,
 // shares its titles with them and plays theirs for its own people,
 // without writing any of the protocol itself: the engine signs and
@@ -32,14 +34,25 @@
 //
 // # Sharing and playing
 //
-// To share, the host gives Config a Catalog (its libraries and titles), a
+// To share, the host gives Config a Catalog (its libraries and titles,
+// each film, episode, extra and track with its copies described), a
 // Playback (starting and stopping a stream) and a Media (serving it): see
-// host.go. Its operator chooses what each peer is offered (SetOffers) and
-// which of a peer's libraries this server reads (SetWants); the engine
-// keeps peers' titles in the Store, where the host reads them as it
-// likes. Its viewers play a peer's title through Play, Progress, Stop and
-// Fetch, at a route of the host's own. Events (Config.Notifier) tell the
-// host what happened, for its panel and its logs.
+// host.go. Its operator chooses what each peer is offered (SetOffers),
+// whether local titles go too (SetLocal, SetGroupLocal), what it may use
+// (SetLimits: streams, downloads, scans), and which of a peer's libraries
+// this server reads (SetWants); the engine keeps peers' titles in the
+// Store, where the host reads them as it likes. Its viewers play,
+// download or scan a peer's title through Play, Progress, Stop and Fetch,
+// at a route of the host's own; ReportOffline sends a download's late
+// reports. Events (Config.Notifier) tell the host what happened, for its
+// panel and its logs.
+//
+// The engine checks what leaves before it leaves: titles and copies
+// cleaned as a receiver keeps them, the file served by byte ranges
+// against the catalog's size and etag, playlists checked complete and
+// served the same on every fetch, subtitles and fonts rebuilt or checked,
+// preview sheets and images re-encoded. What arrives from peers is checked
+// the same way before the host sees it.
 //
 // # More
 //
@@ -52,8 +65,8 @@
 // stores. Neither package imports anything but the standard library and
 // filippo.io/edwards25519.
 //
-// examples/share-folder is a whole host in a few hundred lines: a folder
-// of films shared with the servers it pairs with, typed commands for a
-// panel. The engine's API, in words, is api/engine.md and api/host.md in
+// examples/share-folder is a whole host in about a thousand lines: a
+// folder of films and series (extras, local titles, previews) shared with
+// the servers it pairs with, typed commands for a panel. The engine's API, in words, is api/engine.md and api/host.md in
 // the specification's repository.
 package msfp

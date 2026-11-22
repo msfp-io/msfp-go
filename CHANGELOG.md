@@ -2,6 +2,13 @@
 
 ## Unreleased: the revision of version 0 (proposal 16)
 
+MSFP version 0 is revised, and stays a draft until version 1: titles
+carry their copies, plays ask a delivery and a purpose (downloads and
+scans), extras and local titles are shared, and a copy's file is served
+by byte ranges. Servers on the draft before (v0.7.1 and before) and on
+the revised one don't pair with each other: move every server at once.
+The migration guide at the end of this section says what hosts change.
+
 ### Changed
 
 - Titles carry their copies: `VideoTitle.Copies` and `MusicTitle.Copies`
@@ -33,6 +40,20 @@
 - `titles` pages are bounded by size too (5,000 titles, 3 MiB), `next`
   set whenever titles remain; copies are cleaned before they leave (names
   and track titles only when they are labels).
+- The owning side re-encodes the host's preview sheets before they
+  leave, checked against the layout (one outside it isn't sent); serves
+  each playlist the same on every fetch under a ticket (the first kept);
+  answers `HEAD` and other methods with `405` on every media URL form,
+  whatever the ticket (live, ended or never given: the fallback of
+  `StreamHandler` hears `GET` only there).
+- A scan's cap counts the bytes sent: a range is held against it while
+  it is served, and what wasn't sent is given back.
+- A download's pace follows `Config.Clock`, and its timers when it has
+  some (`Timers`).
+- Example: one library, `folder`, of films and series (`-films` is now
+  `-folder`); extras, local titles, previews, copies described with
+  ffprobe; commands `local`, `group-local`, `limits`, `download`,
+  `late`, `previews`.
 
 ### Added
 
@@ -52,6 +73,75 @@
 - The `image` call: a host's `Images` gives a local title's image,
   served under a ticket of its own; `TitleImage` asks a peer for one,
   checked and re-encoded. `OpaqueKeyPart` makes opaque parts of keys.
+- `DownloadsTx` and `DownloadRecord`: downloads kept in the store for
+  their late reports, both sides, so a restart keeps them; the shipped
+  stores implement it (a `state.json` from before reads as none kept).
+- `Timers`: what a test's `Clock` implements so that the engine's waits
+  follow it.
+
+### Migration guide
+
+**A host that shares (the owning side):**
+
+1. `Catalog.Titles` gives each film, episode and extra its copies
+   (`VideoTitle.Copies`, `wire.Copy`; a music track's `MusicCopy`), best
+   first: the copy's ID is your handle (it never leaves), its
+   `DurationMs`, `Container`, exact `Size`, an `ETag` that changes when
+   and only when its bytes change, its `AudioTracks` (may be empty), and
+   what else your media server knows. Series and seasons carry none.
+   Remove `Catalog.Copies`.
+2. `Playback.Describe` gives only `CopyInfo`: the previews' layout, the
+   fonts of ASS tracks, the tracks you can't serve apart.
+3. `Playback.Start` reads `Purpose`, `Delivery`, `Container`,
+   `Transcode`, `AudioRenditions` and a music `Queue` from the
+   `StartRequest`; it answers `ErrDeliveryRefused` for a delivery it
+   won't make, and fills `Started.Queue` for a queue.
+4. `Playback.Progress` takes a `Report`: `At`, `Title`, `Stop`, and
+   `Late` for a download's late report after its playback ended.
+5. `Media.Serve`: for `MediaFile` the engine gives the exact range and
+   writes the headers itself; serve the bytes. New paths: `MediaASS`,
+   `MediaFont`, `Whole` (a whole text track), `Entry` (a queue entry's
+   stream), and `OfCopy` (a sheet under a previews ticket: the handle is
+   the copy's). Playlists are complete (`VOD`, `#EXT-X-ENDLIST`), their
+   audio renditions named by the copy's track IDs. Sheets are JPEGs
+   within the layout; the engine re-encodes them.
+6. Extras: titles of kind `extra`, keyed `<film, series or season
+   key>/x/<opaque>`, with `ExtraType` and an optional `Name`. Leave theme
+   songs and theme videos out.
+7. Local titles: `movie/local/<opaque>`, `series/local/<opaque>`, with
+   `Name`, `Year` and `Image`; make `<opaque>` with `OpaqueKeyPart`.
+   Implement `Images` to give their images. The operator shares them per
+   pairing (`SetLocal`) and per group (`SetGroupLocal`); show the
+   switches in your panel, off by default.
+8. Downloads and scans: `Limits` gains `Downloads`, `DownloadsPerDay`,
+   `DownloadKbps` and `ScansPerDay`, all 0 (none) by default: show them
+   in your panel.
+9. A store of your own implements `DownloadsTx`, or downloads' late
+   reports don't survive a restart.
+10. Your own clients' `HEAD` on media: answer it on a route of your own;
+    the engine answers `405` on its stream route, your tickets there
+    included.
+
+**A host that plays peers' titles (the viewer's side):**
+
+1. Read copies from the titles kept (`BestCopy`, `AudioLanguages`,
+   `SubtitleLanguages` replace `Audio`, `Subtitles`, `Pictures`,
+   `Video`, `Picture`, `BestPicture`); build your library from them,
+   never by reading a peer's file.
+2. `PlayRequest` gains `Purpose`, `Delivery`, `Container`, `Transcode`,
+   `AudioRenditions` and `Queue`; on `ErrDeliveryRefused`, ask again
+   with another delivery, or none.
+3. `RemotePlayback` gains `Purpose`, `Delivery`, `Etag`, `Size`,
+   `CopyChanged`, `BurnedTrack`, `Fonts` and `Queue`; `Segments` is gone
+   (the copy carries them), and so is a `Track`'s `Label`.
+4. To present a copy as a file of your own: answer your clients' `HEAD`
+   from the catalog (its size and etag); when a read fails, `Restart`
+   reads on under a new playback of the same etag (`ErrCopyChanged`
+   otherwise).
+5. Downloads: send their late reports with `ReportOffline`, for 30 days.
+   Previews before a first play: `Previews`; lyrics: `TrackLyrics`;
+   local titles' images: `TitleImage`, shown as the owner's. Music:
+   `PlayingTrack` names the queued track playing.
 
 ## v0.7.1 (2026-11-21)
 
