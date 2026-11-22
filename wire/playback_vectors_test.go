@@ -6,7 +6,6 @@ import (
 	"errors"
 	"reflect"
 	"regexp"
-	"strings"
 	"testing"
 	"time"
 )
@@ -18,9 +17,11 @@ type pbVectors struct {
 	Context  pbContext       `json:"context"`
 	Requests []pbCase        `json:"requests"`
 	Delivers []pbCase        `json:"deliveries"`
+	Baseline []pbCase        `json:"baseline"`
 	Downs    []pbCase        `json:"downloads"`
 	Scans    []pbCase        `json:"scans"`
 	Reports  []pbCase        `json:"reports"`
+	Queue    []pbQueueCase   `json:"queueEntries"`
 	Answers  []pbAnswerCase  `json:"answers"`
 	Restarts []pbRestartCase `json:"restarts"`
 	Limits   []pbLimitsCase  `json:"limits"`
@@ -30,7 +31,10 @@ type pbContext struct {
 	Copies        map[string][]pbCopy `json:"copies"`
 	VideoEncoders []string            `json:"videoEncoders"`
 	AudioEncoders []string            `json:"audioEncoders"`
+	Ranges        []string            `json:"ranges"`
+	SegmentCodecs map[string][]string `json:"segmentCodecs"`
 	OwnCapKbps    int                 `json:"ownCapKbps"`
+	ScanBytes     int64               `json:"scanBytes"`
 	Limits        Limits              `json:"limits"`
 	InUse         pbUse               `json:"inUse"`
 	StreamRoot    string              `json:"streamRoot"`
@@ -38,22 +42,24 @@ type pbContext struct {
 }
 
 type pbCopy struct {
-	ID          string `json:"id"`
-	Parts       int    `json:"parts"`
-	BitrateKbps int    `json:"bitrateKbps"`
-	Audio       []struct {
-		ID       string `json:"id"`
-		Language string `json:"language"`
-		Role     string `json:"role"`
-		Default  bool   `json:"default"`
-	} `json:"audio"`
-	Subtitles []string `json:"subtitles"`
+	ID         string       `json:"id"`
+	Parts      int          `json:"parts"`
+	Etag       string       `json:"etag"`
+	Size       int64        `json:"size"`
+	DurationMs int64        `json:"durationMs"`
+	Video      *VideoStream `json:"video"`
+	Audio      []CopyAudio  `json:"audio"`
+	Subtitles  []string     `json:"subtitles"`
 }
 
-func (c pbCopy) play() PlayCopy {
-	p := PlayCopy{ID: c.ID, Parts: c.Parts, BitrateKbps: c.BitrateKbps, Subtitles: c.Subtitles}
-	for _, a := range c.Audio {
-		p.Audio = append(p.Audio, CopyAudio{ID: a.ID, Language: a.Language, Role: a.Role, Default: a.Default})
+// copy is the context's copy as the catalog gives it.
+func (c pbCopy) copy() Copy {
+	p := Copy{ID: c.ID, Parts: c.Parts, ETag: c.Etag, Size: c.Size, DurationMs: c.DurationMs, Video: c.Video, AudioTracks: c.Audio}
+	if p.Parts == 1 {
+		p.Parts = 0
+	}
+	for _, s := range c.Subtitles {
+		p.SubtitleTracks = append(p.SubtitleTracks, CopySubtitle{ID: s})
 	}
 	return p
 }
@@ -68,17 +74,28 @@ type pbUse struct {
 }
 
 type pbCase struct {
-	Name     string   `json:"name"`
-	Call     string   `json:"call"`
-	By       string   `json:"by"`
-	Text     string   `json:"text"`
-	Valid    bool     `json:"valid"`
-	Status   int      `json:"status"`
-	Type     string   `json:"type"`
-	Output   string   `json:"output"`
-	Limits   *Limits  `json:"limits"`
-	InUse    *pbUse   `json:"inUse"`
-	Playback *pbState `json:"playback"`
+	Name      string   `json:"name"`
+	Call      string   `json:"call"`
+	Text      string   `json:"text"`
+	Valid     bool     `json:"valid"`
+	Status    int      `json:"status"`
+	Type      string   `json:"type"`
+	Output    string   `json:"output"`
+	Limits    *Limits  `json:"limits"`
+	InUse     *pbUse   `json:"inUse"`
+	Ranges    []string `json:"ranges"`
+	ScanBytes *int64   `json:"scanBytes"`
+	Playback  *pbState `json:"playback"`
+}
+
+type pbQueueCase struct {
+	Name    string `json:"name"`
+	Request string `json:"request"`
+	Entry   string `json:"entry"`
+	Valid   bool   `json:"valid"`
+	Status  int    `json:"status"`
+	Type    string `json:"type"`
+	Output  string `json:"output"`
 }
 
 type pbState struct {
@@ -91,12 +108,17 @@ type pbState struct {
 }
 
 type pbAnswerCase struct {
-	Name        string `json:"name"`
-	Text        string `json:"text"`
-	Delivery    string `json:"delivery"`
-	CatalogEtag string `json:"catalogEtag"`
-	Valid       bool   `json:"valid"`
-	Output      string `json:"output"`
+	Name  string `json:"name"`
+	Text  string `json:"text"`
+	Asked struct {
+		Purpose          string   `json:"purpose"`
+		Delivery         string   `json:"delivery"`
+		Part             string   `json:"part"`
+		CatalogEtag      string   `json:"catalogEtag"`
+		CatalogSubtitles []string `json:"catalogSubtitles"`
+	} `json:"asked"`
+	Valid  bool   `json:"valid"`
+	Output string `json:"output"`
 }
 
 type pbRestartCase struct {
@@ -189,22 +211,51 @@ func pbTree(t *testing.T, b []byte) any {
 func TestPlaybackVectors(t *testing.T) {
 	var v pbVectors
 	readVectors(t, "playback.json", &v)
-	if len(v.Requests)+len(v.Delivers)+len(v.Downs)+len(v.Scans) != 114+74+36+20 || len(v.Reports) != 56 ||
-		len(v.Answers) != 70 || len(v.Restarts) != 16 || len(v.Limits) != 23 {
+	if len(v.Requests) != 95 || len(v.Delivers) != 107 || len(v.Baseline) != 21 || len(v.Downs) != 36 || len(v.Scans) != 19 ||
+		len(v.Reports) != 57 || len(v.Queue) != 21 || len(v.Answers) != 79 || len(v.Restarts) != 17 || len(v.Limits) != 21 {
 		t.Fatal("not every case read")
 	}
 	now := time.Unix(v.Context.Now, 0)
-	for _, list := range [][]pbCase{v.Requests, v.Delivers, v.Downs, v.Scans, v.Reports} {
+	for _, list := range [][]pbCase{v.Requests, v.Delivers, v.Baseline, v.Downs, v.Scans, v.Reports} {
 		for _, c := range list {
 			switch {
 			case c.Call == "play":
-				out, err := pbPlay(v.Context, c, []byte(c.Text))
+				out, err := pbPlay(v.Context, c, []byte(c.Text), nil)
 				pbCheck(t, c, out, err)
 			default:
 				out, err := pbReport(c, now)
 				pbCheck(t, c, out, err)
 			}
 		}
+	}
+	for _, q := range v.Queue {
+		c := pbCase{Name: q.Name, Valid: q.Valid, Status: q.Status, Type: q.Type, Output: q.Output}
+		var req struct {
+			Title string          `json:"title"`
+			Queue json.RawMessage `json:"queue"`
+		}
+		_ = json.Unmarshal([]byte(q.Request), &req)
+		r, err := ReadPlay([]byte(q.Request), pbPlayableKey)
+		if err != nil {
+			t.Fatalf("%s: the request: %v", q.Name, err)
+		}
+		var ask QueueAsk
+		asked, err := CheckQueue(req.Title, json.RawMessage("["+q.Entry+"]"))
+		if err == nil {
+			ask = asked[0]
+		}
+		var out any
+		if err == nil {
+			var entry PlayRequest
+			if entry, err = ask.Request(r); err == nil {
+				out, err = pbPlay(v.Context, c, nil, &entry)
+			}
+		}
+		if m, ok := out.(map[string]any); ok {
+			delete(m, "counts")
+			delete(m, "idleSeconds")
+		}
+		pbCheck(t, c, out, err)
 	}
 }
 
@@ -221,8 +272,8 @@ func pbCheck(t *testing.T, c pbCase, out any, err error) {
 }
 
 // pbPlay is an owning server's play, section 2.2's steps, of the
-// context's copies and limits.
-func pbPlay(ctx pbContext, c pbCase, body []byte) (any, error) {
+// context's copies and limits: of body, or of a queue entry's request.
+func pbPlay(ctx pbContext, c pbCase, body []byte, entry *PlayRequest) (any, error) {
 	lim, use := ctx.Limits, ctx.InUse
 	if c.Limits != nil {
 		lim = *c.Limits
@@ -230,22 +281,34 @@ func pbPlay(ctx pbContext, c pbCase, body []byte) (any, error) {
 	if c.InUse != nil {
 		use = *c.InUse
 	}
+	ranges, scanBytes := ctx.Ranges, ctx.ScanBytes
+	if c.Ranges != nil {
+		ranges = c.Ranges
+	}
+	if c.ScanBytes != nil {
+		scanBytes = *c.ScanBytes
+	}
 	u := LimitUse(use)
 	// 1.
-	r, err := ReadPlay(body, pbPlayableKey)
-	if err != nil {
-		return nil, err
+	var r PlayRequest
+	if entry != nil {
+		r = *entry
+	} else {
+		var err error
+		if r, err = ReadPlay(body, pbPlayableKey); err != nil {
+			return nil, err
+		}
 	}
 	// 2.
 	if err := lim.Open(r.Purpose); err != nil {
 		return nil, err
 	}
 	// 3, 4.
-	var copies []PlayCopy
+	var copies []Copy
 	for _, c := range ctx.Copies[r.Title] {
-		copies = append(copies, c.play())
+		copies = append(copies, c.copy())
 	}
-	i := ChooseCopy(copies, r.VersionID, r.AudioLanguage)
+	i := PickCopy(copies, r.VersionID)
 	if i < 0 {
 		return nil, &PlayRefusal{404, ProblemNotFound, "no copy"}
 	}
@@ -253,8 +316,7 @@ func pbPlay(ctx pbContext, c pbCase, body []byte) (any, error) {
 		return nil, badPlay("a malformed track ID")
 	}
 	cp := copies[i]
-	audio := ChooseAudio(cp.Audio, r.AudioTrack, r.AudioLanguage)
-	named := cp.ID == r.VersionID && audio == r.AudioTrack
+	audio := DefaultAudio(cp.AudioTracks, r.AudioTrack)
 	// 5.
 	if err := lim.Room(r.Purpose, u); err != nil {
 		return nil, err
@@ -265,13 +327,14 @@ func pbPlay(ctx pbContext, c pbCase, body []byte) (any, error) {
 		capKbps = r.BitrateCap(ctx.OwnCapKbps, lim.BitrateKbps)
 	}
 	// 7.
-	picture := !strings.HasPrefix(r.Title, "track/")
-	if err := RefuseDelivery(r, cp, capKbps, picture, Encoders{Video: ctx.VideoEncoders, Audio: ctx.AudioEncoders}); err != nil {
+	enc := Encoders{Video: ctx.VideoEncoders, Audio: ctx.AudioEncoders, Ranges: ranges, Segments: ctx.SegmentCodecs}
+	served, err := Serve(r, cp, audio, capKbps, enc)
+	if err != nil {
 		return nil, err
 	}
 	// 8.
 	transcodes := ""
-	if r.Delivery == DeliveryTranscode {
+	if served.Transcodes {
 		if err := lim.TranscodeRoom(r.Purpose, u); err != nil {
 			return nil, err
 		}
@@ -279,51 +342,38 @@ func pbPlay(ctx pbContext, c pbCase, body []byte) (any, error) {
 		if r.Purpose == PurposeDownload {
 			transcodes = "server"
 		}
-		t := TranscodeTargets{}
-		if r.Transcode != nil {
-			t = *r.Transcode
-		}
-		t = t.WithBaseline(picture)
-		r.Transcode = &t
 	}
-	baseline := ""
+	out := map[string]any{"title": r.Title, "purpose": r.Purpose, "versionId": cp.ID, "audioTrack": audio,
+		"startPositionMs": r.StartPositionMs, "transcodes": transcodes}
+	set := func(k string, v any, ok bool) {
+		if ok {
+			out[k] = v
+		}
+	}
+	set("delivery", r.Delivery, r.Delivery != "")
+	set("mediaType", r.MediaType, r.MediaType != "")
+	set("transcode", served.Transcode, served.Transcode != nil)
+	set("audioRenditions", true, r.AudioRenditions)
 	if r.Delivery == "" {
-		baseline = "h264 aac hls"
-		if !picture {
-			baseline = "aac hls"
+		b := map[string]any{"audio": served.Audio, "method": served.Method}
+		set := func(k, v string) {
+			if v != "" {
+				b[k] = v
+			}
 		}
+		set("video", served.Video)
+		out["baseline"] = b
 	}
-	out := struct {
-		PlayRequest
-		Baseline string `json:"baseline,omitempty"`
-		Copy     string `json:"versionId"`
-		Audio    string `json:"audioTrack"`
-		Defaults bool   `json:"defaults,omitempty"`
-		Start    int64  `json:"startPositionMs"`
-		Cap      int    `json:"bitrateCapKbps,omitempty"`
-		Speed    int    `json:"speedCapKbps,omitempty"`
-		Counts   string `json:"counts"`
-		Codes    string `json:"transcodes,omitempty"`
-		Ticket   int    `json:"ticketSeconds,omitempty"`
-		Idle     int    `json:"idleSeconds,omitempty"`
-		ReadCap  int64  `json:"readCapBytes,omitempty"`
-		NoTitle  string `json:"title"`
-		NoSubLan string `json:"subtitleLanguage,omitempty"`
-	}{PlayRequest: r, Baseline: baseline, Copy: cp.ID, Audio: audio, Defaults: !named, Start: r.StartPositionMs, Cap: capKbps,
-		Codes: transcodes, Ticket: int(Life(r.Purpose).Seconds()), NoTitle: r.Title}
-	// The vectors' output holds no request member it doesn't list.
-	out.PlayRequest.AudioLanguage, out.PlayRequest.SubtitleTrack, out.PlayRequest.MaxBitrateKbps = "", "", 0
-	out.PlayRequest.VersionID, out.PlayRequest.AudioTrack = "", ""
-	if Idles(r.Purpose) {
-		out.Idle = int(IdleEnd.Seconds())
-	}
+	set("bitrateCapKbps", capKbps, capKbps > 0)
+	set("idleSeconds", int(IdleEnd.Seconds()), Idles(r.Purpose))
+	set("ticketSeconds", int(Life(r.Purpose).Seconds()), Life(r.Purpose) > 0)
 	switch r.Purpose {
 	case PurposePlay:
-		out.Counts = "streams"
+		out["counts"] = "streams"
 	case PurposeDownload:
-		out.Counts, out.Speed, out.Start = "downloads", lim.DownloadKbps, 0
+		out["counts"], out["speedCapKbps"], out["startPositionMs"] = "downloads", lim.DownloadKbps, 0
 	case PurposeScan:
-		out.Counts, out.ReadCap = "scansPerDay", lim.ScanCap()
+		out["counts"], out["scanBytes"] = "scansPerDay", scanBytes
 	}
 	return out, nil
 }
@@ -359,14 +409,22 @@ func TestPlaybackAnswerVectors(t *testing.T) {
 	var v pbVectors
 	readVectors(t, "playback.json", &v)
 	for _, c := range v.Answers {
-		a, err := ReadPlayAnswer([]byte(c.Text), c.Delivery, v.Context.StreamRoot, c.CatalogEtag)
+		ask := Asked{Purpose: c.Asked.Purpose, Delivery: c.Asked.Delivery, Part: c.Asked.Part, CatalogEtag: c.Asked.CatalogEtag}
+		for _, s := range c.Asked.CatalogSubtitles {
+			ask.Subtitles = append(ask.Subtitles, CopySubtitle{ID: s})
+		}
+		a, err := ReadPlayAnswer([]byte(c.Text), ask)
 		switch {
 		case !c.Valid && err == nil:
 			t.Errorf("%s: kept %+v", c.Name, a)
 		case c.Valid && err != nil:
 			t.Errorf("%s: refused", c.Name)
 		case c.Valid:
-			pbSame(t, c.Name, a, c.Output)
+			out := struct {
+				PlayAnswer
+				URLs []string `json:"urls"`
+			}{a, a.URLs(v.Context.StreamRoot, 0)}
+			pbSame(t, c.Name, out, c.Output)
 		}
 	}
 }
@@ -379,7 +437,7 @@ func TestPlaybackRestartVectors(t *testing.T) {
 		if err := json.Unmarshal([]byte(c.Request), &req); err != nil {
 			t.Fatal(err)
 		}
-		o := Restart(c.Reading, req, c.Status, []byte(c.Answer), v.Context.StreamRoot)
+		o := Restart(c.Reading, req, c.Status, []byte(c.Answer))
 		if o.Join != c.Valid {
 			t.Errorf("%s: join %v", c.Name, o.Join)
 		}
@@ -400,7 +458,7 @@ func TestLimitsVectors(t *testing.T) {
 			continue
 		}
 		out := map[string]any{"downloads": k.Downloads, "downloadsPerDay": k.DownloadsPerDay, "downloadKbps": k.DownloadKbps,
-			"scansPerDay": k.ScansPerDay, "scanBytes": k.ScanBytes, "offersDownloads": k.OffersDownloads(), "offersScans": k.OffersScans()}
+			"scansPerDay": k.ScansPerDay, "offersDownloads": k.OffersDownloads(), "offersScans": k.OffersScans()}
 		for _, m := range []struct {
 			name string
 			has  bool
@@ -424,7 +482,7 @@ func TestLimitsVectors(t *testing.T) {
 // A request a viewer's server builds is one ReadPlay reads back as it is.
 func TestPlayRequestRoundTrip(t *testing.T) {
 	in := PlayRequest{Title: "movie/tmdb/949", Delivery: DeliveryTranscode,
-		Transcode: &TranscodeTargets{VideoCodec: "vvc", MaxHeight: 1080, BurnSubtitle: "s4"}, MaxBitrateKbps: 25999, AudioTrack: "a2"}
+		Transcode: &TranscodeTargets{VideoCodec: CodecCopy, AudioCodec: "opus", BurnSubtitle: "s4", Range: RangeKeep}, MaxBitrateKbps: 25999, AudioTrack: "a2"}
 	b, err := Marshal(in)
 	if err != nil {
 		t.Fatal(err)
@@ -453,8 +511,6 @@ func TestLimitsCheck(t *testing.T) {
 	for _, bad := range []func(*Limits){
 		func(l *Limits) { l.Transcodes = 3 },
 		func(l *Limits) { l.Streams = 1001 },
-		func(l *Limits) { l.ScanBytes = MinScanBytes - 1 },
-		func(l *Limits) { l.ScanBytes = MaxScanBytes + 1 },
 		func(l *Limits) { l.ScansPerDay = 1_000_001 },
 		func(l *Limits) { l.DownloadKbps = -1 },
 		func(l *Limits) { l.AudioTranscodes = 1 },
@@ -464,5 +520,8 @@ func TestLimitsCheck(t *testing.T) {
 		if l.Check() == nil {
 			t.Errorf("%+v accepted", l)
 		}
+	}
+	if ScanCap(0) != MinScanBytes || ScanCap(MaxScanBytes+1) != MinScanBytes || ScanCap(32<<20) != 32<<20 {
+		t.Error("ScanCap")
 	}
 }

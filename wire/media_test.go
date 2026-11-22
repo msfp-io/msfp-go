@@ -291,7 +291,7 @@ func TestMediaScanVectors(t *testing.T) {
 	}
 	for _, c := range v.Scans {
 		status, cr := 416, UnsatisfiedRange(c.Size)
-		capBytes := Limits{ScanBytes: c.ScanBytes}.ScanCap()
+		capBytes := ScanCap(int64(c.ScanBytes))
 		if start, end, ok := ScanSpan(c.Sent, c.Range, c.Size, capBytes); ok {
 			status, cr = 206, ContentRange(start, end, c.Size)
 			if c.Sent+end-start+1 > capBytes {
@@ -378,5 +378,28 @@ func TestMediaWholeTrackBounds(t *testing.T) {
 	}
 	if _, ok := RebuildWholeASS([]byte("[Script Info]\n" + strings.Repeat(" ", MaxWholeText))); ok {
 		t.Error("a whole track over 16 MiB")
+	}
+}
+
+// relayTypes of media.json (media section 3): the Content-Type a viewer's
+// server relays a copy's file and a segment with.
+func TestRelayTypeVectors(t *testing.T) {
+	var v struct {
+		RelayTypes []struct {
+			Name, What, Value, Output string
+		} `json:"relayTypes"`
+	}
+	readVectors(t, "media.json", &v)
+	if len(v.RelayTypes) == 0 {
+		t.Fatal("no cases")
+	}
+	for _, c := range v.RelayTypes {
+		got := RelayedMediaType(c.Value)
+		if c.What == "file" {
+			got = RelayedFileType(c.Value)
+		}
+		if got != c.Output {
+			t.Errorf("%s: %q, want %q", c.Name, got, c.Output)
+		}
 	}
 }

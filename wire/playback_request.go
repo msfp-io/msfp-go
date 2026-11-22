@@ -32,6 +32,12 @@ const (
 	MethodTranscode = "transcode"
 )
 
+// The protocols of a play answer (playback section 2.3).
+const (
+	ProtocolHLS  = "hls"
+	ProtocolFile = "file"
+)
+
 // The problem types of playback's refusals (playback sections 2.5, 3, 4).
 const (
 	ProblemInvalid         = "invalid-request"
@@ -53,19 +59,37 @@ const (
 // section 2.7).
 var ChannelSteps = []int{2, 6, 8}
 
-// RemuxContainers are the containers a remux is made in (playback
-// section 2.7), as ffmpeg names them: MPEG-TS and fragmented MP4
-// segments, the two segment formats of HLS. Another token is refused
-// with 409 delivery-refused.
-var RemuxContainers = []string{"mpegts", "mp4"}
+// The segment formats of HLS (playback section 2.7): a remux names one
+// as its media type's subtype, video/<sub> or, for a copy with no video,
+// audio/<sub>. Another well-formed media type is refused with 409
+// delivery-refused.
+const (
+	SegmentsTS  = "mp2t" // MPEG-TS segments
+	SegmentsMP4 = "mp4"  // fragmented MP4 segments
+)
 
 // The baseline every viewer's server plays (playback section 2.7): what
 // the owning server serves without delivery, and the values of the
-// transcode targets left out. A track's baseline is BaselineAudio alone.
+// transcode targets left out. A copy with no video's baseline is
+// BaselineAudio alone.
 const (
 	BaselineVideo    = "h264"
 	BaselineAudio    = "aac"
 	BaselineChannels = 2
+)
+
+// CodecCopy is the value of a transcode's videoCodec or audioCodec that
+// serves that stream unchanged (playback section 2.7): a closed
+// mechanic, not a registry token.
+const CodecCopy = "copy"
+
+// The range of a transcode's picture (playback section 2.7): sdr
+// (tone-mapped to SDR, 8-bit, BT.709), the default, or keep (the copy's
+// transfer and primaries kept, 10-bit; HDR10+ kept where the codec
+// carries it).
+const (
+	RangeSDR  = "sdr"
+	RangeKeep = "keep"
 )
 
 // PlayRefusal is an owning server's refusal of a play, a progress or a
@@ -83,15 +107,17 @@ func badPlay(why string) *PlayRefusal { return &PlayRefusal{400, ProblemInvalid,
 func refusedDelivery(why string) *PlayRefusal { return &PlayRefusal{409, ProblemDeliveryRefused, why} }
 
 // TranscodeTargets are a play's transcode object (playback section 2.7,
-// video section 5.1). The codecs are tokens, as ffmpeg names its
-// encoders' codecs; each target left out takes the baseline's value
-// (WithBaseline).
+// video section 5.1). The codecs are registry tokens, or CodecCopy for a
+// stream served unchanged; Range is RangeSDR or RangeKeep. Each target
+// left out takes the baseline's value: Serve gives the targets the
+// owning server makes.
 type TranscodeTargets struct {
 	VideoCodec     string `json:"videoCodec,omitempty"`
 	MaxHeight      int    `json:"maxHeight,omitempty"`
 	MaxBitrateKbps int    `json:"maxBitrateKbps,omitempty"`
 	AudioCodec     string `json:"audioCodec,omitempty"`
 	AudioChannels  int    `json:"audioChannels,omitempty"`
+	Range          string `json:"range,omitempty"`
 	BurnSubtitle   string `json:"burnSubtitle,omitempty"`
 }
 
@@ -99,67 +125,46 @@ type TranscodeTargets struct {
 // maxHeight, maxBitrateKbps or both.
 func (t TranscodeTargets) Sized() bool { return t.MaxHeight != 0 || t.MaxBitrateKbps != 0 }
 
-// WithBaseline is t with the baseline's values for the targets left out
-// (playback section 2.7): videoCodec h264, audioCodec aac, audioChannels
-// 2; maxHeight left out is the copy's own height, maxBitrateKbps no cap
-// but step 6's. For a title without a picture (a track) the video
-// targets are dropped, an unknown codec too.
-func (t TranscodeTargets) WithBaseline(picture bool) TranscodeTargets {
-	if !picture {
-		t.VideoCodec, t.MaxHeight, t.BurnSubtitle = "", 0, ""
-	} else if t.VideoCodec == "" {
-		t.VideoCodec = BaselineVideo
-	}
-	if t.AudioCodec == "" {
-		t.AudioCodec = BaselineAudio
-	}
-	if t.AudioChannels == 0 {
-		t.AudioChannels = BaselineChannels
-	}
-	return t
-}
-
 // PlayRequest is play's request, as ReadPlay reads it and as a viewer's
 // server sends it (Marshal leaves out what is empty). Purpose is
-// PurposePlay when the request says none. Delivery and Container are
-// tokens, of their lists or not: one not of its list is refused at step
-// 7 (RefuseDelivery). The request says nothing of the viewer's device:
-// without Delivery, the owning server serves the baseline. Music's queue
-// is music's.
+// PurposePlay when the request says none. Delivery is a token and
+// MediaType a media type, of their lists or not: one not of its list is
+// refused at step 7 (Serve). The request says nothing of the viewer's
+// device and names no language: the viewer's server chooses the copy
+// (VersionID; without it, the first) and the audio (AudioTrack; without
+// it, the file's default), and without Delivery the owning server serves
+// the baseline. A subtitle is named only to burn it in
+// (Transcode.BurnSubtitle).
 type PlayRequest struct {
 	Title           string            `json:"title"`
 	Purpose         string            `json:"purpose,omitempty"`
 	Delivery        string            `json:"delivery,omitempty"`
-	Container       string            `json:"container,omitempty"`
+	MediaType       string            `json:"mediaType,omitempty"`
 	Transcode       *TranscodeTargets `json:"transcode,omitempty"`
 	AudioRenditions bool              `json:"audioRenditions,omitempty"`
 	StartPositionMs int64             `json:"startPositionMs,omitempty"`
 	MaxBitrateKbps  int               `json:"maxBitrateKbps,omitempty"`
-	AudioLanguage   string            `json:"audioLanguage,omitempty"`
 	AudioTrack      string            `json:"audioTrack,omitempty"`
 	VersionID       string            `json:"versionId,omitempty"`
-	// Video's (video section 5.1).
-	SubtitleLanguage string `json:"subtitleLanguage,omitempty"`
-	SubtitleTrack    string `json:"subtitleTrack,omitempty"`
+	// Queue is music's (music section 5.2), as a viewer's server sends
+	// it; ReadPlay leaves it to CheckQueue.
+	Queue []QueueAsk `json:"queue,omitempty"`
 
-	// emptyTrack: the request had an audioTrack, a subtitleTrack or a
-	// burnSubtitle that was "" (or a burnSubtitle that wasn't a string),
-	// which reads as absent but is malformed.
+	// emptyTrack: the request had an audioTrack or a burnSubtitle that
+	// was "" (or a burnSubtitle that wasn't a string), which reads as
+	// absent but is malformed.
 	emptyTrack bool
 }
 
 // TrackIDsOK says whether the request's track IDs have their forms, as
 // step 4 of playback section 2.2 checks them once the copy is chosen:
-// audioTrack a<n>, subtitleTrack s<n> or off, transcode.burnSubtitle
-// s<n> (never off); n from 0 to 999 without leading zeros.
+// audioTrack a<n>, transcode.burnSubtitle s<n>; n from 0 to 999 without
+// leading zeros.
 func (r PlayRequest) TrackIDsOK() bool {
 	if r.emptyTrack {
 		return false
 	}
 	if _, ok := TrackID(r.AudioTrack, 'a'); r.AudioTrack != "" && !ok {
-		return false
-	}
-	if _, ok := TrackID(r.SubtitleTrack, 's'); r.SubtitleTrack != "" && r.SubtitleTrack != "off" && !ok {
 		return false
 	}
 	if r.Transcode != nil && r.Transcode.BurnSubtitle != "" {
@@ -218,20 +223,22 @@ func (r PlayRequest) BitrateCap(own, pairing int) int {
 // playMembers are the members of play's request this part and video
 // know: null in any of them, anywhere, refuses the request (core section
 // 2.3).
-var playMembers = []string{"title", "purpose", "delivery", "container", "transcode", "audioRenditions",
-	"startPositionMs", "maxBitrateKbps", "audioLanguage", "audioTrack", "versionId", "subtitleLanguage", "subtitleTrack"}
+var playMembers = []string{"title", "purpose", "delivery", "mediaType", "transcode", "audioRenditions",
+	"startPositionMs", "maxBitrateKbps", "audioTrack", "versionId"}
 
 // ReadPlay reads play's request as step 1 of playback section 2.2 checks
 // it: an I-JSON object; title a key playable says play takes (nil:
-// ParseKey's); purpose of its list; delivery and container tokens (core
-// section 8.5), container with delivery remux only, and then required; a
-// transcode object with delivery transcode only, its codecs tokens and
-// its numbers of their values; numbers in range; languages valid tags
-// (LanguageTag); purpose and delivery together as PurposeAllows says. A
-// refusal is a *PlayRefusal (400). Unknown members are ignored,
-// capabilities among them. Track IDs are checked later, at step 4
-// (TrackIDsOK); a delivery, a container or a codec the owning server
-// doesn't make, at step 7 (RefuseDelivery).
+// ParseKey's); purpose of its list; delivery a token and mediaType a
+// media type (core section 8.5), mediaType with delivery remux only, and
+// then required; a transcode object with delivery transcode only, its
+// codecs and range tokens and its numbers of their values; numbers in
+// range; purpose and delivery together as PurposeAllows says. A refusal
+// is a *PlayRefusal (400). Unknown members are ignored, those of earlier
+// drafts among them (capabilities, container, audioLanguage,
+// subtitleLanguage, subtitleTrack). Track IDs are checked later, at step
+// 4 (TrackIDsOK); a delivery, a media type, a codec or a range the
+// owning server doesn't make, at step 7 (Serve). Music's queue is left
+// to CheckQueue.
 func ReadPlay(body []byte, playable func(title string) bool) (PlayRequest, error) {
 	o, err := requestObject(body, playMembers)
 	if err != nil {
@@ -257,31 +264,8 @@ func ReadPlay(body []byte, playable func(title string) bool) (PlayRequest, error
 	} else if !slices.Contains([]string{PurposePlay, PurposeDownload, PurposeScan}, r.Purpose) {
 		return r, badPlay("purpose isn't play, download or scan")
 	}
-	if r.Delivery, have, err = o.text("delivery"); err != nil {
+	if err := o.readDelivery(&r); err != nil {
 		return r, err
-	} else if have && !Token(r.Delivery) {
-		return r, badPlay("delivery isn't a token")
-	}
-	if r.Container, have, err = o.text("container"); err != nil {
-		return r, err
-	}
-	switch {
-	case have && r.Delivery != DeliveryRemux:
-		return r, badPlay("container without delivery remux")
-	case have && !Token(r.Container):
-		return r, badPlay("container isn't a token")
-	case !have && r.Delivery == DeliveryRemux:
-		return r, badPlay("delivery remux without container")
-	}
-	if v, ok := o["transcode"]; ok {
-		if r.Delivery != DeliveryTranscode {
-			return r, badPlay("a transcode object without delivery transcode")
-		}
-		t, empty, err := readTargets(v)
-		if err != nil {
-			return r, err
-		}
-		r.Transcode, r.emptyTrack = &t, r.emptyTrack || empty
 	}
 	if r.AudioRenditions, _, err = o.boolean("audioRenditions"); err != nil {
 		return r, err
@@ -294,28 +278,13 @@ func ReadPlay(body []byte, playable func(title string) bool) (PlayRequest, error
 		return r, err
 	}
 	r.MaxBitrateKbps = int(kbps)
-	for _, l := range []struct {
-		name string
-		dst  *string
-	}{{"audioLanguage", &r.AudioLanguage}, {"subtitleLanguage", &r.SubtitleLanguage}} {
-		if *l.dst, have, err = o.text(l.name); err != nil {
-			return r, err
-		} else if have && !LanguageTag(*l.dst) {
-			return r, badPlay(l.name + " isn't a valid tag")
-		}
-	}
 	if r.VersionID, _, err = o.text("versionId"); err != nil {
 		return r, err
 	}
-	for _, t := range []struct {
-		name string
-		dst  *string
-	}{{"audioTrack", &r.AudioTrack}, {"subtitleTrack", &r.SubtitleTrack}} {
-		if *t.dst, have, err = o.text(t.name); err != nil {
-			return r, err
-		} else if have && *t.dst == "" {
-			r.emptyTrack = true
-		}
+	if r.AudioTrack, have, err = o.text("audioTrack"); err != nil {
+		return r, err
+	} else if have && r.AudioTrack == "" {
+		r.emptyTrack = true
 	}
 	if !PurposeAllows(r.Purpose, r.Delivery, r.Transcode) {
 		return r, badPlay("purpose " + r.Purpose + " doesn't take that delivery")
@@ -323,11 +292,45 @@ func ReadPlay(body []byte, playable func(title string) bool) (PlayRequest, error
 	return r, nil
 }
 
+// readDelivery reads delivery, mediaType and transcode into r: a
+// request's, or a queue entry's own (music section 5.2).
+func (o members) readDelivery(r *PlayRequest) error {
+	var have bool
+	var err error
+	if r.Delivery, have, err = o.text("delivery"); err != nil {
+		return err
+	} else if have && !Token(r.Delivery) {
+		return badPlay("delivery isn't a token")
+	}
+	if r.MediaType, have, err = o.text("mediaType"); err != nil {
+		return err
+	}
+	switch {
+	case have && r.Delivery != DeliveryRemux:
+		return badPlay("mediaType without delivery remux")
+	case have && !IsMediaType(r.MediaType):
+		return badPlay("mediaType isn't a media type")
+	case !have && r.Delivery == DeliveryRemux:
+		return badPlay("delivery remux without mediaType")
+	}
+	if v, ok := o["transcode"]; ok {
+		if r.Delivery != DeliveryTranscode {
+			return badPlay("a transcode object without delivery transcode")
+		}
+		t, empty, err := readTargets(v)
+		if err != nil {
+			return err
+		}
+		r.Transcode, r.emptyTrack = &t, r.emptyTrack || empty
+	}
+	return nil
+}
+
 // readTargets reads a transcode object (playback section 2.7, video
-// section 5.1): the codecs tokens, the numbers of their values, else
-// refused (400); a codec the owning server doesn't encode is refused at
-// step 7 (RefuseDelivery). empty
-// says burnSubtitle was "" or not a string (malformed, refused at step 4 with the track
+// section 5.1): the codecs and the range tokens, the numbers of their
+// values, else refused (400); a codec or a range the owning server
+// doesn't make is refused at step 7 (Serve). empty says burnSubtitle
+// was "" or not a string (malformed, refused at step 4 with the track
 // IDs).
 func readTargets(v any) (t TranscodeTargets, empty bool, err error) {
 	m, ok := v.(map[string]any)
@@ -338,7 +341,7 @@ func readTargets(v any) (t TranscodeTargets, empty bool, err error) {
 	for _, s := range []struct {
 		name string
 		dst  *string
-	}{{"videoCodec", &t.VideoCodec}, {"audioCodec", &t.AudioCodec}} {
+	}{{"videoCodec", &t.VideoCodec}, {"audioCodec", &t.AudioCodec}, {"range", &t.Range}} {
 		val, have, err := o.text(s.name)
 		if err != nil {
 			return t, false, err

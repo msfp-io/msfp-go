@@ -205,31 +205,24 @@ func CheckImageRequest(on func(part string) bool, body []byte, image func(key st
 	return *req.Title, 200, ""
 }
 
-// ImageURL is the url of an image call's answer: <stream root><ticket>/image
-// (catalog section 4.4, media section 1). The ticket works for 10
+// ImageURL is the URL a viewer's server builds from an image call's
+// ticket: <stream root><ticket>/image (catalog section 4.4, media
+// section 1). The ticket works for 10
 // minutes, for that URL only, and is no playback.
 func ImageURL(root, ticket string) string { return root + ticket + "/image" }
 
-// ReadImageAnswer checks an image call's answer against the owning
-// server's stream root (catalog section 4.4): url exactly
-// <root><ticket>/image, compared as sent, the ticket of ID's form. It
-// gives the ticket; false drops the answer.
-func ReadImageAnswer(body []byte, root string) (ticket string, ok bool) {
+// ReadImageAnswer reads an image call's answer (catalog section 4.4):
+// {"ticket"}, the ticket of ID's form; false drops the answer, and no
+// image is fetched. The image's URL is built from it (ImageURL); a url
+// member of earlier drafts is ignored.
+func ReadImageAnswer(body []byte) (ticket string, ok bool) {
 	var a struct {
-		URL *string `json:"url"`
+		Ticket *string `json:"ticket"`
 	}
-	if DecodeAnswer(body, &a) != nil || a.URL == nil {
+	if DecodeAnswer(body, &a) != nil || a.Ticket == nil || !ID(*a.Ticket) {
 		return "", false
 	}
-	rest, ok := strings.CutPrefix(*a.URL, root)
-	if !ok {
-		return "", false
-	}
-	ticket, ok = strings.CutSuffix(rest, "/image")
-	if !ok || !ID(ticket) {
-		return "", false
-	}
-	return ticket, true
+	return *a.Ticket, true
 }
 
 // A local title's image (catalog section 4.4): at most MaxImageBytes (an

@@ -15,46 +15,44 @@ func TestTrackID(t *testing.T) {
 	}
 }
 
-// A play answer's stream URL is its stream root's, under one ticket, with
-// the name its protocol gives (media section 1).
-func TestStreamBase(t *testing.T) {
+// Every media URL is built from the stream root, the ticket and a
+// fixed name (media section 1, video section 6.1).
+func TestStreamURLs(t *testing.T) {
 	root := StreamRoot("https://b.example.org")
 	if root != "https://b.example.org/api/v1/stream/" {
 		t.Fatal(root)
 	}
-	if base, ok := StreamBase(root+"T1/master.m3u8", root, "hls"); !ok || base != root+"T1/" {
-		t.Errorf("%q %v", base, ok)
-	}
-	if _, ok := StreamBase(root+"T1/file", root, "file"); !ok {
-		t.Error("file refused")
-	}
-	for _, c := range []struct{ url, protocol string }{
-		{root + "T1/file", "hls"}, {root + "T1/master.m3u8", "file"}, {root + "T1/v0.m3u8", "hls"},
-		{root + "T1/master.m3u8", "dash"}, {root + "T1/master.m3u8?x", "hls"}, {root + "T1/master.m3u8#x", "hls"},
-		{root + "T%31/file", "file"}, {root + "/file", "file"}, {root + "T1//file", "file"}, {root + "../T1/file", "file"},
-		{root + "T1/x/file", "file"}, {"https://c.example.org/api/v1/stream/T1/file", "file"},
-		{"https://b.example.org/api/v1/stream//T1/file", "file"}, {root + "T1", "file"},
+	base := TicketBase(root, "T1")
+	for got, want := range map[string]string{
+		StreamURL(root, "T1", ProtocolHLS):    root + "T1/master.m3u8",
+		StreamURL(root, "T1", ProtocolFile):   root + "T1/file",
+		SubtitleURL(base, "s4", FormText):     root + "T1/subtitles/s4",
+		SubtitleURL(base, "s4", FormASS):      root + "T1/ass/s4",
+		SubtitleURL(base, "s6", FormPicture):  root + "T1/pictures/s6",
+		FontURL(base, 2):                      root + "T1/fonts/2",
+		SheetURL(base, 11):                    root + "T1/trickplay/11",
+		QueueURL(root, "T1", 2, ProtocolFile): root + "T1/queue/2/file",
+		ImageURL(root, "T1"):                  root + "T1/image",
 	} {
-		if _, ok := StreamBase(c.url, root, c.protocol); ok {
-			t.Errorf("%s (%s) accepted", c.url, c.protocol)
+		if got != want {
+			t.Errorf("%s, want %s", got, want)
 		}
 	}
 }
 
-func TestTrickplayBounds(t *testing.T) {
-	ok := Trickplay{TileWidth: 320, TileHeight: 180, Columns: 10, Rows: 10, IntervalMs: 10_000, TileCount: 250, Sheets: 3}
+func TestPreviewLayoutBounds(t *testing.T) {
+	ok := PreviewLayout{TileWidth: 320, TileHeight: 180, Columns: 10, Rows: 10, IntervalMs: 10_000, TileCount: 250}
 	if !ok.InBounds() || ok.SheetCount() != 3 {
 		t.Fatal("refused", ok.SheetCount())
 	}
-	for _, bad := range []func(*Trickplay){
-		func(t *Trickplay) { t.Sheets = 2 },
-		func(t *Trickplay) { t.TileWidth = 0 },
-		func(t *Trickplay) { t.TileWidth = 410 }, // 4,100 pixels across
-		func(t *Trickplay) { t.Rows = 101 },
-		func(t *Trickplay) { t.IntervalMs = 99 },
-		func(t *Trickplay) { t.IntervalMs = 3_600_001 },
-		func(t *Trickplay) { t.TileCount = 0; t.Sheets = 0 },
-		func(t *Trickplay) { t.Columns, t.Rows, t.TileCount, t.Sheets = 1, 1, 1001, 1001 },
+	for _, bad := range []func(*PreviewLayout){
+		func(t *PreviewLayout) { t.TileWidth = 0 },
+		func(t *PreviewLayout) { t.TileWidth = 410 }, // 4,100 pixels across
+		func(t *PreviewLayout) { t.Rows = 101 },
+		func(t *PreviewLayout) { t.IntervalMs = 99 },
+		func(t *PreviewLayout) { t.IntervalMs = 3_600_001 },
+		func(t *PreviewLayout) { t.TileCount = 0 },
+		func(t *PreviewLayout) { t.Columns, t.Rows, t.TileCount = 1, 1, 1001 },
 	} {
 		tp := ok
 		bad(&tp)
@@ -72,6 +70,15 @@ func TestRelayedMediaType(t *testing.T) {
 		"video/a b": "application/octet-stream", "": "application/octet-stream", "video/mp4/x": "application/octet-stream",
 	} {
 		if got := RelayedMediaType(in); got != want {
+			t.Errorf("%q: %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestRelayedFileType(t *testing.T) {
+	for in, want := range map[string]string{"video/matroska": "video/matroska", "application/mp4": "application/mp4",
+		"": "application/octet-stream", "video/MP4": "application/octet-stream"} {
+		if got := RelayedFileType(in); got != want {
 			t.Errorf("%q: %q, want %q", in, got, want)
 		}
 	}

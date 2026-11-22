@@ -122,6 +122,7 @@ func TestCatalogLocalImages(t *testing.T) {
 			Type       string    `json:"type"`
 			Valid      bool      `json:"valid"`
 			Ticket     string    `json:"ticket"`
+			URL        string    `json:"url"`
 			Format     string    `json:"format"`
 			Reason     string    `json:"reason"`
 		} `json:"localImages"`
@@ -145,11 +146,11 @@ func TestCatalogLocalImages(t *testing.T) {
 				t.Errorf("%s: title %q", c.Name, title)
 			}
 		case "answer":
-			ticket, ok := ReadImageAnswer([]byte(c.Body), c.StreamRoot)
+			ticket, ok := ReadImageAnswer([]byte(c.Body))
 			if ok != c.Valid || ticket != c.Ticket {
 				t.Errorf("%s: %q, %v; want %q, %v (%s)", c.Name, ticket, ok, c.Ticket, c.Valid, c.Reason)
 			}
-			if ok && ImageURL(c.StreamRoot, ticket) != c.StreamRoot+ticket+"/image" {
+			if ok && ImageURL(c.StreamRoot, ticket) != c.URL {
 				t.Errorf("%s: ImageURL", c.Name)
 			}
 		case "image":
@@ -227,22 +228,18 @@ func TestLanguageValidTag(t *testing.T) {
 	}
 }
 
-// openTokens and libraryKinds of strict.json (core section 8.5, catalog
-// section 2.2).
+// openTokens and openMediaTypes of strict.json (core section 8.5).
 func TestOpenTokens(t *testing.T) {
+	type valued struct {
+		Text  string `json:"text"`
+		Valid bool   `json:"valid"`
+	}
 	var v struct {
-		OpenTokens []struct {
-			Text  string `json:"text"`
-			Valid bool   `json:"valid"`
-		} `json:"openTokens"`
-		LibraryKinds []struct {
-			Name    string `json:"name"`
-			Library string `json:"library"`
-			Kind    string `json:"kind"`
-		} `json:"libraryKinds"`
+		OpenTokens     []valued `json:"openTokens"`
+		OpenMediaTypes []valued `json:"openMediaTypes"`
 	}
 	readVectors(t, "strict.json", &v)
-	if len(v.OpenTokens) == 0 || len(v.LibraryKinds) == 0 {
+	if len(v.OpenTokens) == 0 || len(v.OpenMediaTypes) == 0 {
 		t.Fatal("no cases")
 	}
 	for _, c := range v.OpenTokens {
@@ -250,13 +247,18 @@ func TestOpenTokens(t *testing.T) {
 			t.Errorf("%q: %v", c.Text, !c.Valid)
 		}
 	}
-	for _, c := range v.LibraryKinds {
-		var lib map[string]any
-		if err := json.Unmarshal([]byte(c.Library), &lib); err != nil {
-			t.Fatal(err)
+	for _, c := range v.OpenMediaTypes {
+		if IsMediaType(c.Text) != c.Valid {
+			t.Errorf("media type %q: %v", c.Text, !c.Valid)
 		}
-		if got := LibraryKind(lib["kind"]); got != c.Kind {
-			t.Errorf("%s: %q, want %q", c.Name, got, c.Kind)
+	}
+	for _, c := range []struct {
+		a, b string
+		same bool
+	}{{"video/mp4", "audio/mp4", true}, {"audio/matroska", "video/matroska", true}, {"audio/mpeg", "video/mpeg", false},
+		{"video/mp4", "video/mp4", true}, {"video/mp4", "video/quicktime", false}} {
+		if SameContainer(c.a, c.b) != c.same {
+			t.Errorf("SameContainer(%s, %s)", c.a, c.b)
 		}
 	}
 }

@@ -92,13 +92,13 @@ func ParseKey(key string) (TitleKey, bool) {
 // The bounds of a music title's description (music section 3), lengths
 // in code points.
 const (
-	MaxMusicName    = 256 // name and sortName
+	MaxMusicName    = 256 // a name
 	MaxArtistNames  = 512
 	MaxMusicArtists = 16
 	MaxGenres       = 8
 	MaxGenre        = 64
 	MaxDiscNumber   = 999 // disc and number, from 1
-	MaxMusicCopies  = 8
+	MaxMusicCopies  = 16
 )
 
 // MusicDescription are the bounds ReadDescription takes for a music
@@ -198,8 +198,6 @@ var musicIDs = map[string]struct {
 }{
 	"mbreleasegroup": {mbidRe, "album"},
 	"mbrecording":    {mbidRe, "track"},
-	"isrc":           {regexp.MustCompile(`^[A-Z]{2}[A-Z0-9]{3}[0-9]{7}$`), "track"},
-	"acoustid":       {mbidRe, "track"},
 }
 
 // MusicID says whether value is an identifier of a known scheme for a
@@ -220,10 +218,9 @@ func MusicID(kind, scheme, value string) bool {
 // ReadMusicTitle to send only what a receiver keeps.
 type MusicTitle struct {
 	Key            string            `json:"key"`
-	Kind           string            `json:"kind"`
+	Kind           string            `json:"-"` // its key's: a title carries no kind
 	Library        string            `json:"library"`
 	Name           string            `json:"name"`
-	SortName       string            `json:"sortName,omitempty"`
 	Artists        []string          `json:"artists,omitempty"`
 	ArtistNames    string            `json:"artistNames,omitempty"`
 	PrimaryType    string            `json:"primaryType,omitempty"`
@@ -241,25 +238,24 @@ type MusicTitle struct {
 }
 
 // MusicCopy is a track's copy (music section 3.3). The numbers that are
-// optional are 0 when absent (none of their ranges holds 0).
-// Container and Codec are ffmpeg's names, open (tokens); Codecs is the
-// RFC 6381 codecs string; DurationMs and BitrateKbps are exact.
+// optional are 0 when absent (none of their ranges holds 0). MediaType
+// is the file's media type and Codec the registry's token, both open;
+// Codecs is the RFC 6381 codecs string (required for aac and dts, as on
+// video: RequiresCodecs); DurationMs is exact. A copy carries no name,
+// no bitrate (Size × 8 / DurationMs) and no date.
 type MusicCopy struct {
-	ID          string      `json:"id"`
-	Name        string      `json:"name,omitempty"` // plain text; what it says is the owner's choice
-	DurationMs  int64       `json:"durationMs"`
-	Container   string      `json:"container"`
-	Codec       string      `json:"codec"`
-	Codecs      string      `json:"codecs,omitempty"`
-	Size        int64       `json:"size"`
-	Etag        string      `json:"etag"`
-	Added       string      `json:"added,omitempty"` // YYYY-MM-DD
-	BitrateKbps int         `json:"bitrateKbps,omitempty"`
-	SampleRate  int         `json:"sampleRate,omitempty"`
-	BitDepth    int         `json:"bitDepth,omitempty"`
-	Channels    int         `json:"channels,omitempty"`
-	ReplayGain  *ReplayGain `json:"replayGain,omitempty"`
-	Lyrics      string      `json:"lyrics,omitempty"` // plain or synced: the lyrics call gives them
+	ID         string      `json:"id"`
+	DurationMs int64       `json:"durationMs"`
+	MediaType  string      `json:"mediaType"`
+	Codec      string      `json:"codec"`
+	Codecs     string      `json:"codecs,omitempty"`
+	Size       int64       `json:"size"`
+	Etag       string      `json:"etag"`
+	SampleRate int         `json:"sampleRate,omitempty"`
+	BitDepth   int         `json:"bitDepth,omitempty"`
+	Channels   int         `json:"channels,omitempty"`
+	ReplayGain *ReplayGain `json:"replayGain,omitempty"`
+	Lyrics     string      `json:"lyrics,omitempty"` // plain or synced: the lyrics call gives them
 }
 
 // ReplayGain is a copy's loudness values, to the ReplayGain 2.0
@@ -277,10 +273,8 @@ type ReplayGain struct {
 const (
 	MaxMusicDurationMs = 86_400_000
 	// MaxCopySize (wire/copies.go) bounds a track copy's size too.
-	// MaxCopyName (wire/copies.go) bounds a track copy's name too.
-	MaxAudioBitrate = 100_000 // kbit/s, from 1
-	MaxGain         = 64      // dB, either way
-	MaxPeak         = 10
+	MaxGain = 64 // dB, either way
+	MaxPeak = 10
 )
 
 // R128Gain converts an EBU R128 gain (Opus's R128_TRACK_GAIN: 1/256 dB,
@@ -291,9 +285,8 @@ func R128Gain(q78 int) float64 { return float64(q78)/256 + 5 }
 
 // ReadMusicTitle reads one entry of a titles answer as catalog section
 // 3.3 and music section 3.2 say: false, to skip it, when it isn't an
-// object whose key, kind and library are strings, when the key isn't a
-// canonical music key of either scheme, when its kind isn't the key's,
-// when it has no name once cleaned, and for a track, when it is a
+// object whose key and library are strings, when the key isn't a
+// canonical music key of either scheme, when it has no name once cleaned, and for a track, when it is a
 // track/mb whose album isn't an album/mb key, or has no copy left (a
 // copies that isn't an array included). Every other member of the wrong
 // type, out of range or for another kind counts as absent; a bad entry
@@ -302,9 +295,7 @@ func R128Gain(q78 int) float64 { return float64(q78)/256 + 5 }
 func ReadMusicTitle(raw json.RawMessage) (MusicTitle, bool) {
 	var t struct {
 		Key            string          `json:"key"`
-		Kind           string          `json:"kind"`
 		Library        string          `json:"library"`
-		SortName       json.RawMessage `json:"sortName"`
 		Artists        json.RawMessage `json:"artists"`
 		ArtistNames    json.RawMessage `json:"artistNames"`
 		PrimaryType    json.RawMessage `json:"primaryType"`
@@ -324,14 +315,14 @@ func ReadMusicTitle(raw json.RawMessage) (MusicTitle, bool) {
 		return MusicTitle{}, false
 	}
 	k, ok := ParseMusicKey(t.Key)
-	if !ok || k.Kind != t.Kind {
+	if !ok {
 		return MusicTitle{}, false
 	}
 	d, ok := ReadDescription(raw, MusicDescription)
 	if !ok {
 		return MusicTitle{}, false
 	}
-	out := MusicTitle{Key: t.Key, Kind: t.Kind, Library: t.Library, Name: d.Name}
+	out := MusicTitle{Key: t.Key, Kind: k.Kind, Library: t.Library, Name: d.Name}
 	if k.Kind != "artist" {
 		for _, s := range stringsOf(t.Artists) {
 			if len(out.Artists) == MaxMusicArtists {
@@ -346,8 +337,6 @@ func ReadMusicTitle(raw json.RawMessage) (MusicTitle, bool) {
 	}
 	switch k.Kind {
 	case "album":
-		sortName, _ := musicString(t.SortName)
-		out.SortName = CleanText(sortName, MaxMusicName)
 		if pt, ok := musicString(t.PrimaryType); ok && MusicType(pt) {
 			out.PrimaryType = pt
 		}
@@ -393,8 +382,8 @@ func ReadMusicTitle(raw json.RawMessage) (MusicTitle, bool) {
 	if k.Local() && k.Kind != "track" {
 		out.Image = musicBool(t.Image)
 	}
-	var ids map[string]json.RawMessage // not an object: none
-	if json.Unmarshal(t.IDs, &ids) == nil {
+	var ids map[string]json.RawMessage // not an object: none; none on local titles
+	if json.Unmarshal(t.IDs, &ids) == nil && !k.Local() {
 		for scheme, v := range ids {
 			if value, ok := musicString(v); ok && MusicID(k.Kind, scheme, value) {
 				if out.IDs == nil {
@@ -412,7 +401,7 @@ func ReadMusicTitle(raw json.RawMessage) (MusicTitle, bool) {
 // MaxMusicCopies, the first. A copy is skipped alone when it isn't an
 // object, misses a required member or breaks its form (id and etag of
 // ID's form, size from 1 to MaxCopySize, durationMs from 1 to
-// MaxMusicDurationMs, container and codec tokens), or repeats a kept
+// MaxMusicDurationMs, mediaType a media type and codec a token), or repeats a kept
 // copy's id. Its optional members out of range or of the wrong type
 // count as absent; video's members of a copy are ignored.
 func ReadMusicCopies(raw json.RawMessage) ([]MusicCopy, bool) {
@@ -441,25 +430,16 @@ func readMusicCopy(raw json.RawMessage) (MusicCopy, bool) {
 	}
 	id, _ := musicString(o["id"])
 	etag, _ := musicString(o["etag"])
-	container, _ := musicString(o["container"])
+	mediaType, _ := musicString(o["mediaType"])
 	codec, _ := musicString(o["codec"])
 	duration, okDuration := musicInt(o["durationMs"], 1, MaxMusicDurationMs)
 	size, okSize := musicInt(o["size"], 1, MaxCopySize)
-	if !ID(id) || !ID(etag) || !Token(container) || !Token(codec) || !okDuration || !okSize {
+	if !ID(id) || !ID(etag) || !IsMediaType(mediaType) || !Token(codec) || !okDuration || !okSize {
 		return MusicCopy{}, false
 	}
-	c := MusicCopy{ID: id, DurationMs: duration, Container: container, Codec: codec, Size: size, Etag: etag}
+	c := MusicCopy{ID: id, DurationMs: duration, MediaType: mediaType, Codec: codec, Size: size, Etag: etag}
 	if codecs, ok := musicString(o["codecs"]); ok && copyCodecsRe.MatchString(codecs) {
 		c.Codecs = codecs
-	}
-	if name, ok := musicString(o["name"]); ok {
-		c.Name = CleanText(name, MaxCopyName)
-	}
-	if added, ok := musicString(o["added"]); ok && musicDay(added) {
-		c.Added = added
-	}
-	if b, ok := musicInt(o["bitrateKbps"], 1, MaxAudioBitrate); ok {
-		c.BitrateKbps = int(b)
 	}
 	rate, _ := musicInt(o["sampleRate"], 8_000, 768_000)
 	depth, _ := musicInt(o["bitDepth"], 8, 32)
@@ -481,13 +461,6 @@ func readMusicCopy(raw json.RawMessage) (MusicCopy, bool) {
 		c.Lyrics = l
 	}
 	return c, true
-}
-
-// musicDay says whether s is a valid date YYYY-MM-DD: a copy's added, as
-// for video.
-func musicDay(s string) bool {
-	_, err := time.Parse("2006-01-02", s)
-	return len(s) == 10 && err == nil
 }
 
 // musicString reads a JSON string; false for any other value, null and
@@ -561,4 +534,12 @@ func integerIn(raw json.RawMessage, lo, hi int64) int64 {
 		return none
 	}
 	return n
+}
+
+// AsCopy is a track's copy as a copy with no video, its one audio track
+// a0: what Serve and the choices of playback section 2.6 read.
+func (m MusicCopy) AsCopy() Copy {
+	return Copy{ID: m.ID, DurationMs: m.DurationMs, MediaType: m.MediaType, Size: m.Size, ETag: m.Etag,
+		AudioTracks: []CopyAudio{{ID: "a0", Codec: m.Codec, Codecs: m.Codecs, Channels: m.Channels,
+			SampleRate: m.SampleRate, BitDepth: m.BitDepth}}}
 }

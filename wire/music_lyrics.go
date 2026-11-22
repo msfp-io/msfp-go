@@ -15,8 +15,6 @@ const (
 	MaxLyricsSets   = 8
 	MaxLyricsLines  = 2000 // per set
 	MaxLyricsLine   = 512  // a line's value, in code points
-	MaxLyricsOffset = 600_000
-	MaxDisplayTitle = 256 // displayArtist takes MaxArtistNames
 )
 
 // LyricsKinds are OpenSubsonic's kinds of a lyrics set (music section
@@ -51,17 +49,18 @@ type LyricsAnswer struct {
 }
 
 // Lyrics is a set of lyrics, one per language, kind and timing. Lang is
-// a tag (LanguageTag), "" when unknown; Kind a token (LyricsKinds are examples); Offset
-// the milliseconds to add to every line's start.
+// a tag (LanguageTag), "" when unknown; Kind a token (LyricsKinds are
+// examples). A set is synced when its lines carry start (Synced); the
+// owning server has applied any offset before sending, and a viewer's
+// server takes the artist and the title from the track's own members.
 type Lyrics struct {
-	Lang          string       `json:"lang,omitempty"`
-	Kind          string       `json:"kind"`
-	Synced        bool         `json:"synced"`
-	Offset        int64        `json:"offset"`
-	DisplayArtist string       `json:"displayArtist,omitempty"`
-	DisplayTitle  string       `json:"displayTitle,omitempty"`
-	Line          []LyricsLine `json:"line"`
+	Lang string       `json:"lang,omitempty"`
+	Kind string       `json:"kind"`
+	Line []LyricsLine `json:"line"`
 }
+
+// Synced says whether a set is synced: its lines carry start.
+func (l Lyrics) Synced() bool { return len(l.Line) > 0 && l.Line[0].Start != nil }
 
 // LyricsLine is a line: plain text, never markup, possibly empty (a
 // pause), and for synced lyrics when it starts, in milliseconds from the
@@ -77,16 +76,16 @@ type LyricsLine struct {
 var ErrLyrics = errors.New("federation: lyrics outside what music section 6 allows")
 
 // ReadLyrics is what the viewer's server keeps of a lyrics answer (music
-// section 6): per set, synced a boolean, else the set is skipped; lang a
-// valid tag, else absent; kind a token, kept known or not, else main; offset an
-// integer within ±MaxLyricsOffset, else 0; displayArtist and
-// displayTitle cleaned (CleanText), empty counting as absent. Per line,
-// value a string, cleaned and cut to MaxLyricsLine but kept when empty;
-// for synced lyrics, start an integer from 0 to MaxMusicDurationMs, not
-// before the line kept before it, else the line is skipped; for plain
-// lyrics, start ignored. The first MaxLyricsLines lines and
+// section 6): per set, lang a valid tag, else absent; kind a token, kept
+// known or not, else main. Its lines left are the objects whose value is
+// a string: a set is synced when every one carries start, plain when
+// none does, and skipped when they mix. Per line, value cleaned and cut
+// to MaxLyricsLine but kept when empty; for a synced set, start an
+// integer from 0 to MaxMusicDurationMs, not before the line kept before
+// it, else the line is skipped. The first MaxLyricsLines lines and
 // MaxLyricsSets sets are kept, counting kept ones only; a set with no
-// line left is skipped.
+// line left is skipped. Members of earlier drafts (synced, offset,
+// displayArtist, displayTitle) are ignored.
 func ReadLyrics(body []byte) ([]Lyrics, error) {
 	if len(body) > MaxLyricsBytes {
 		return nil, ErrLyrics
@@ -120,30 +119,24 @@ func readLyrics(raw json.RawMessage) (Lyrics, bool) {
 	if json.Unmarshal(raw, &o) != nil || o == nil {
 		return Lyrics{}, false
 	}
-	synced := musicBool(o["synced"])
-	if synced == nil {
-		return Lyrics{}, false
-	}
-	s := Lyrics{Kind: LyricsKinds[0], Synced: *synced}
+	s := Lyrics{Kind: LyricsKinds[0]}
 	if lang, _ := musicString(o["lang"]); LanguageTag(lang) {
 		s.Lang = lang
 	}
 	if kind, _ := musicString(o["kind"]); Token(kind) {
 		s.Kind = kind
 	}
-	s.Offset, _ = musicInt(o["offset"], -MaxLyricsOffset, MaxLyricsOffset)
-	artist, _ := musicString(o["displayArtist"])
-	title, _ := musicString(o["displayTitle"])
-	s.DisplayArtist, s.DisplayTitle = CleanText(artist, MaxArtistNames), CleanText(title, MaxDisplayTitle)
-	var lines []json.RawMessage
+	var raws []json.RawMessage
 	if len(o["line"]) > 0 && o["line"][0] == '[' {
-		_ = json.Unmarshal(o["line"], &lines)
+		_ = json.Unmarshal(o["line"], &raws)
 	}
-	var last int64
-	for _, raw := range lines {
-		if len(s.Line) == MaxLyricsLines {
-			break
-		}
+	type line struct {
+		o     map[string]json.RawMessage
+		value string
+	}
+	var lines []line
+	starts := 0
+	for _, raw := range raws {
 		var lo map[string]json.RawMessage
 		if json.Unmarshal(raw, &lo) != nil || lo == nil {
 			continue
@@ -152,9 +145,23 @@ func readLyrics(raw json.RawMessage) (Lyrics, bool) {
 		if !ok {
 			continue
 		}
-		l := LyricsLine{Value: CleanText(value, MaxLyricsLine)}
-		if s.Synced {
-			start, ok := musicInt(lo["start"], 0, MaxMusicDurationMs)
+		lines = append(lines, line{lo, value})
+		if _, has := lo["start"]; has {
+			starts++
+		}
+	}
+	if starts != 0 && starts != len(lines) {
+		return Lyrics{}, false // a set mixing synced and plain lines
+	}
+	synced := starts > 0
+	var last int64
+	for _, ln := range lines {
+		if len(s.Line) == MaxLyricsLines {
+			break
+		}
+		l := LyricsLine{Value: CleanText(ln.value, MaxLyricsLine)}
+		if synced {
+			start, ok := musicInt(ln.o["start"], 0, MaxMusicDurationMs)
 			if !ok || start < last {
 				continue
 			}

@@ -215,33 +215,42 @@ func CleanWith(episode VideoKey, keys []string) []string {
 	return out
 }
 
-// Other identifiers of a film, a series or an episode (video section
-// 4.3, the registry's ids schemes), by scheme: their form, and the kinds
-// that carry them.
-var otherIDs = map[string]struct {
-	re    *regexp.Regexp
-	kinds []string
-}{
-	"imdb": {regexp.MustCompile(`^tt[0-9]{7,10}$`), []string{"movie", "series", "episode"}},
-	"tvdb": {regexp.MustCompile(`^[1-9][0-9]{0,9}$`), []string{"movie", "series", "episode"}},
-	"tmdb": {regexp.MustCompile(`^[1-9][0-9]{0,9}$`), []string{"series", "episode"}},
+// Other identifiers of a series or an episode (video section 4.3, the
+// registry's ids schemes), by scheme: their form.
+var otherIDs = map[string]*regexp.Regexp{
+	"imdb": regexp.MustCompile(`^tt[0-9]{7,10}$`),
+	"tvdb": regexp.MustCompile(`^[1-9][0-9]{0,9}$`),
+	"tmdb": regexp.MustCompile(`^[1-9][0-9]{0,9}$`),
 }
 
 // OtherID says whether value is an identifier of a known scheme, in its
-// form (video section 4.3): what a sender sends, and a receiver keeps.
-// Whether the title's kind and key carry that scheme is VideoOtherID's.
+// form (video section 4.3). Whether the title carries that scheme is
+// VideoOtherID's.
 func OtherID(scheme, value string) bool {
-	id, known := otherIDs[scheme]
-	return known && id.re.MatchString(value)
+	re, known := otherIDs[scheme]
+	return known && re.MatchString(value)
 }
 
 // VideoOtherID says whether a title of that kind, keyed under keyScheme,
-// carries ids' value under scheme (video section 4.3): of the scheme's
-// form, on a kind the registry gives it; tmdb only on a title keyed
-// under another scheme than tmdb.
+// carries ids' value under scheme (video section 4.3): ids are sent only
+// where the receiver can't find them itself, on episodes of the tmdb and
+// tvdb schemes and on series of the tvdb scheme, never on films, on
+// series keyed under tmdb (TMDB's lookup by key gives them), on local
+// titles, extras or seasons. imdb on those; tvdb on episodes; tmdb on
+// titles keyed under tvdb.
 func VideoOtherID(kind, keyScheme, scheme, value string) bool {
-	id, known := otherIDs[scheme]
-	return known && id.re.MatchString(value) && slices.Contains(id.kinds, kind) && !(scheme == "tmdb" && keyScheme == "tmdb")
+	episode := kind == "episode" && keyScheme != SchemeLocal
+	tvdbSeries := kind == "series" && keyScheme == SchemeTVDB
+	if !OtherID(scheme, value) || !episode && !tvdbSeries {
+		return false
+	}
+	switch scheme {
+	case "tvdb":
+		return episode
+	case "tmdb":
+		return keyScheme == SchemeTVDB
+	}
+	return true
 }
 
 // Heights are the values of a transcode's maxHeight (playback section
@@ -285,9 +294,6 @@ func readPlace(v any) *Place {
 	return &Place{Season: int(season), Episode: int(episode)}
 }
 
-// The length of an extra's name, in code points (video section 3.9).
-const MaxExtraName = 64
-
 // Theme songs and theme videos are extras like the others (video section
 // 3.9): an owning server may offer them, and the viewer's server decides
 // whether and how to present them.
@@ -300,9 +306,9 @@ const (
 // key, its kind, the library it gives, and the members video adds,
 // cleaned. Copies are set for films, episodes and extras, and always for
 // them; Place for episodes keyed by their TMDB episode ID, and always
-// for them; ExtraType for extras, and always for them, with Name, an
-// extra's own name, when it has one; Description for local films and
-// series, and always for them.
+// for them; ExtraType for extras, and always for them (an extra carries
+// no name); Description for local films and series, and always for
+// them. Kind is the key's: a title carries no kind.
 type VideoTitle struct {
 	Key         string
 	Kind        string
@@ -312,21 +318,19 @@ type VideoTitle struct {
 	With        []string
 	IDs         map[string]string
 	ExtraType   string
-	Name        string
 	Description *Description
 }
 
 // ReadVideoTitle reads one entry of a titles answer as catalog section
 // 3.3 and video sections 3.1, 3.8, 3.9 and 3.10 say: false, to skip it,
-// when it isn't an object whose key, kind and library are strings, when
-// the key isn't a canonical video key of a known scheme, when its kind
-// isn't the key's, when it is a film, an episode or an extra whose
+// when it isn't an object whose key and library are strings, when the
+// key isn't a canonical video key of a known scheme, when it is a film, an episode or an extra whose
 // copies isn't an array or keeps no copy (ReadCopy), an extra whose
 // extraType is missing or isn't a token, an episode keyed
 // by its TMDB episode ID without a valid place, or a local film or
 // series without a name. A member of the wrong type otherwise counts as
 // absent; a bad entry of one of its lists is skipped alone; members a
-// title may not carry are ignored. Whether library is one asked for is
+// title may not carry are ignored, a kind member among them. Whether library is one asked for is
 // the caller's to check.
 func ReadVideoTitle(raw json.RawMessage) (VideoTitle, bool) {
 	t, err := readVideoTitle(raw)
@@ -341,26 +345,19 @@ func readVideoTitle(raw json.RawMessage) (VideoTitle, error) {
 		return VideoTitle{}, errors.New("not an object")
 	}
 	key, ok1 := o["key"].(string)
-	kind, ok2 := o["kind"].(string)
-	library, ok3 := o["library"].(string)
-	if !ok1 || !ok2 || !ok3 {
-		return VideoTitle{}, errors.New("key, kind or library isn't a string")
+	library, ok2 := o["library"].(string)
+	if !ok1 || !ok2 {
+		return VideoTitle{}, errors.New("key or library isn't a string")
 	}
 	k, ok := ParseVideoKey(key)
 	if !ok {
 		return VideoTitle{}, errors.New("not a canonical video key")
 	}
-	if kind != k.Kind {
-		return VideoTitle{}, errors.New("a kind other than the key's")
-	}
-	t := VideoTitle{Key: key, Kind: kind, Library: library}
+	t := VideoTitle{Key: key, Kind: k.Kind, Library: library}
 	// Extras (section 3.9).
 	if k.Kind == "extra" {
 		if t.ExtraType = tokenOf(o["extraType"]); t.ExtraType == "" {
 			return VideoTitle{}, errors.New("an extra whose extraType isn't a token")
-		}
-		if s, ok := o["name"].(string); ok {
-			t.Name = CleanText(s, MaxExtraName)
 		}
 	}
 	// The description of a local film or series (section 3.10).
@@ -381,8 +378,8 @@ func readVideoTitle(raw json.RawMessage) (VideoTitle, error) {
 	if k.Kind == "episode" {
 		t.With = CleanWith(k, videoStrings(o["with"]))
 	}
-	// ids (section 4.3): films, series and episodes of a public database.
-	if ids, ok := o["ids"].(map[string]any); ok && k.Scheme != SchemeLocal && k.Kind != "season" && k.Kind != "extra" {
+	// ids (section 4.3): episodes of a public database, series of tvdb.
+	if ids, ok := o["ids"].(map[string]any); ok {
 		for scheme, v := range ids {
 			if value, ok := v.(string); ok && VideoOtherID(k.Kind, k.Scheme, scheme, value) {
 				if t.IDs == nil {

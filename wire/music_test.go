@@ -58,14 +58,14 @@ func TestMusicVectors(t *testing.T) {
 		if c.Kind == "answer" {
 			request = c.Request
 		}
-		var asked []string
+		var asked []QueueAsk
 		err := DecodeJSON([]byte(request), &req)
 		if err == nil {
 			asked, err = CheckQueue(req.Title, req.Queue)
 		}
 		if c.Kind == "request" {
 			if (err == nil) != c.Valid {
-				t.Errorf("queue %s: accepted %v, want %v", c.Name, err == nil, c.Valid)
+				t.Errorf("queue %s: accepted %v, want %v (%v)", c.Name, err == nil, c.Valid, err)
 			}
 			continue
 		}
@@ -73,15 +73,12 @@ func TestMusicVectors(t *testing.T) {
 			t.Fatalf("queue %s: the request refused: %v", c.Name, err)
 		}
 		var answer struct {
-			Stream struct {
-				URL string `json:"url"`
-			} `json:"stream"`
 			Queue json.RawMessage `json:"queue"`
 		}
 		if err := DecodeAnswer([]byte(c.Text), &answer); err != nil {
 			t.Fatalf("queue %s: %v", c.Name, err)
 		}
-		sameJSON(t, "queue "+c.Name, ReadQueue(answer.Queue, asked, req.Delivery, v.StreamRoot, answer.Stream.URL), c.Output)
+		sameJSON(t, "queue "+c.Name, ReadQueue(answer.Queue, asked, req.Delivery), c.Output)
 	}
 	for _, c := range v.Lyrics {
 		if c.Kind == "request" {
@@ -165,9 +162,8 @@ func TestMusicTitleRoundTrip(t *testing.T) {
 	yes, gain := true, -4.12
 	sent := MusicTitle{Key: "track/local/T1", Kind: "track", Library: "m1", Name: "x",
 		Artists: []string{"artist/local/A1"}, Album: "album/mb/0b000000-0000-4000-8000-000000000002", Disc: 1, Number: 2,
-		Copies: []MusicCopy{{ID: "c1", DurationMs: 1000, Container: "flac", Codec: "flac", Size: 10, Etag: "e1",
-			BitrateKbps: 936, ReplayGain: &ReplayGain{TrackGain: &gain}, Lyrics: "plain"}},
-		IDs: map[string]string{"isrc": "USSM17000123"}}
+		Copies: []MusicCopy{{ID: "c1", DurationMs: 1000, MediaType: "audio/flac", Codec: "flac", Size: 10, Etag: "e1",
+			ReplayGain: &ReplayGain{TrackGain: &gain}, Lyrics: "plain"}}}
 	raw, err := Marshal(sent)
 	if err != nil {
 		t.Fatal(err)

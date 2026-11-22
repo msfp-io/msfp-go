@@ -28,8 +28,6 @@ type Report struct {
 	// PositionMs, when HasPosition.
 	PositionMs  int64
 	HasPosition bool
-	// Paused, progress only.
-	Paused bool
 	// At is when the viewer was there: the request's at, when AtSaid,
 	// else now.
 	At     time.Time
@@ -41,16 +39,16 @@ type Report struct {
 
 // reportMembers are the members each call knows.
 var reportMembers = map[string][]string{
-	CallProgress: {"id", "positionMs", "paused", "at", "title"},
+	CallProgress: {"id", "positionMs", "at", "title"},
 	CallStop:     {"id", "positionMs", "at", "title"},
 }
 
 // ReadReport reads a progress or a stop (call) at now, refusing (400, a
 // *PlayRefusal) what sections 3 and 4 refuse: a body that isn't an I-JSON
 // object or holds null in a member it knows, an id that isn't a playback
-// ID, positionMs out of 0 to MaxPositionMs, paused not a boolean, at not
-// an integer from now − AtBefore to now + AtAfter (Unix seconds), a title
-// that isn't a string. Whether title is the playback's is Apply's.
+// ID, positionMs out of 0 to MaxPositionMs, at not an integer from now − AtBefore to now + AtAfter (Unix seconds), a title
+// that isn't a string. Whether title is the playback's is Apply's. Other
+// members are ignored, paused of earlier drafts among them.
 func ReadReport(call string, body []byte, now time.Time) (Report, error) {
 	o, err := requestObject(body, reportMembers[call])
 	if err != nil {
@@ -64,11 +62,6 @@ func ReadReport(call string, body []byte, now time.Time) (Report, error) {
 	r.ID = id
 	if _, r.HasPosition = o["positionMs"]; r.HasPosition {
 		if r.PositionMs, err = o.integer("positionMs", MaxPositionMs); err != nil {
-			return r, err
-		}
-	}
-	if call == CallProgress {
-		if r.Paused, _, err = o.boolean("paused"); err != nil {
 			return r, err
 		}
 	}

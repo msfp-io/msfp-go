@@ -883,10 +883,10 @@ type Mail struct {
 	Sealed  string `json:"sealed"`
 }
 
-// Sealed is what a mail carries, once opened.
+// Sealed is what a mail carries, once opened (groups section 5): no
+// name, the sender's being its profile's.
 type Sealed struct {
 	Address        string `json:"address"`
-	Name           string `json:"name,omitempty"`
 	NextCommitment string `json:"nextCommitment"`
 	Inbound        bool   `json:"inbound"`
 	// Certificates are the pins of the certificates the sender's address

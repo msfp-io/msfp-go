@@ -5,57 +5,83 @@ import (
 	"slices"
 )
 
-// play's answer (MSFP playback section 2.3), as a viewer's server checks
-// and cleans it, and the restart of a file being read (section 2.7).
+// play's answer (MSFP playback section 2.3, video section 5.3), as a
+// viewer's server checks and cleans it, the URLs it builds from the
+// answer's ticket (media section 1, video section 6.1), and the restart
+// of a file being read (playback section 2.7).
 
-// HLSType is the only mimeType an hls stream may name.
+// HLSType is the media type of an HLS playlist.
 const HLSType = "application/vnd.apple.mpegurl"
 
-// PlayAnswer is what a viewer's server keeps of play's answer: the
-// playback's own members, checked and cleaned (ReadPlayAnswer). The
-// content parts' members (video's subtitles and previews, music's queue)
-// are theirs to read; unknown members (versions, info, title, next)
-// aren't kept. AudioRenditions: the playlist carries every audio track
-// as a rendition (media section 3.1); false, the owning server made none,
-// and switching tracks means a new playback.
+// The forms a subtitle track is served apart in (video section 5.3):
+// text (WebVTT, under subtitles/), picture (PGS, under pictures/), and
+// FormASS, the ASS a text track's ass: true also opens (under ass/).
+const (
+	FormText    = "text"
+	FormPicture = "picture"
+	FormASS     = "ass"
+)
+
+// MaxServedSubtitles is how many entries an answer's subtitles holds at
+// most (video section 5.3).
+const MaxServedSubtitles = 64
+
+// ServedSubtitle is an entry of an answer's subtitles (video section
+// 5.3): a track of the copy the owning server serves apart, its form,
+// and for a text track whether its ASS is served too.
+type ServedSubtitle struct {
+	ID   string `json:"id"`
+	Form string `json:"form"`
+	ASS  bool   `json:"ass,omitempty"`
+}
+
+// ServedForms are video section 5.4's table: the form a track of a
+// listed format is served in, and whether its ASS is too. A track in
+// another format waits for the answer to know its form.
+var ServedForms = map[string]ServedSubtitle{
+	"subrip": {Form: FormText}, "webvtt": {Form: FormText}, "mov_text": {Form: FormText}, "ttml": {Form: FormText},
+	"ass": {Form: FormText, ASS: true}, "ssa": {Form: FormText, ASS: true},
+	"hdmv_pgs_subtitle": {Form: FormPicture}, "dvd_subtitle": {Form: FormPicture}, "dvb_subtitle": {Form: FormPicture},
+}
+
+// PlayAnswer is what a viewer's server keeps of play's answer (playback
+// section 2.3, video section 5.3), checked and cleaned (ReadPlayAnswer).
+// It carries no URL: URLs builds them from the owning server's stream
+// root and Ticket. AudioRenditions: the playlist carries every audio
+// track as a rendition (media section 3.1); false, the owning server
+// made none, and switching tracks means a new playback. ScanBytes is a
+// scan's cap, the bytes its ticket may read in all. Subtitles and
+// FontCount are video's; music's queue is music's (ReadQueue).
 type PlayAnswer struct {
-	ID              string      `json:"id"`
-	Method          string      `json:"method"`
-	Stream          PlayStream  `json:"stream"`
-	Etag            string      `json:"etag"`
-	PositionMs      int64       `json:"positionMs"`
-	DurationMs      int64       `json:"durationMs,omitempty"`
-	VersionID       string      `json:"versionId,omitempty"`
-	AudioTracks     []PlayTrack `json:"audioTracks,omitempty"`
-	AudioTrack      string      `json:"audioTrack,omitempty"`
-	AudioRenditions bool        `json:"audioRenditions,omitempty"`
-	MaxBitrateKbps  int         `json:"maxBitrateKbps,omitempty"`
+	ID              string           `json:"id"`
+	Ticket          string           `json:"ticket"`
+	Protocol        string           `json:"protocol"`
+	Method          string           `json:"method"`
+	Etag            string           `json:"etag"`
+	PositionMs      int64            `json:"positionMs"`
+	VersionID       string           `json:"versionId"`
+	AudioTrack      string           `json:"audioTrack,omitempty"`
+	AudioRenditions bool             `json:"audioRenditions,omitempty"`
+	MaxBitrateKbps  *int             `json:"maxBitrateKbps,omitempty"`
+	ScanBytes       int64            `json:"scanBytes,omitempty"`
+	Subtitles       []ServedSubtitle `json:"subtitles,omitempty"`
+	FontCount       int              `json:"fontCount,omitempty"`
 	// ReadTitleAgain: the etag isn't the catalog's. The answer wins for
 	// this playback; the title is read again from titles.
 	ReadTitleAgain bool `json:"readTitleAgain,omitempty"`
 }
 
-// PlayStream is an answer's stream: its URL, under the owning server's
-// stream root, its protocol (hls or file), its mimeType, and Base, the
-// stream's base (StreamBase) under which every other URL of the answer
-// must be.
-type PlayStream struct {
-	URL      string `json:"url"`
-	Protocol string `json:"protocol"`
-	MimeType string `json:"mimeType,omitempty"`
-	Base     string `json:"-"`
-}
-
-// PlayTrack is a track of an answer, of playback section 2.3's members
-// (video's, its codec and the rest, are video's).
-type PlayTrack struct {
-	ID              string `json:"id"`
-	Language        string `json:"language,omitempty"`
-	Channels        int    `json:"channels,omitempty"`
-	Role            string `json:"role,omitempty"`
-	Default         bool   `json:"default,omitempty"`
-	Forced          bool   `json:"forced,omitempty"`
-	HearingImpaired bool   `json:"hearingImpaired,omitempty"`
+// Asked is what a viewer's server asked and knows when it reads play's
+// answer: the request's purpose and delivery ("" for none), the title's
+// content part (PartVideo, PartMusic), and the copy as the catalog gives
+// it: its etag ("" when unknown) and its subtitle tracks (their IDs, and
+// their formats for video section 5.4's table).
+type Asked struct {
+	Purpose     string
+	Delivery    string
+	Part        string
+	CatalogEtag string
+	Subtitles   []CopySubtitle
 }
 
 // ErrPlayAnswer is an answer that breaks a "must" of playback section
@@ -66,21 +92,25 @@ var ErrPlayAnswer = errors.New("msfp: play's answer refused")
 // methodOf is the method each delivery must be answered with.
 var methodOf = map[string]string{DeliveryFile: MethodDirect, DeliveryRemux: MethodRemux, DeliveryTranscode: MethodTranscode}
 
-// ReadPlayAnswer checks and cleans play's answer: delivery is what the
-// request asked ("" for none), root the owning server's stream root,
-// catalogEtag the etag the catalog gave the copy ("" when unknown).
+// ReadPlayAnswer checks and cleans play's answer for what was asked.
 // Refused (ErrPlayAnswer): a body that isn't an I-JSON object, null at
-// its top, a member of the wrong type; id not a playback ID; method not
-// direct, remux or transcode, or not the delivery's (direct for file);
-// stream not under root as its protocol says (StreamBase), an hls
-// mimeType other than HLSType, a file stream for a remux, a transcode or
-// the baseline (no delivery), an hls one for delivery file; etag not 1
-// to 64 characters of A–Z a–z 0–9 - _; positionMs absent or out of 0 to
-// MaxPositionMs; audioRenditions not a boolean. Cleaned: durationMs out
-// of range set to 0; tracks with another ID dropped; other IDs cleared;
-// track members of the wrong type or value dropped; audioRenditions true
-// with the file dropped; maxBitrateKbps out of range dropped.
-func ReadPlayAnswer(body []byte, delivery, root, catalogEtag string) (PlayAnswer, error) {
+// its top; id or ticket not of an ID's form; protocol not hls or file,
+// or not the delivery's (file for file, hls otherwise); method not
+// direct, remux or transcode, or not the delivery's; etag not of an
+// ID's form; positionMs absent, not an integer or out of 0 to
+// MaxPositionMs; versionId missing or not of an ID's form; audioTrack,
+// audioRenditions or maxBitrateKbps of the wrong type. Cleaned: an
+// audioTrack not of its form dropped; audioRenditions true kept with hls
+// only; maxBitrateKbps out of range dropped; for a scan, scanBytes
+// missing or out of MinScanBytes to MaxScanBytes counted as
+// MinScanBytes (other purposes ignore it); for video, each subtitles
+// entry kept only when its id is a subtitle track of the copy in the
+// catalog, not a repeat, its form text or picture (ass kept with text
+// only), and, for a format of ServedForms, the form and ass the table
+// gives, at most MaxServedSubtitles; fontCount 0 to MaxFonts, otherwise
+// 0. Members of earlier drafts (stream, audioTracks, durationMs,
+// trickplay, fonts…) are ignored.
+func ReadPlayAnswer(body []byte, ask Asked) (PlayAnswer, error) {
 	var a PlayAnswer
 	tree, err := strictTree(body, true)
 	if err != nil {
@@ -95,34 +125,21 @@ func ReadPlayAnswer(body []byte, delivery, root, catalogEtag string) (PlayAnswer
 			return a, ErrPlayAnswer
 		}
 	}
-	str := func(name string, required bool) (string, bool) {
-		v, there := o[name]
-		s, isString := v.(string)
-		return s, there && isString || !there && !required
+	str := func(name string) (string, bool) { s, ok := o[name].(string); return s, ok }
+	a.ID, _ = str("id")
+	a.Ticket, _ = str("ticket")
+	a.Protocol, _ = str("protocol")
+	a.Method, _ = str("method")
+	a.Etag, _ = str("etag")
+	a.VersionID, _ = str("versionId")
+	wantProtocol := ProtocolHLS
+	if ask.Delivery == DeliveryFile {
+		wantProtocol = ProtocolFile
 	}
-	var okID, okMethod, okEtag bool
-	a.ID, okID = str("id", true)
-	a.Method, okMethod = str("method", true)
-	a.Etag, okEtag = str("etag", true)
-	if !okID || !PlayID(a.ID) || !okMethod || !slices.Contains([]string{MethodDirect, MethodRemux, MethodTranscode}, a.Method) ||
-		delivery != "" && a.Method != methodOf[delivery] || !okEtag || !ID(a.Etag) {
-		return a, ErrPlayAnswer
-	}
-	stream, ok := o["stream"].(map[string]any)
-	if !ok {
-		return a, ErrPlayAnswer
-	}
-	a.Stream.URL, _ = stream["url"].(string)
-	a.Stream.Protocol, _ = stream["protocol"].(string)
-	if mt, there := stream["mimeType"]; there && mt != nil {
-		if a.Stream.MimeType, ok = mt.(string); !ok {
-			return a, ErrPlayAnswer
-		}
-	}
-	file := a.Stream.Protocol == "file"
-	if a.Stream.Base, ok = StreamBase(a.Stream.URL, root, a.Stream.Protocol); !ok ||
-		!file && a.Stream.MimeType != "" && a.Stream.MimeType != HLSType ||
-		file && a.Method != MethodDirect || delivery == DeliveryFile && !file || delivery == "" && file {
+	if !PlayID(a.ID) || !ID(a.Ticket) || a.Protocol != ProtocolHLS && a.Protocol != ProtocolFile ||
+		KnownDelivery(ask.Delivery) && a.Protocol != wantProtocol || ask.Delivery == "" && a.Protocol != ProtocolHLS ||
+		!slices.Contains([]string{MethodDirect, MethodRemux, MethodTranscode}, a.Method) ||
+		methodOf[ask.Delivery] != "" && a.Method != methodOf[ask.Delivery] || !ID(a.Etag) || !ID(a.VersionID) {
 		return a, ErrPlayAnswer
 	}
 	pos, ok := integerOf(o["positionMs"])
@@ -130,13 +147,13 @@ func ReadPlayAnswer(body []byte, delivery, root, catalogEtag string) (PlayAnswer
 		return a, ErrPlayAnswer
 	}
 	a.PositionMs = pos
-	if v, there := o["durationMs"]; there {
-		n, ok := integerOf(v)
+	if v, there := o["audioTrack"]; there {
+		s, ok := v.(string)
 		if !ok {
 			return a, ErrPlayAnswer
 		}
-		if n >= 0 && n <= MaxPositionMs {
-			a.DurationMs = n
+		if _, ok := TrackID(s, 'a'); ok {
+			a.AudioTrack = s
 		}
 	}
 	if v, there := o["audioRenditions"]; there {
@@ -144,30 +161,7 @@ func ReadPlayAnswer(body []byte, delivery, root, catalogEtag string) (PlayAnswer
 		if !ok {
 			return a, ErrPlayAnswer
 		}
-		a.AudioRenditions = b && !file
-	}
-	if v, there := o["audioTracks"]; there {
-		list, ok := v.([]any)
-		if !ok {
-			return a, ErrPlayAnswer
-		}
-		for _, e := range list {
-			if t, ok := readPlayTrack(e); ok {
-				a.AudioTracks = append(a.AudioTracks, t)
-			}
-		}
-	}
-	for _, id := range []struct {
-		name string
-		dst  *string
-	}{{"versionId", &a.VersionID}, {"audioTrack", &a.AudioTrack}} {
-		s, ok := str(id.name, false)
-		if !ok {
-			return a, ErrPlayAnswer
-		}
-		if ID(s) {
-			*id.dst = s
-		}
+		a.AudioRenditions = b && a.Protocol == ProtocolHLS
 	}
 	if v, there := o["maxBitrateKbps"]; there {
 		n, ok := integerOf(v)
@@ -175,34 +169,84 @@ func ReadPlayAnswer(body []byte, delivery, root, catalogEtag string) (PlayAnswer
 			return a, ErrPlayAnswer
 		}
 		if n >= 0 && n <= MaxKbps {
-			a.MaxBitrateKbps = int(n)
+			k := int(n)
+			a.MaxBitrateKbps = &k
 		}
 	}
-	a.ReadTitleAgain = catalogEtag != "" && a.Etag != catalogEtag
+	if ask.Purpose == PurposeScan {
+		a.ScanBytes = MinScanBytes
+		if n, ok := integerOf(o["scanBytes"]); ok && n >= MinScanBytes && n <= MaxScanBytes {
+			a.ScanBytes = n
+		}
+	}
+	if ask.Part == PartVideo {
+		a.Subtitles = readServedSubtitles(o["subtitles"], ask.Subtitles)
+		if n, ok := integerOf(o["fontCount"]); ok && n >= 0 && n <= MaxFonts {
+			a.FontCount = int(n)
+		}
+	}
+	a.ReadTitleAgain = ask.CatalogEtag != "" && a.Etag != ask.CatalogEtag
 	return a, nil
 }
 
-// readPlayTrack reads a track of an answer: false, dropped, without an
-// ID of its form; each other member of the wrong type or value dropped
-// alone.
-func readPlayTrack(e any) (PlayTrack, bool) {
-	o, _ := e.(map[string]any)
-	id, _ := o["id"].(string)
-	if !ID(id) {
-		return PlayTrack{}, false
+// readServedSubtitles keeps an answer's subtitles entries as video
+// section 5.3 says.
+func readServedSubtitles(v any, tracks []CopySubtitle) []ServedSubtitle {
+	list, _ := v.([]any)
+	var out []ServedSubtitle
+	for _, e := range list {
+		m, ok := e.(map[string]any)
+		if !ok || len(out) == MaxServedSubtitles {
+			continue
+		}
+		id, _ := m["id"].(string)
+		form, _ := m["form"].(string)
+		i := slices.IndexFunc(tracks, func(t CopySubtitle) bool { return t.ID == id })
+		if i < 0 || form != FormText && form != FormPicture || slices.ContainsFunc(out, func(s ServedSubtitle) bool { return s.ID == id }) {
+			continue
+		}
+		s := ServedSubtitle{ID: id, Form: form, ASS: m["ass"] == true && form == FormText}
+		if want, listed := ServedForms[tracks[i].Format]; listed && (want.Form != s.Form || want.ASS != s.ASS) {
+			continue
+		}
+		out = append(out, s)
 	}
-	t := PlayTrack{ID: id}
-	if l, _ := o["language"].(string); LanguageTag(l) {
-		t.Language = l
+	return out
+}
+
+// Base is <root><ticket>/, the base of the answer's URLs.
+func (a PlayAnswer) Base(root string) string { return TicketBase(root, a.Ticket) }
+
+// StreamURL is the URL of the answer's stream: <root><ticket>/master.m3u8
+// for hls, <root><ticket>/file for file.
+func (a PlayAnswer) StreamURL(root string) string { return StreamURL(root, a.Ticket, a.Protocol) }
+
+// URLs are every URL the viewer's server may build from the answer's
+// ticket, in order: the stream; each subtitle track's base (subtitles/,
+// then ass/ when it is served, or pictures/), to which /<part> or /whole
+// is added; each font, fonts/0 to fontCount − 1; and sheets sheets,
+// trickplay/0 to sheets − 1 (the sheet count of the copy's
+// previewLayout, 0 for none).
+func (a PlayAnswer) URLs(root string, sheets int) []string {
+	base := a.Base(root)
+	out := []string{a.StreamURL(root)}
+	for _, s := range a.Subtitles {
+		if s.Form == FormPicture {
+			out = append(out, SubtitleURL(base, s.ID, FormPicture))
+			continue
+		}
+		out = append(out, SubtitleURL(base, s.ID, FormText))
+		if s.ASS {
+			out = append(out, SubtitleURL(base, s.ID, FormASS))
+		}
 	}
-	if n, ok := integerOf(o["channels"]); ok && n >= 1 && n <= 64 {
-		t.Channels = int(n)
+	for n := 0; n < a.FontCount; n++ {
+		out = append(out, FontURL(base, n))
 	}
-	t.Role = tokenOf(o["role"])
-	t.Default, _ = o["default"].(bool)
-	t.Forced, _ = o["forced"].(bool)
-	t.HearingImpaired, _ = o["hearingImpaired"].(bool)
-	return t, true
+	for n := 0; n < sheets; n++ {
+		out = append(out, SheetURL(base, n))
+	}
+	return out
 }
 
 // Reading is a playback's file a viewer's server is reading: its copy
@@ -229,8 +273,8 @@ type RestartOutcome struct {
 // r (playback section 2.7): only for a reading of delivery file, a new
 // play of the same copy (its versionId), purpose and delivery, answered
 // 200 (status) with an answer ReadPlayAnswer keeps, of the same etag,
-// compared byte for byte. root is the owning server's stream root.
-func Restart(r Reading, req PlayRequest, status int, answer []byte, root string) RestartOutcome {
+// compared byte for byte.
+func Restart(r Reading, req PlayRequest, status int, answer []byte) RestartOutcome {
 	fail := RestartOutcome{FailRead: true, ReadTitles: true}
 	purpose := func(p string) string {
 		if p == "" {
@@ -242,7 +286,7 @@ func Restart(r Reading, req PlayRequest, status int, answer []byte, root string)
 		purpose(req.Purpose) != purpose(r.Purpose) || status != 200 {
 		return fail
 	}
-	a, err := ReadPlayAnswer(answer, DeliveryFile, root, "")
+	a, err := ReadPlayAnswer(answer, Asked{Purpose: purpose(r.Purpose), Delivery: DeliveryFile})
 	if err != nil || a.Etag != r.Etag {
 		fail.StopNew = true
 		return fail

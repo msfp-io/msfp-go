@@ -8,11 +8,17 @@
 // commitment), changes of address (the former host accepted, the
 // announced address checked), servers that can't be called (their
 // address, their hello schedule, the statements their peers' answers
-// carry), the one rule for unknown values (Token: open fields keep any
-// token, MSFP keeps no list of names); of its catalog, video and music
-// parts, title keys and what a server keeps of a peer's titles and
-// copies; of playback and media, play's request and answer, limits, the
-// forms of IDs, URLs and previews; of media and video, the checks of
+// carry), the one rule for unknown values (Token and IsMediaType: open
+// fields keep any well-formed value, the lists being MSFP's registry's
+// or an outside vocabulary's); of its catalog, video and music parts,
+// title keys and what a server keeps of a peer's titles and copies
+// (media types, registry tokens, RFC 6381 codecs strings and what
+// ReadCodecs reads from them, H.273 colour); of playback and media,
+// play's request, what an owning server serves for it (PickCopy,
+// DefaultAudio, Serve: the baseline, remux media types, transcode
+// targets with copy and range), play's answer and the URLs built from
+// its ticket (no peer-written address is ever fetched), limits, scan
+// caps, previews' layout and answer; of media and video, the checks of
 // the playlists, WebVTT, ASS, PGS pictures and fonts a server relays
 // from another.
 //

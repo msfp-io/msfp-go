@@ -2,73 +2,137 @@ package wire
 
 import (
 	"encoding/json"
-	"errors"
 	"slices"
 	"strconv"
-	"strings"
 )
 
 // The queue of a play (MSFP music section 5.2): the tracks a play names
 // after its title, which the owning server prepares under the same
-// playback, and what the viewer's server keeps of the answer's entries.
+// playback, each with its own copy and delivery when it names them, and
+// what the viewer's server keeps of the answer's entries.
 
 // MaxQueue is how many tracks a play's queue names at most, and how many
 // entries of an answer's queue are kept.
 const MaxQueue = 5
 
-// HLSMimeType is the only mimeType an hls stream may name.
-const HLSMimeType = "application/vnd.apple.mpegurl"
+// QueueAsk is an entry of a play's queue (music section 5.2): a track's
+// key, the copy it plays (VersionID; without it, its first) and its own
+// delivery, with its own mediaType or transcode targets as a request's;
+// without Delivery, the request's delivery, media type and targets.
+type QueueAsk struct {
+	Title     string            `json:"title"`
+	VersionID string            `json:"versionId,omitempty"`
+	Delivery  string            `json:"delivery,omitempty"`
+	MediaType string            `json:"mediaType,omitempty"`
+	Transcode *TranscodeTargets `json:"transcode,omitempty"`
+}
 
-// ErrQueue is a queue the owning server refuses: 400 invalid-request.
-var ErrQueue = errors.New("federation: a queue outside what music section 5.2 allows")
+// MusicRemuxTypes are the media types a track's remux takes (playback
+// section 2.7, for a copy with no video).
+var MusicRemuxTypes = []string{"audio/" + SegmentsTS, "audio/" + SegmentsMP4}
 
 // CheckQueue is the owning server's check of a music play's title and
 // queue (the request's raw member; empty when absent): the queue's
-// track keys, in order, or ErrQueue, to refuse the request with 400,
-// when title isn't a track key or queue isn't an array of strings, holds
-// more than MaxQueue entries, or holds an entry that isn't a track key in
-// canonical form, title itself or a repeat. A queued track the owning
-// server doesn't offer the caller, or can't play, isn't refused: it is
-// left out of the answer, its place kept empty.
-func CheckQueue(title string, queue json.RawMessage) ([]string, error) {
+// entries, in order, or a *PlayRefusal. 400 when title isn't a track key
+// or queue isn't an array of objects, holds more than MaxQueue entries,
+// or an entry whose title isn't a track key in canonical form, is title
+// itself or a repeat, whose versionId isn't of an ID's form, whose
+// delivery isn't a token, whose mediaType comes without its own delivery
+// remux or isn't a media type (or is missing with its own remux), or
+// whose transcode comes without its own delivery transcode or isn't a
+// transcode object (TranscodeTargets' rules); then, once no entry is
+// malformed, 409 delivery-refused for an entry's delivery not of the
+// list or a remux to another media type than MusicRemuxTypes. A queued
+// track the owning server doesn't offer the caller, or can't play, isn't
+// refused: it is left out of the answer, its place kept empty.
+func CheckQueue(title string, queue json.RawMessage) ([]QueueAsk, error) {
 	if !IsMusicKey(title, "track") {
-		return nil, ErrQueue
+		return nil, badPlay("title isn't a track key")
 	}
 	if len(queue) == 0 {
 		return nil, nil
 	}
-	var list []json.RawMessage
-	if queue[0] != '[' || json.Unmarshal(queue, &list) != nil || len(list) > MaxQueue {
-		return nil, ErrQueue
+	tree, err := strictTree(queue, true)
+	list, ok := tree.([]any)
+	if err != nil || !ok {
+		return nil, badPlay("queue isn't an array")
 	}
-	keys := make([]string, 0, len(list))
-	for _, e := range list {
-		s, ok := musicString(e)
-		if !ok || !IsMusicKey(s, "track") || s == title || slices.Contains(keys, s) {
-			return nil, ErrQueue
+	if len(list) > MaxQueue {
+		return nil, badPlay("a queue of more than 5 entries")
+	}
+	var asked []QueueAsk
+	var refused error
+	for i, e := range list {
+		o, ok := e.(map[string]any)
+		if !ok {
+			return nil, badPlay("queue entry " + strconv.Itoa(i) + " isn't an object")
 		}
-		keys = append(keys, s)
+		s, _ := o["title"].(string)
+		if !IsMusicKey(s, "track") || s == title || slices.ContainsFunc(asked, func(a QueueAsk) bool { return a.Title == s }) {
+			return nil, badPlay("queue entry " + strconv.Itoa(i) + ": title isn't another track's key")
+		}
+		a := QueueAsk{Title: s}
+		if v, present := o["versionId"]; present {
+			if a.VersionID, _ = v.(string); !ID(a.VersionID) {
+				return nil, badPlay("queue entry " + strconv.Itoa(i) + ": versionId isn't a version ID")
+			}
+		}
+		var r PlayRequest
+		if err := members(o).readDelivery(&r); err != nil {
+			return nil, err
+		}
+		if r.emptyTrack {
+			return nil, badPlay("queue entry " + strconv.Itoa(i) + ": a malformed burnSubtitle")
+		}
+		a.Delivery, a.MediaType, a.Transcode = r.Delivery, r.MediaType, r.Transcode
+		switch {
+		case refused != nil:
+		case a.Delivery != "" && !KnownDelivery(a.Delivery):
+			refused = refusedDelivery("queue entry " + strconv.Itoa(i) + ": a delivery the owning server doesn't make")
+		case a.Delivery == DeliveryRemux && !slices.Contains(MusicRemuxTypes, a.MediaType):
+			refused = refusedDelivery("queue entry " + strconv.Itoa(i) + ": a remux to another media type than audio/mp2t or audio/mp4")
+		}
+		asked = append(asked, a)
 	}
-	return keys, nil
+	if refused != nil {
+		return nil, refused
+	}
+	return asked, nil
 }
 
-// QueueEntry is an entry of a play answer's queue: a queued track
-// prepared, the copy playing, how, and its stream. DurationMs is nil
-// when absent.
+// Request is the play an entry of r's queue starts (music section 5.2):
+// the entry's title and copy, its own delivery with its own media type
+// or targets, else the request's; purpose, the caps and audio renditions
+// are the request's. It starts at 0, on its default audio, and counts
+// once, under the request. A 400 when r's purpose doesn't take the
+// entry's own delivery (PurposeAllows).
+func (a QueueAsk) Request(r PlayRequest) (PlayRequest, error) {
+	e := PlayRequest{Title: a.Title, Purpose: r.Purpose, AudioRenditions: r.AudioRenditions,
+		MaxBitrateKbps: r.MaxBitrateKbps, VersionID: a.VersionID,
+		Delivery: r.Delivery, MediaType: r.MediaType, Transcode: r.Transcode}
+	if a.Delivery != "" {
+		e.Delivery, e.MediaType, e.Transcode = a.Delivery, a.MediaType, a.Transcode
+	}
+	if e.Transcode != nil {
+		t := *e.Transcode
+		e.Transcode = &t
+	}
+	if !PurposeAllows(e.Purpose, e.Delivery, e.Transcode) {
+		return e, badPlay("purpose " + e.Purpose + " doesn't take the entry's delivery")
+	}
+	return e, nil
+}
+
+// QueueEntry is an entry of a play answer's queue, as kept: a queued
+// track prepared, the copy playing, how, and its protocol. It carries no
+// URL: QueueURL builds it from the playback's ticket and the entry's
+// place in the request's queue (At).
 type QueueEntry struct {
-	Title      string      `json:"title"`
-	VersionID  string      `json:"versionId"`
-	Method     string      `json:"method"`
-	Stream     QueueStream `json:"stream"`
-	DurationMs *int64      `json:"durationMs,omitempty"`
-}
-
-// QueueStream is a queue entry's stream: its URL (QueueURL), its protocol
-// (hls or file), and its mimeType when sent.
-type QueueStream struct {
-	URL      string `json:"url"`
-	Protocol string `json:"protocol"`
-	MimeType string `json:"mimeType,omitempty"`
+	Title     string `json:"title"`
+	VersionID string `json:"versionId"`
+	Method    string `json:"method"`
+	Protocol  string `json:"protocol"`
+	At        int    `json:"-"`
 }
 
 // QueueURL is the stream URL of the queued track at place n (0 to 4) of
@@ -77,121 +141,72 @@ type QueueStream struct {
 // names under <stream root><ticket>/queue/<n>/, or .../queue/<n>/file
 // for file.
 func QueueURL(root, ticket string, n int, protocol string) string {
-	name := "master.m3u8"
-	if protocol == "file" {
-		name = "file"
+	return QueueStreamBase(TicketBase(root, ticket), n) + streamName(protocol)
+}
+
+func streamName(protocol string) string {
+	if protocol == ProtocolFile {
+		return NameFile
 	}
-	return root + ticket + "/queue/" + strconv.Itoa(n) + "/" + name
+	return NameMaster
 }
 
 // ReadQueue is what the viewer's server keeps of a play answer's queue
 // (raw; empty when absent, which keeps none, as does a queue that isn't
-// an array), given the request's queue (asked), its delivery ("" when
-// absent), the owning server's stream root and the answer's own
-// stream.url. An entry is dropped alone when it isn't an object; when
-// its title isn't one of asked, after the place of the entry kept before
-// it (out of order, a repeat, the request's title); when its versionId
-// hasn't ID's form, its method isn't direct, remux or transcode (with a
-// delivery, the one it asks: direct for file), or its stream isn't an
-// object of string url and protocol (and mimeType, when sent); when its
-// url isn't exactly QueueURL for its protocol and its place in asked,
-// under the ticket of streamURL (with none, every entry is dropped); when
-// an hls stream names another mimeType than HLSMimeType, a file stream is
-// a remux or a transcode, or delivery file is served as hls. durationMs
-// outside 0 to MaxMusicDurationMs is kept as 0, one that isn't an
-// integer as absent. At most MaxQueue entries are kept.
-func ReadQueue(raw json.RawMessage, asked []string, delivery, root, streamURL string) []QueueEntry {
+// an array), given the request's queue (asked) and delivery ("" when
+// absent). An entry is dropped alone when it isn't an object; when its
+// title isn't one of asked, after the place of the entry kept before it
+// (out of order, a repeat, the request's title); when its versionId
+// hasn't ID's form, or isn't the one its entry named; when its method
+// isn't direct, remux or transcode, or not the one its delivery (its
+// own, else the request's) asks; when its protocol isn't the
+// delivery's (file for file, hls otherwise). At most MaxQueue entries
+// are kept.
+func ReadQueue(raw json.RawMessage, asked []QueueAsk, delivery string) []QueueEntry {
 	kept := []QueueEntry{}
-	ticket := queueTicket(streamURL, root)
-	var list []json.RawMessage
-	if ticket == "" || len(raw) == 0 || raw[0] != '[' || json.Unmarshal(raw, &list) != nil {
+	tree, err := strictTree(raw, true)
+	list, ok := tree.([]any)
+	if len(raw) == 0 || err != nil || !ok {
 		return kept
 	}
-	method := map[string]string{"file": "direct", "remux": "remux", "transcode": "transcode"}[delivery]
 	next := 0 // the first place of asked an entry may take
 	for _, e := range list {
 		if len(kept) == MaxQueue {
 			break
 		}
-		var o map[string]json.RawMessage
-		if json.Unmarshal(e, &o) != nil || o == nil {
+		o, ok := e.(map[string]any)
+		if !ok {
 			continue
 		}
-		title, _ := musicString(o["title"])
-		at := slices.Index(asked[min(next, len(asked)):], title)
+		title, _ := o["title"].(string)
+		at := -1
+		for i := next; i < len(asked) && at < 0; i++ {
+			if asked[i].Title == title {
+				at = i
+			}
+		}
 		if at < 0 {
 			continue
 		}
-		at += next
-		entry, ok := readQueueEntry(o, method, delivery)
-		if !ok || entry.Stream.URL != QueueURL(root, ticket, at, entry.Stream.Protocol) {
+		d := delivery
+		if asked[at].Delivery != "" {
+			d = asked[at].Delivery
+		}
+		q := QueueEntry{Title: title, At: at}
+		q.VersionID, _ = o["versionId"].(string)
+		q.Method, _ = o["method"].(string)
+		q.Protocol, _ = o["protocol"].(string)
+		wantProtocol := ProtocolHLS
+		if d == DeliveryFile {
+			wantProtocol = ProtocolFile
+		}
+		if !ID(q.VersionID) || asked[at].VersionID != "" && q.VersionID != asked[at].VersionID ||
+			!slices.Contains([]string{MethodDirect, MethodRemux, MethodTranscode}, q.Method) ||
+			methodOf[d] != "" && q.Method != methodOf[d] || q.Protocol != wantProtocol {
 			continue
 		}
-		entry.Title = title
-		kept = append(kept, entry)
+		kept = append(kept, q)
 		next = at + 1
 	}
 	return kept
-}
-
-// readQueueEntry reads an entry's versionId, method, stream and
-// durationMs; false drops it. method is the one delivery asks, "" for
-// any.
-func readQueueEntry(o map[string]json.RawMessage, method, delivery string) (QueueEntry, bool) {
-	var e QueueEntry
-	e.VersionID, _ = musicString(o["versionId"])
-	e.Method, _ = musicString(o["method"])
-	if !ID(e.VersionID) || !slices.Contains([]string{"direct", "remux", "transcode"}, e.Method) ||
-		method != "" && e.Method != method {
-		return QueueEntry{}, false
-	}
-	var s map[string]json.RawMessage
-	if json.Unmarshal(o["stream"], &s) != nil || s == nil {
-		return QueueEntry{}, false
-	}
-	var ok1, ok2 bool
-	e.Stream.URL, ok1 = musicString(s["url"])
-	e.Stream.Protocol, ok2 = musicString(s["protocol"])
-	mime, sent := s["mimeType"]
-	if sent {
-		var ok bool
-		if e.Stream.MimeType, ok = musicString(mime); !ok {
-			return QueueEntry{}, false
-		}
-	}
-	if !ok1 || !ok2 {
-		return QueueEntry{}, false
-	}
-	switch e.Stream.Protocol {
-	case "hls":
-		if sent && e.Stream.MimeType != HLSMimeType || delivery == "file" {
-			return QueueEntry{}, false
-		}
-	case "file":
-		if e.Method != "direct" {
-			return QueueEntry{}, false
-		}
-	default:
-		return QueueEntry{}, false
-	}
-	if d, present := o["durationMs"]; present && isInteger(string(d)) {
-		n, ok := musicInt(d, 0, MaxMusicDurationMs)
-		if !ok {
-			n = 0
-		}
-		e.DurationMs = &n
-	}
-	return e, true
-}
-
-// queueTicket is the ticket of a play answer's own stream URL,
-// <root><ticket>/file or <root><ticket>/master.m3u8; "" when it names
-// none.
-func queueTicket(streamURL, root string) string {
-	for _, protocol := range []string{"file", "hls"} {
-		if base, ok := StreamBase(streamURL, root, protocol); ok {
-			return strings.TrimSuffix(strings.TrimPrefix(base, root), "/")
-		}
-	}
-	return ""
 }
