@@ -28,6 +28,7 @@ type fakeHost struct {
 	// method and protocol of Start; startErr fails it; noAdmit starts
 	// without Admit; started and stopped note what happened.
 	method, protocol string
+	noRenditions     bool // Start makes no audio renditions
 	startErr         error
 	noAdmit          bool
 	queue            bool // Start prepares every queued track
@@ -69,7 +70,7 @@ func (h *fakeHost) film(lib, key string, audio ...string) {
 		t.Copies = append(t.Copies, wire.Copy{ID: handle, Name: "Copy " + a, DurationMs: 5_400_000, Container: "mkv",
 			Size: 20, ETag: "e" + strconv.Itoa(i),
 			AudioTracks:    []wire.CopyAudio{{ID: "a0", Language: a, Channels: 2, Default: true, Codec: "aac"}},
-			SubtitleTracks: []wire.CopySubtitle{{ID: "s0", Language: "fr", Format: "subrip"}, {ID: "s1", Language: "fr", Format: "pgs"}}})
+			SubtitleTracks: []wire.CopySubtitle{{ID: "s0", Language: "fr", Format: "subrip"}, {ID: "s1", Language: "fr", Format: "hdmv_pgs_subtitle"}}})
 	}
 }
 
@@ -172,7 +173,7 @@ func (h *fakeHost) Start(_ context.Context, req msfp.StartRequest) (msfp.Started
 	h.handles++
 	h.started = append(h.started, req)
 	st := msfp.Started{Handle: "h" + strconv.Itoa(h.handles), Method: method, Protocol: protocol, MimeType: "video/mp4",
-		PositionMs: req.StartMs, Info: &msfp.PlaybackInfo{Container: "mp4"}}
+		PositionMs: req.StartMs, AudioRenditions: req.AudioRenditions && !h.noRenditions}
 	if queue {
 		for _, q := range req.Queue {
 			st.Queue = append(st.Queue, msfp.StartedEntry{Place: q.Place, Method: method, Protocol: protocol, MimeType: "audio/flac"})

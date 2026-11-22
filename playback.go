@@ -113,7 +113,9 @@ type playback struct {
 	open                    int
 	lastAt                  time.Time
 	scanSent                int64
+	scanCap                 int64 // a scan's: the bytes its ticket serves in all (its pool's scanBytes)
 	scanReads               int
+	fontBytes               map[int]int       // the fonts served, by index: 64 MiB in all
 	playlists               map[string][]byte // served, by entry/name: served the same again
 	playlistBytes           int
 }
@@ -311,10 +313,12 @@ func (e *Engine) versionID(peer, handle string) string {
 }
 
 // offeredCopy is a copy of a title as the catalog sends it to a peer
-// (cleaned, best first, its ID the version ID), with the host's handle
-// of it.
+// (cleaned, in the host's order of preference, its ID the version ID),
+// with the host's handle of it; copy is it whole, as the choice hooks
+// see it (a track's as a copy of one audio stream).
 type offeredCopy struct {
 	handle     string
+	copy       wire.Copy
 	id, name   string
 	etag       string
 	size       int64
@@ -339,7 +343,7 @@ func (c offeredCopy) playCopy() wire.PlayCopy {
 
 // offeredCopies are the copies of exactly that title the peer may play
 // here, as the catalog sends them to it (MSFP playback section 2.2, step
-// 3; video section 3.7: best first), and the host's libraries holding
+// 3; video section 3.7: in the host's order of preference), and the host's libraries holding
 // it among those offered; none when the title isn't sent to the peer.
 func (e *Engine) offeredCopies(ctx context.Context, p *PeerRecord, key string) ([]offeredCopy, []string, error) {
 	if e.cfg.Catalog == nil {
@@ -371,7 +375,7 @@ func (e *Engine) offeredCopies(ctx context.Context, p *PeerRecord, key string) (
 			return nil, nil, nil
 		}
 		for _, c := range v.Copies {
-			out = append(out, offeredCopy{handle: handles[c.ID], id: c.ID, name: c.Name, etag: c.ETag, size: c.Size,
+			out = append(out, offeredCopy{handle: handles[c.ID], copy: c, id: c.ID, name: c.Name, etag: c.ETag, size: c.Size,
 				parts: max(len(c.Parts), 1), bitrate: int(c.BitrateKbps), durationMs: c.DurationMs, startMs: c.StartMs,
 				previews: c.Previews, audio: c.AudioTracks, subtitles: c.SubtitleTracks})
 		}
@@ -384,9 +388,12 @@ func (e *Engine) offeredCopies(ctx context.Context, p *PeerRecord, key string) (
 			return nil, nil, nil
 		}
 		for _, c := range m.Copies {
-			out = append(out, offeredCopy{handle: handles[c.ID], id: c.ID, name: c.Name, etag: c.Etag, size: c.Size, parts: 1,
-				bitrate: c.BitrateKbps, durationMs: c.DurationMs, lyrics: c.Lyrics,
-				audio: []wire.CopyAudio{{ID: "a0", Channels: c.Channels, Default: true, Codec: c.Codec}}})
+			audio := []wire.CopyAudio{{ID: "a0", Channels: c.Channels, Default: true, Codec: c.Codec, Codecs: c.Codecs,
+				SampleRate: c.SampleRate, BitDepth: c.BitDepth}}
+			whole := wire.Copy{ID: c.ID, Name: c.Name, DurationMs: c.DurationMs, Container: c.Container, Size: c.Size,
+				ETag: c.Etag, BitrateKbps: int64(c.BitrateKbps), AudioTracks: audio, Added: c.Added}
+			out = append(out, offeredCopy{handle: handles[c.ID], copy: whole, id: c.ID, name: c.Name, etag: c.Etag, size: c.Size,
+				parts: 1, bitrate: c.BitrateKbps, durationMs: c.DurationMs, lyrics: c.Lyrics, audio: audio})
 		}
 	}
 	out = slices.DeleteFunc(out, func(c offeredCopy) bool { return c.handle == "" })
@@ -465,11 +472,15 @@ func forcedFor(tracks []wire.CopySubtitle, audio string) string {
 	return ""
 }
 
-// How each subtitle format is served apart (MSFP video section 5.4).
+// How each subtitle format, ffmpeg's codec_name, is served apart (MSFP
+// video section 5.4): text as WebVTT, ASS and SSA as ASS too, pictures
+// (PGS as it is, DVD and DVB subtitles converted) as PGS. A format not
+// listed here is the host's: served apart only when it is, never by the
+// engine's guess.
 var (
 	textFormats    = []string{"subrip", "webvtt", "mov_text", "ttml", "ass", "ssa"}
 	assFormats     = []string{"ass", "ssa"}
-	pictureFormats = []string{"pgs", "vobsub", "dvb"}
+	pictureFormats = []string{"hdmv_pgs_subtitle", "dvd_subtitle", "dvb_subtitle"}
 )
 
 // servedAs is how a subtitle track of format is served apart, unless the
@@ -485,27 +496,25 @@ func servedAs(format string, notApart bool) subtitleServed {
 // playAnswer is play's answer (MSFP playback section 2.3, video section
 // 5.3, music section 5.2).
 type playAnswer struct {
-	ID                     string           `json:"id"`
-	Method                 string           `json:"method"`
-	Stream                 streamWire       `json:"stream"`
-	Etag                   string           `json:"etag"`
-	PositionMs             int64            `json:"positionMs"`
-	DurationMs             int64            `json:"durationMs,omitempty"`
-	Versions               []Version        `json:"versions,omitempty"`
-	VersionID              string           `json:"versionId,omitempty"`
-	AudioTracks            []wire.CopyAudio `json:"audioTracks,omitempty"`
-	AudioTrack             string           `json:"audioTrack,omitempty"`
-	MaxBitrateKbps         int              `json:"maxBitrateKbps,omitempty"`
-	Info                   *PlaybackInfo    `json:"info,omitempty"`
-	SubtitleTracks         []subtitleWire   `json:"subtitleTracks,omitempty"`
-	SubtitleTrack          string           `json:"subtitleTrack,omitempty"`
-	BurnedTrack            string           `json:"burnedTrack,omitempty"`
-	ForcedTracks           []subtitleWire   `json:"forcedTracks,omitempty"`
-	ForcedTrack            string           `json:"forcedTrack,omitempty"`
-	SubtitleStretchSeconds int              `json:"subtitleStretchSeconds,omitempty"`
-	Fonts                  []string         `json:"fonts,omitempty"`
-	Trickplay              *trickplayWire   `json:"trickplay,omitempty"`
-	Queue                  []queueWire      `json:"queue,omitempty"`
+	ID              string           `json:"id"`
+	Method          string           `json:"method"`
+	Stream          streamWire       `json:"stream"`
+	Etag            string           `json:"etag"`
+	PositionMs      int64            `json:"positionMs"`
+	DurationMs      int64            `json:"durationMs,omitempty"`
+	VersionID       string           `json:"versionId,omitempty"`
+	AudioTracks     []wire.CopyAudio `json:"audioTracks,omitempty"`
+	AudioTrack      string           `json:"audioTrack,omitempty"`
+	AudioRenditions *bool            `json:"audioRenditions,omitempty"`
+	MaxBitrateKbps  int              `json:"maxBitrateKbps,omitempty"`
+	SubtitleTracks  []subtitleWire   `json:"subtitleTracks,omitempty"`
+	SubtitleTrack   string           `json:"subtitleTrack,omitempty"`
+	BurnedTrack     string           `json:"burnedTrack,omitempty"`
+	ForcedTracks    []subtitleWire   `json:"forcedTracks,omitempty"`
+	ForcedTrack     string           `json:"forcedTrack,omitempty"`
+	Fonts           []string         `json:"fonts,omitempty"`
+	Trickplay       *trickplayWire   `json:"trickplay,omitempty"`
+	Queue           []queueWire      `json:"queue,omitempty"`
 }
 
 type streamWire struct {
@@ -634,12 +643,13 @@ func (e *Engine) play(req *request) response {
 	if len(copies) == 0 {
 		return refuse(probNotFound)
 	}
-	// 4. The copy, then malformed track IDs refused.
-	choices := make([]wire.PlayCopy, len(copies))
+	// 4. The copy (versionId wins; else the host's choice, by default
+	// the recommended one), then malformed track IDs refused.
+	whole := make([]wire.Copy, len(copies))
 	for i, c := range copies {
-		choices[i] = c.playCopy()
+		whole[i] = c.copy
 	}
-	chosen := copies[wire.ChooseCopy(choices, in.VersionID, in.AudioLanguage)]
+	chosen := copies[e.chosenCopy(whole, in)]
 	if !in.TrackIDsOK() {
 		return refuse(probInvalid)
 	}
@@ -648,19 +658,32 @@ func (e *Engine) play(req *request) response {
 	if room, _ := e.poolRoom(p, in.Purpose, audioOnly); !room {
 		return refuse(probStreamLimit)
 	}
-	// 6 and 7. The bitrate cap, and the deliveries MSFP itself refuses.
+	// 6 and 7. The bitrate cap (0: none), and the deliveries MSFP itself
+	// refuses: a delivery, a container or a codec not made here among
+	// them.
 	kbps := in.BitrateCap(e.cfg.MaxBitrateKbps, generous(p).BitrateKbps)
-	if err := wire.RefuseDelivery(in, chosen.playCopy(), kbps); err != nil {
+	if err := wire.RefuseDelivery(in, chosen.playCopy(), kbps, video, e.cfg.Encoders); err != nil {
 		return refusalOf(err)
+	}
+	if in.Delivery == wire.DeliveryTranscode {
+		// The targets left out take the baseline's values (playback
+		// section 2.7).
+		var t wire.TranscodeTargets
+		if in.Transcode != nil {
+			t = *in.Transcode
+		}
+		t = t.WithBaseline(video)
+		in.Transcode = &t
 	}
 	info, err := e.cfg.Playback.Describe(ctx, chosen.handle)
 	if err != nil {
 		return e.hostRefusal(err, "describe")
 	}
-	audio := wire.ChooseAudio(chosen.audio, in.AudioTrack, in.AudioLanguage)
-	shown, forced, burned := "", "", ""
-	if video {
-		shown = chooseSubtitles(chosen.subtitles, in.SubtitleTrack, in.SubtitleLanguage)
+	audio, shown := e.chosenTracks(chosen.copy, in)
+	forced, burned := "", ""
+	if !video {
+		shown = ""
+	} else {
 		audioLang := ""
 		if i := slices.IndexFunc(chosen.audio, func(a wire.CopyAudio) bool { return a.ID == audio }); i >= 0 {
 			audioLang = chosen.audio[i].Language
@@ -707,9 +730,6 @@ func (e *Engine) play(req *request) response {
 			slot = s
 			return s, nil
 		}}
-	if in.Capabilities != nil {
-		sr.Capabilities = *in.Capabilities
-	}
 	started, err := e.cfg.Playback.Start(ctx, sr)
 	if err != nil {
 		if slot != nil {
@@ -754,7 +774,13 @@ func (e *Engine) play(req *request) response {
 	root := e.streamBase(req)
 	base := root + ticket + "/"
 	out := playAnswer{ID: pb.id, Method: started.Method, Etag: chosen.etag, PositionMs: started.PositionMs,
-		Info: cleanInfo(started.Info), VersionID: chosen.id, AudioTrack: audio, AudioTracks: chosen.audio}
+		VersionID: chosen.id, AudioTrack: audio, AudioTracks: chosen.audio}
+	if in.AudioRenditions && started.Protocol == "hls" {
+		// Asked for, never refused: the answer says whether the host made
+		// them (MSFP playback section 2.3), false when it made none.
+		made := started.AudioRenditions
+		out.AudioRenditions = &made
+	}
 	if in.Purpose == wire.PurposePlay {
 		out.MaxBitrateKbps = kbps
 	}
@@ -764,9 +790,6 @@ func (e *Engine) play(req *request) response {
 	out.Stream = streamWire{URL: base + "file", Protocol: "file", MimeType: wire.RelayedMediaType(started.MimeType)}
 	if started.Protocol == "hls" {
 		out.Stream = streamWire{URL: base + "master.m3u8", Protocol: "hls", MimeType: wire.HLSType}
-	}
-	for _, c := range copies {
-		out.Versions = append(out.Versions, Version{ID: c.id, Name: c.name})
 	}
 	if video && in.Purpose != wire.PurposeScan {
 		for _, t := range chosen.subtitles {
@@ -784,9 +807,6 @@ func (e *Engine) play(req *request) response {
 			}
 		}
 		out.SubtitleTrack, out.ForcedTrack, out.BurnedTrack = shown, forced, burned
-		if len(chosen.subtitles) > 0 {
-			out.SubtitleStretchSeconds = wire.StretchSeconds
-		}
 		for n := range pb.fonts {
 			out.Fonts = append(out.Fonts, base+"fonts/"+strconv.Itoa(n))
 		}
@@ -831,7 +851,8 @@ var methodOf = map[string]string{wire.DeliveryFile: "direct", wire.DeliveryRemux
 
 // startedBreaks says what the host's start breaks of MSFP, "" for
 // nothing: a method or protocol MSFP doesn't have, another delivery than
-// the one asked (file is direct as file; remux and transcode are hls),
+// the one asked (file is direct as file; remux, transcode and the
+// baseline without delivery are hls),
 // file of a copy of several parts, file played otherwise than direct; a
 // queue entry of a place not asked, twice, or served against the same
 // rules.
@@ -842,7 +863,7 @@ func startedBreaks(in wire.PlayRequest, c offeredCopy, s Started, asked map[int]
 			return "a method or protocol MSFP doesn't have"
 		case in.Delivery != "" && method != methodOf[in.Delivery]:
 			return "another method than the delivery asked"
-		case in.Delivery == wire.DeliveryFile && protocol != "file" || in.Delivery != "" && in.Delivery != wire.DeliveryFile && protocol == "file":
+		case in.Delivery == wire.DeliveryFile && protocol != "file" || in.Delivery != wire.DeliveryFile && protocol == "file":
 			return "another protocol than the delivery asked"
 		case protocol == "file" && method != "direct":
 			return "a file that isn't played as it is"
@@ -891,6 +912,9 @@ func (e *Engine) register(p *PeerRecord, in wire.PlayRequest, queue, libs []stri
 		libraries: libs, handle: s.Handle, method: s.Method, purpose: in.Purpose, audioOnly: audioOnly,
 		ticket: sha256.Sum256([]byte(ticket)), started: now, used: now, slot: slot, audio: map[string]bool{},
 		subtitles: map[string]subtitleServed{}, entries: map[int]entryServed{0: {protocol: s.Protocol, size: c.size, etag: c.etag}}}
+	if in.Purpose == wire.PurposeScan {
+		pb.scanCap = wire.Limits{ScanBytes: slot.limits.ScanBytes}.ScanCap()
+	}
 	if in.Purpose == wire.PurposeDownload && slot.limits.DownloadKbps > 0 {
 		pb.pace = newPacer(slot.limits.DownloadKbps, e.cfg.Clock)
 	}
@@ -908,7 +932,7 @@ func (e *Engine) register(p *PeerRecord, in wire.PlayRequest, queue, libs []stri
 			pb.subtitles[t.ID] = servedAs(t.Format, slices.Contains(info.NotApart, t.ID))
 			hasASS = hasASS || slices.Contains(assFormats, t.Format)
 		}
-		if hasASS && info.Fonts > 0 && info.Fonts <= 8 {
+		if hasASS && info.Fonts > 0 && info.Fonts <= wire.MaxFonts {
 			pb.fonts = info.Fonts
 		}
 	}
@@ -941,28 +965,6 @@ func (e *Engine) streamBase(req *request) string {
 		addr = a.former
 	}
 	return addr + e.cfg.Prefix + "/api/v1/stream/"
-}
-
-// cleanInfo is the host's information made plain text, short.
-func cleanInfo(in *PlaybackInfo) *PlaybackInfo {
-	if in == nil {
-		return nil
-	}
-	out := &PlaybackInfo{Container: wire.CleanText(in.Container, 32), BitrateKbps: max(in.BitrateKbps, 0)}
-	for _, r := range in.Reasons {
-		if r = wire.CleanText(r, 64); r != "" && len(out.Reasons) < 16 {
-			out.Reasons = append(out.Reasons, r)
-		}
-	}
-	for _, pair := range [][2]**StreamInfo{{&in.Video, &out.Video}, {&in.Audio, &out.Audio}} {
-		if s := *pair[0]; s != nil {
-			c := *s
-			c.Codec, c.Profile, c.Range = wire.CleanText(c.Codec, 32), wire.CleanText(c.Profile, 32), wire.CleanText(c.Range, 32)
-			c.Language, _ = wire.SentTag(c.Language)
-			*pair[1] = &c
-		}
-	}
-	return out
 }
 
 // hostRefusal is the host's error as the peer is told it (engine.md

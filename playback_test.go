@@ -36,22 +36,22 @@ func TestPlayAndRelay(t *testing.T) {
 	h := filmHost()
 	s := newSharing(t, h, msfp.Config{}, msfp.Config{})
 	pb, err := s.b.eng.Play(ctx, s.onB.ID, msfp.PlayRequest{Title: "movie/tmdb/949", AudioLanguage: "fr",
-		Capabilities: msfp.Capabilities{Containers: []string{"MP4"}, MaxHeight: 1000, MaxBitrateKbps: 12345}, SubtitleLanguage: "fr"})
+		MaxBitrateKbps: 12345, SubtitleLanguage: "fr"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if pb.Method != "direct" || pb.Protocol != "hls" || pb.AudioTrack != "a0" || pb.SubtitleTrack != "s0" ||
-		len(pb.Versions) != 2 || pb.VersionID != pb.Versions[1].ID || len(pb.SubtitleTracks) != 2 || pb.SubtitleStretchSeconds != 120 ||
+		pb.VersionID == "" || len(pb.SubtitleTracks) != 2 || pb.SubtitleStretchSeconds != 120 ||
 		strings.HasPrefix(pb.ID, "play_") {
 		t.Errorf("the playback as B keeps it: %+v", pb)
 	}
-	// A heard the French copy, the coarsened capabilities, the cap.
-	if len(h.started) != 1 || h.started[0].Copy != "movie/tmdb/949#1" || h.started[0].MaxBitrateKbps != 12000 ||
-		len(h.started[0].Capabilities.Containers) != 1 || h.started[0].Capabilities.MaxHeight != 720 {
+	// A heard the French copy and the cap, as asked; nothing of the device.
+	if len(h.started) != 1 || h.started[0].Copy != "movie/tmdb/949#1" || h.started[0].MaxBitrateKbps != 12345 {
 		t.Errorf("A started %+v", h.started)
 	}
 	plays := s.a.exchanges("play")
-	if body := plays[0].reqBody; !strings.Contains(body, `"containers":["mp4"]`) || !strings.Contains(body, `"maxBitrateKbps":12000`) {
+	if body := plays[0].reqBody; strings.Contains(body, "capabilities") || !strings.Contains(body, `"maxBitrateKbps":12345`) ||
+		strings.Contains(plays[0].resBody, `"versions"`) {
 		t.Errorf("the play request: %s", body)
 	}
 	if strings.Contains(plays[0].resBody, "movie/tmdb/949#") {
@@ -122,8 +122,8 @@ func TestPlayRefusalsAndTickets(t *testing.T) {
 	}
 	for _, body := range []string{`{}`, `{"title":7}`, `{"title":"series/tmdb/1399"}`, `{"title":"movie/tmdb/0949"}`,
 		`{"title":"movie/tmdb/949","startPositionMs":-1}`, `{"title":"movie/tmdb/949","audioTrack":"a01"}`,
-		`{"title":"movie/tmdb/949","subtitleTrack":"s007"}`, `{"title":"movie/tmdb/949","capabilities":{"containers":["mp4",1]}}`,
-		`{"title":"movie/tmdb/949","capabilities":{"containers":"mp4"}}`, `{"title":"movie/tmdb/949","capabilities":"mp4"}`,
+		`{"title":"movie/tmdb/949","subtitleTrack":"s007"}`, `{"title":"movie/tmdb/949","delivery":"File"}`,
+		`{"title":"movie/tmdb/949","delivery":"remux","container":""}`,
 		`{"title":"movie/tmdb/949","audioLanguage":"fr_CA"}`, `{"title":"movie/tmdb/949","maxBitrateKbps":10000001}`} {
 		if code := call(body); code != 400 {
 			t.Errorf("%s: %d", body, code)
@@ -136,7 +136,7 @@ func TestPlayRefusalsAndTickets(t *testing.T) {
 	if code := call(`{"title":"movie/tmdb/949","capabilities":{"containers":["MP4","x"]},"audioTrack":"a7","other":1}`); code != 200 {
 		t.Errorf("unknown values: %d", code)
 	}
-	if got := h.started[0]; len(got.Capabilities.Containers) != 0 || got.AudioTrack != "a0" {
+	if got := h.started[0]; got.AudioTrack != "a0" {
 		t.Errorf("A started %+v", got)
 	}
 	var ans struct {
@@ -430,9 +430,8 @@ func TestMusicPlay(t *testing.T) {
 	track := "track/mb/0c000000-0000-4000-8000-000000000003"
 	h.titles[track] = musicTrack(track, "t")
 	h.info["t"] = msfp.CopyInfo{Fonts: 2, Trickplay: &msfp.Trickplay{TileWidth: 10, TileHeight: 10, Columns: 1, Rows: 1, IntervalMs: 1000, TileCount: 1}}
-	h.protocol = "file"
 	s := newSharing(t, h, msfp.Config{NewPairing: &msfp.Limits{Streams: 0, Audio: true, AudioStreams: 1}}, msfp.Config{})
-	pb, err := s.b.eng.Play(ctx, s.onB.ID, msfp.PlayRequest{Title: track, SubtitleTrack: "s0"})
+	pb, err := s.b.eng.Play(ctx, s.onB.ID, msfp.PlayRequest{Title: track, SubtitleTrack: "s0", Delivery: msfp.DeliveryFile})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -518,7 +517,7 @@ func TestStatesAndCuts(t *testing.T) {
 		call, body string
 		want       int
 	}{
-		{"progress", unknown, 410}, {"stop", unknown, 200}, {"progress", `{"id":"play_x"}`, 400},
+		{"progress", unknown, 410}, {"stop", unknown, 200}, {"progress", `{"id":"play.x"}`, 400},
 		{"progress", `{}`, 400}, {"stop", `{"id":"play_aaaaaaaaaaaaaaaaaaaaaaaaaa","positionMs":-1}`, 400},
 		{"progress", `{"id":"play_aaaaaaaaaaaaaaaaaaaaaaaaaa","positionMs":8640000001}`, 400},
 	} {
@@ -561,7 +560,7 @@ func TestStatesAndCuts(t *testing.T) {
 		}
 	}
 	h.mu.Unlock()
-	pb, err = s.b.eng.Play(ctx, s.onB.ID, msfp.PlayRequest{Title: "movie/tmdb/949", Capabilities: msfp.Capabilities{Containers: []string{"mp4"}}})
+	pb, err = s.b.eng.Play(ctx, s.onB.ID, msfp.PlayRequest{Title: "movie/tmdb/949", Delivery: msfp.DeliveryFile})
 	if err != nil {
 		t.Fatal(err)
 	}

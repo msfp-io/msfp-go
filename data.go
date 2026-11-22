@@ -54,7 +54,7 @@ type TitleCommon struct {
 // nothing leaves that MSFP doesn't take.
 type VideoTitle struct {
 	TitleCommon
-	// Copies are a film's, an episode's or an extra's copies, best first
+	// Copies are a film's, an episode's or an extra's copies, in the host's order of preference
 	// (MSFP video sections 3.2 to 3.8): what a viewer's server needs to
 	// list each as a file of its own before anyone plays it (its length,
 	// size, etag, container, streams and tracks, chapters, skip
@@ -64,11 +64,15 @@ type VideoTitle struct {
 	// Of the host's own titles, each copy's ID is the host's handle of it,
 	// the one Playback and Media are given: it never leaves; the engine
 	// sends instead the version ID play gives for it, and plays a copy
-	// only as it is described here. The engine
-	// sends the copies in the order of video section 3.7 (wire.SortCopies,
-	// keeping the host's order between equal ones), language tags as
-	// wire.SentTag gives them, names and track titles only when they are
-	// labels (never a file name or a release group: video section 3.6).
+	// only as it is described here. The host's order of its copies is its
+	// preference (video section 3.7): the engine sends them in that order
+	// (wire.SortCopies is the recommended default, for a host that has
+	// none), language tags as wire.SentTag gives them, names and track
+	// titles as Config.CopyName and Config.TrackTitle keep them (by
+	// default, only labels: never a file name or a release group, video
+	// section 3.6). Containers, codecs and subtitle formats are ffmpeg's
+	// names (video section 3.5): a host whose media server names them
+	// otherwise maps them; the engine maps nothing, and sends any token.
 	// Its ETag changes whenever the copy's bytes change, and only then: a
 	// change of a copy is a change of the title (a changes reading sends it
 	// again). Of a peer's titles, ID is the peer's version ID.
@@ -85,8 +89,12 @@ type VideoTitle struct {
 	With  []string          `json:"with,omitempty"`
 	IDs   map[string]string `json:"ids,omitempty"`
 	// ExtraType is an extra's (kind "extra", keyed under its film, series
-	// or season: video section 3.9): one of wire.ExtraTypes, "clip" for
-	// another. Theme songs and theme videos are never extras.
+	// or season: video section 3.9): open, a token (trailer, featurette,
+	// behindthescenes, deletedscene, interview, scene, short, clip,
+	// themesong, themevideo…); an extra without one isn't sent. Theme
+	// songs and videos are extras like the others: whether the host offers
+	// them is its operator's choice (off by default is a fine one); the
+	// engine carries what the host gives.
 	ExtraType string `json:"extraType,omitempty"`
 	// Name is an extra's own short name (optional, at most 64
 	// characters), or a local film's or series' name (required, at most
@@ -111,9 +119,9 @@ type Place struct {
 	Episode int `json:"episode"`
 }
 
-// BestCopy is the title's best copy: the first of its copies, which are
-// best first (MSFP video section 3.7); false for a title without one (a
-// series, a season). A viewer's server shows its picture as the title's.
+// BestCopy is the title's first copy, the owning server's preferred
+// (MSFP video section 3.7); false for a title without one (a series, a
+// season). A viewer's server may show its picture as the title's.
 func (t *VideoTitle) BestCopy() (wire.Copy, bool) {
 	if len(t.Copies) == 0 {
 		return wire.Copy{}, false
@@ -155,28 +163,31 @@ func (t *VideoTitle) SubtitleLanguages() []string {
 // MusicTitle is an artist, an album or a track, with its description
 // (MSFP music section 3): its name; for albums and tracks, the artist
 // keys credited and their names as written; for albums, the name to sort
-// by, the release type, whether it is a compilation, the dates of this
-// edition and of the first, and genres; for tracks, the album key, the
-// disc and number on it, and its copies; for local artists and albums,
+// by, MusicBrainz's primary and secondary types of its release group
+// (lowercased, open), whether it is a compilation; for albums and
+// tracks, the dates of this edition and of the first, and genres (a
+// track's own, optional); for tracks, the album key, the disc and number
+// on it, and its copies; for local artists and albums,
 // whether the owner shares an image; other identifiers by scheme
 // (mbreleasegroup, mbrecording, isrc, acoustid). A peer's are cleaned as
 // music section 3.2 says; the host's own are cleaned the same way before
 // they leave.
 type MusicTitle struct {
 	TitleCommon
-	Name         string   `json:"name"`
-	SortName     string   `json:"sortName,omitempty"`
-	Artists      []string `json:"artists,omitempty"`
-	ArtistNames  string   `json:"artistNames,omitempty"`
-	ReleaseType  string   `json:"releaseType,omitempty"`
-	Compilation  *bool    `json:"compilation,omitempty"`
-	Date         string   `json:"date,omitempty"`
-	OriginalDate string   `json:"originalDate,omitempty"`
-	Genres       []string `json:"genres,omitempty"`
-	Album        string   `json:"album,omitempty"`
-	Disc         int      `json:"disc,omitempty"`
-	Number       int      `json:"number,omitempty"`
-	// Copies are a track's copies, best first, at least one (music
+	Name           string   `json:"name"`
+	SortName       string   `json:"sortName,omitempty"`
+	Artists        []string `json:"artists,omitempty"`
+	ArtistNames    string   `json:"artistNames,omitempty"`
+	PrimaryType    string   `json:"primaryType,omitempty"`
+	SecondaryTypes []string `json:"secondaryTypes,omitempty"`
+	Compilation    *bool    `json:"compilation,omitempty"`
+	Date           string   `json:"date,omitempty"`
+	OriginalDate   string   `json:"originalDate,omitempty"`
+	Genres         []string `json:"genres,omitempty"`
+	Album          string   `json:"album,omitempty"`
+	Disc           int      `json:"disc,omitempty"`
+	Number         int      `json:"number,omitempty"`
+	// Copies are a track's copies, in the owner's order of preference, at least one (music
 	// section 3.3). Of the host's own, each ID is its handle, as for
 	// VideoTitle.Copies: the engine sends the version ID made of it.
 	Copies []wire.MusicCopy `json:"copies,omitempty"`
@@ -249,8 +260,9 @@ type CopyInfo struct {
 	// Trickplay is the layout of the copy's previews, for a copy whose
 	// catalog description says it has some (Previews); nil for none.
 	Trickplay *Trickplay
-	// Fonts is how many fonts the copy's ASS tracks use (0 to 8), served
-	// as MediaFont 0 to Fonts-1 (MSFP video section 6.6).
+	// Fonts is how many fonts the copy's ASS tracks use (0 to 64), served
+	// as MediaFont 0 to Fonts-1 (MSFP video section 6.6): each at most 10
+	// MiB, 64 MiB in all; the host lists none past those bounds.
 	Fonts int
 	// NotApart lists the subtitle tracks the host can't serve apart (as
 	// WebVTT for text, as PGS for pictures: MSFP video section 5.4): they
@@ -269,48 +281,14 @@ type Trickplay struct {
 	Sheets                int
 }
 
-// Version is one of a title's copies as a peer sees it: an opaque ID and
-// a name (MSFP playback section 2.3).
-type Version struct {
-	ID   string `json:"id"`
-	Name string `json:"name,omitempty"`
-}
-
-// PlaybackInfo is how a playback is served, for the viewer's player
-// information: why it is converted (none when played as it is), the
-// container, the bitrate, the video and the audio.
-type PlaybackInfo struct {
-	Reasons     []string    `json:"reasons,omitempty"`
-	Container   string      `json:"container,omitempty"`
-	BitrateKbps int         `json:"bitrateKbps,omitempty"`
-	Video       *StreamInfo `json:"video,omitempty"`
-	Audio       *StreamInfo `json:"audio,omitempty"`
-}
-
-// StreamInfo describes the video or the audio of a playback.
-type StreamInfo struct {
-	Codec       string `json:"codec,omitempty"`
-	Profile     string `json:"profile,omitempty"`
-	Width       int    `json:"width,omitempty"`
-	Height      int    `json:"height,omitempty"`
-	BitDepth    int    `json:"bitDepth,omitempty"`
-	Range       string `json:"range,omitempty"`
-	BitrateKbps int    `json:"bitrateKbps,omitempty"`
-	Channels    int    `json:"channels,omitempty"`
-	Language    string `json:"language,omitempty"`
-}
-
-// Capabilities are what a viewer's device plays (MSFP playback section
-// 2.1, video section 5.1). Toward a peer, only the values MSFP lists are
-// sent, coarsened (wire.Capabilities.Coarsen); toward the host, only
-// those values, exactly as MSFP writes them. An empty list, or 0, says
-// nothing.
-type Capabilities = wire.Capabilities
-
 // TranscodeTargets are the targets of a play with delivery "transcode"
-// (MSFP playback section 2.7, video section 5.1): a member left out is
-// the owning server's choice.
+// (MSFP playback section 2.7, video section 5.1): codecs as ffmpeg names
+// them; toward the host, those left out already hold the baseline's
+// values (h264, aac, 2 channels; maxHeight 0, the copy's own height).
 type TranscodeTargets = wire.TranscodeTargets
+
+// Encoders are the codecs a server's Playback converts to (Config.Encoders).
+type Encoders = wire.Encoders
 
 // The purposes of a playback (MSFP playback section 2): to watch it, to
 // download it, to let a media server read the start of its file.
@@ -320,8 +298,9 @@ const (
 	PurposeScan     = wire.PurposeScan
 )
 
-// The deliveries a play may ask (MSFP playback section 2.7); "" lets
-// the owning server decide.
+// The deliveries a play may ask (MSFP playback section 2.7); "" is the
+// baseline every viewer's server plays: H.264 and AAC in complete HLS
+// (AAC alone for a track).
 const (
 	DeliveryFile      = wire.DeliveryFile
 	DeliveryRemux     = wire.DeliveryRemux
@@ -351,18 +330,24 @@ type StartRequest struct {
 	// Delivery is what the viewer's server asked: DeliveryFile (the copy
 	// as it is: method direct, protocol file), DeliveryRemux (into
 	// Container, as hls), DeliveryTranscode (to Transcode's targets, as
-	// hls), or "" for the host's choice from the capabilities. With a
-	// delivery, the host serves exactly that or refuses with
-	// ErrDeliveryRefused (its bandwidth, its policy, a delivery it can't
-	// make of the copy); it never serves another (MSFP playback section
-	// 2.2, step 7). The engine has already refused file of a copy of
-	// several parts, file or remux of a play above MaxBitrateKbps, and a
-	// BurnSubtitle the copy hasn't.
+	// hls), or "" for the baseline: H.264 video and AAC audio, at most 2
+	// channels, in complete HLS (AAC alone for a track), the copy's
+	// streams left unchanged (method direct or remux) when they already
+	// are those, never the file. With a delivery, the host serves exactly
+	// that or refuses with ErrDeliveryRefused (its bandwidth, its policy,
+	// a delivery it can't make of the copy); it never serves another (MSFP
+	// playback section 2.2, step 7). The engine has already refused a
+	// delivery not of the list, a remux into another container than
+	// mpegts or mp4, a transcode codec not in Config.Encoders, file of a
+	// copy of several parts, file or remux of a play above
+	// MaxBitrateKbps, and a BurnSubtitle the copy hasn't.
 	Delivery  string
 	Container string
 	Transcode *TranscodeTargets
 	// AudioRenditions asks, for hls, every audio track of the copy as an
-	// #EXT-X-MEDIA rendition named by its ID (MSFP media section 3.1).
+	// #EXT-X-MEDIA rendition named by its ID (MSFP media section 3.1). It
+	// is never refused: a host that makes none says so in
+	// Started.AudioRenditions.
 	AudioRenditions bool
 	// Parts is the copy's files, as its description says (1 for one
 	// file): a copy of several is started as "hls", never "file".
@@ -375,14 +360,8 @@ type StartRequest struct {
 	SubtitleTrack string
 	// StartMs is where to start, in the copy; 0 for a download or a scan.
 	StartMs int64
-	// Capabilities are what the viewer's device plays, as the peer said,
-	// only values MSFP lists. Without a delivery, nothing said about
-	// containers or video codecs: no direct play (H.264 and AAC in HLS;
-	// AAC in HLS for a track); about audio codecs: AAC only; about hdr:
-	// standard range.
-	Capabilities Capabilities
-	// MaxBitrateKbps is the cap in effect for a play: 120,000 when none
-	// was set. A download's speed is the engine's to pace (downloadKbps).
+	// MaxBitrateKbps is the cap in effect for a play, 0 for none. A
+	// download's speed is the engine's to pace (downloadKbps).
 	MaxBitrateKbps int
 	// Queue are the tracks a music play names after Title, that the host
 	// prepares under the same playback (MSFP music section 5.2), each
@@ -425,7 +404,10 @@ type Started struct {
 	MimeType string
 	// PositionMs is where it starts, in the copy.
 	PositionMs int64
-	Info       *PlaybackInfo
+	// AudioRenditions says the hls playlist carries every audio track as
+	// a rendition, as StartRequest.AudioRenditions asked; false when the
+	// host made none (play's answer says so: MSFP playback section 2.3).
+	AudioRenditions bool
 	// Queue are the queued tracks the host prepared, of those
 	// StartRequest.Queue named (by Place); one it can't play is left
 	// out. Their media are served under the same Handle, with
@@ -520,11 +502,14 @@ type Range struct {
 }
 
 // Limits are what a pairing may use of a server (MSFP playback section
-// 5): streams at once (0 to 50), transcodes among them, a bitrate cap
-// (0: none); downloads at once (0 to 50; 0: none), downloads started in
-// any 24 hours (0 to 10,000; 0: no cap besides Downloads), each
+// 5): streams at once (0 to 1,000), transcodes among them, a bitrate cap
+// (0: none); downloads at once (0 to 1,000; 0: none), downloads started
+// in any 24 hours (0 to 10,000; 0: no cap besides Downloads), each
 // download's speed cap in kbit/s (0 to 1,000,000; 0: none), scans
-// started in any 24 hours (0 to 1,000,000; 0: no scan access). With
+// started in any 24 hours (0 to 1,000,000; 0: no scan access), the
+// bytes one scan may read (ScanBytes: 4 MiB to 1 GiB, 0 to send none:
+// then 4 MiB, the floor callers count on; wire.RecommendedScanBytes,
+// 32 MiB, is the recommended default). With
 // Audio, audio playbacks (tracks) are counted apart, within AudioStreams
 // and AudioTranscodes (music section 5.1); without, they count in
 // Streams and Transcodes.
@@ -536,6 +521,7 @@ type Limits struct {
 	DownloadsPerDay int  `json:"downloadsPerDay,omitempty"`
 	DownloadKbps    int  `json:"downloadKbps,omitempty"`
 	ScansPerDay     int  `json:"scansPerDay,omitempty"`
+	ScanBytes       int  `json:"scanBytes,omitempty"`
 	Audio           bool `json:"audio,omitempty"`
 	AudioStreams    int  `json:"audioStreams,omitempty"`
 	AudioTranscodes int  `json:"audioTranscodes,omitempty"`
@@ -547,6 +533,7 @@ func (l Limits) Check() error {
 		l.BitrateKbps < 0 || l.BitrateKbps > wire.MaxLimitKbps ||
 		l.Downloads < 0 || l.Downloads > wire.MaxDownloads || l.DownloadsPerDay < 0 || l.DownloadsPerDay > wire.MaxDownloadsPerDay ||
 		l.DownloadKbps < 0 || l.DownloadKbps > wire.MaxLimitKbps || l.ScansPerDay < 0 || l.ScansPerDay > wire.MaxScansPerDay ||
+		l.ScanBytes != 0 && (l.ScanBytes < wire.MinScanBytes || l.ScanBytes > wire.MaxScanBytes) ||
 		l.AudioStreams < 0 || l.AudioStreams > wire.MaxStreams || l.AudioTranscodes < 0 || l.AudioTranscodes > l.AudioStreams {
 		return ErrInvalidLimits
 	}

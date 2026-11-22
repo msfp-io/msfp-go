@@ -45,8 +45,7 @@ func TestSeveralPartsNeverFile(t *testing.T) {
 	if pb, err := s.b.eng.Play(ctx, s.onB.ID, msfp.PlayRequest{Title: "movie/tmdb/949", AudioLanguage: "en"}); err != nil || pb.Protocol != "hls" {
 		t.Errorf("as hls: %+v, %v", pb, err)
 	}
-	h.protocol = "file"
-	pb, err := s.b.eng.Play(ctx, s.onB.ID, msfp.PlayRequest{Title: "movie/tmdb/949", AudioLanguage: "fr"})
+	pb, err := s.b.eng.Play(ctx, s.onB.ID, msfp.PlayRequest{Title: "movie/tmdb/949", AudioLanguage: "fr", Delivery: msfp.DeliveryFile})
 	if err != nil || pb.Protocol != "file" || h.started[len(h.started)-1].Parts != 1 {
 		t.Errorf("a copy of one file: %+v, %v, %+v", pb, err, h.started)
 	}

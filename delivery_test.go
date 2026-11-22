@@ -72,6 +72,30 @@ func TestDeliveries(t *testing.T) {
 	if got := h.started[len(h.started)-1]; got.Delivery != msfp.DeliveryFile || got.Purpose != msfp.PurposePlay {
 		t.Errorf("the host started %+v", got)
 	}
+	// Audio renditions asked: the answer says whether the host made them,
+	// false when it made none (MSFP playback section 2.3).
+	if pb, err := play(msfp.PlayRequest{AudioRenditions: true}); err != nil || !pb.AudioRenditions {
+		t.Errorf("renditions made: %+v %v", pb, err)
+	}
+	h.mu.Lock()
+	h.noRenditions = true
+	h.mu.Unlock()
+	if pb, err := play(msfp.PlayRequest{AudioRenditions: true}); err != nil || pb.AudioRenditions ||
+		!strings.Contains(s.a.exchanges("play")[len(s.a.exchanges("play"))-1].resBody, `"audioRenditions":false`) {
+		t.Errorf("no renditions made: %+v %v", pb, err)
+	}
+	h.mu.Lock()
+	h.noRenditions = false
+	h.mu.Unlock()
+	// Without delivery, the baseline; a transcode's targets left out are
+	// the baseline's when the host hears them.
+	if _, err := play(msfp.PlayRequest{Delivery: msfp.DeliveryTranscode, Transcode: &msfp.TranscodeTargets{MaxHeight: 720}}); err != nil {
+		t.Fatal(err)
+	}
+	if got := h.started[len(h.started)-1].Transcode; got == nil || *got != (msfp.TranscodeTargets{VideoCodec: "h264", MaxHeight: 720,
+		AudioCodec: "aac", AudioChannels: 2}) {
+		t.Errorf("the targets the host heard: %+v", got)
+	}
 	// Remux needs a container; the host is told it.
 	if _, err := play(msfp.PlayRequest{Delivery: msfp.DeliveryRemux}); !errors.Is(err, msfp.ErrInvalidRequest) {
 		t.Errorf("remux without a container: %v", err)
@@ -115,12 +139,26 @@ func TestDeliveries(t *testing.T) {
 	// Combinations of purpose and delivery MSFP refuses, from the peer.
 	var raw json.RawMessage
 	for _, body := range []string{`{"title":"movie/tmdb/949","purpose":"scan","delivery":"remux","container":"mp4"}`,
-		`{"title":"movie/tmdb/949","purpose":"download","delivery":"transcode"}`, `{"title":"movie/tmdb/949","delivery":"hls"}`,
+		`{"title":"movie/tmdb/949","purpose":"download","delivery":"transcode"}`, `{"title":"movie/tmdb/949","delivery":"HLS"}`,
 		`{"title":"movie/tmdb/949","transcode":{"maxHeight":720}}`, `{"title":"movie/tmdb/949","delivery":"transcode","transcode":{"maxHeight":719}}`,
 		`{"title":"movie/tmdb/949","delivery":"transcode","transcode":{"burnSubtitle":"off"}}`} {
 		if code, _ := s.b.eng.CallForTest(ctx, s.onB.ID, "play", json.RawMessage(body), &raw); code != 400 {
 			t.Errorf("%s: %d", body, code)
 		}
+	}
+	// What it doesn't make, named by a token: 409 delivery-refused (MSFP
+	// core section 8.5), before the host is asked.
+	before = len(h.started)
+	for _, body := range []string{`{"title":"movie/tmdb/949","delivery":"hls"}`,
+		`{"title":"movie/tmdb/949","delivery":"remux","container":"matroska"}`,
+		`{"title":"movie/tmdb/949","delivery":"transcode","transcode":{"videoCodec":"vvc"}}`,
+		`{"title":"movie/tmdb/949","delivery":"transcode","transcode":{"audioCodec":"opus"}}`} {
+		if code, _ := s.b.eng.CallForTest(ctx, s.onB.ID, "play", json.RawMessage(body), &raw); code != 409 {
+			t.Errorf("%s: %d", body, code)
+		}
+	}
+	if len(h.started) != before {
+		t.Errorf("the host was asked for what it doesn't make")
 	}
 }
 
@@ -434,11 +472,12 @@ func TestDownloadsAfterRestart(t *testing.T) {
 }
 
 // A scan's cap counts the bytes sent: a read cut short counts only what
-// went (MSFP media section 4.2).
+// went (MSFP media section 4.2). Without scanBytes, the cap is the
+// floor, 4 MiB.
 func TestScanCapCountsSent(t *testing.T) {
 	ctx := context.Background()
 	h := filmHost()
-	big := make([]byte, wire.ScanCap+1000)
+	big := make([]byte, wire.MinScanBytes+1000)
 	h.files["file"] = big
 	h.copyOf("movie/tmdb/949", 0).Size = int64(len(big))
 	s := newSharing(t, h, msfp.Config{NewPairing: &msfp.Limits{Streams: 1, Transcodes: 1, ScansPerDay: 1}}, msfp.Config{})
@@ -463,7 +502,7 @@ func TestScanCapCountsSent(t *testing.T) {
 	h.mu.Unlock()
 	out = sink{}
 	if err := s.b.eng.Fetch(ctx, scan.ID, msfp.MediaPath{Kind: msfp.MediaFile}, "bytes=0-", &out); err != nil ||
-		int64(len(out.body)) != wire.ScanCap-1000 {
+		int64(len(out.body)) != wire.MinScanBytes-1000 {
 		t.Errorf("after 1,000 bytes sent: %v, %d bytes", err, len(out.body))
 	}
 }
@@ -529,14 +568,14 @@ func TestDownloadPace(t *testing.T) {
 	}
 }
 
-// Scans: a range of the file only, within 32 MiB per ticket, cut at the
-// cap, then 416; a day's count; the idle rule (MSFP playback section 8,
+// Scans: a range of the file only, within the pairing's scanBytes (32
+// MiB here) per ticket, announced in limits, cut at the cap, then 416; a day's count; the idle rule (MSFP playback section 8,
 // media section 4.2).
 func TestScans(t *testing.T) {
 	ctx := context.Background()
 	clock := newClock(time.Now().Unix())
 	h := filmHost()
-	big := make([]byte, wire.ScanCap+1000)
+	big := make([]byte, wire.RecommendedScanBytes+1000)
 	for i := range big {
 		big[i] = byte(i)
 	}
@@ -544,7 +583,8 @@ func TestScans(t *testing.T) {
 	h.copyOf("movie/tmdb/949", 0).Size = int64(len(big))
 	h.copyOf("movie/tmdb/949", 0).Previews = true
 	h.info["movie/tmdb/949#0"] = msfp.CopyInfo{Trickplay: &msfp.Trickplay{TileWidth: 10, TileHeight: 10, Columns: 2, Rows: 1, IntervalMs: 10_000, TileCount: 3}}
-	s := newSharing(t, h, msfp.Config{Clock: clock, NewPairing: &msfp.Limits{Streams: 1, Transcodes: 1, ScansPerDay: 2}}, msfp.Config{Clock: clock})
+	s := newSharing(t, h, msfp.Config{Clock: clock, NewPairing: &msfp.Limits{Streams: 1, Transcodes: 1, ScansPerDay: 2,
+		ScanBytes: wire.RecommendedScanBytes}}, msfp.Config{Clock: clock})
 	scan, err := s.b.eng.Play(ctx, s.onB.ID, msfp.PlayRequest{Title: "movie/tmdb/949", Purpose: msfp.PurposeScan})
 	if err != nil {
 		t.Fatal(err)
@@ -571,7 +611,7 @@ func TestScans(t *testing.T) {
 		t.Errorf("a scan's first read: %v", err)
 	}
 	out, err := fetch("bytes=0-")
-	if err != nil || out.status != 206 || int64(len(out.body)) != wire.ScanCap-10 || out.contentRange != "bytes 0-33554421/33555432" {
+	if err != nil || out.status != 206 || int64(len(out.body)) != wire.RecommendedScanBytes-10 || out.contentRange != "bytes 0-33554421/33555432" {
 		t.Errorf("a read cut at the cap: %v %d %q", err, len(out.body), out.contentRange)
 	}
 	if _, err := fetch("bytes=0-0"); !errors.Is(err, msfp.ErrRangeNotSatisfiable) {
@@ -804,7 +844,7 @@ func TestASSAndFonts(t *testing.T) {
 	}
 	h := filmHost()
 	c := h.copyOf("movie/tmdb/949", 0)
-	c.SubtitleTracks = append(c.SubtitleTracks, wire.CopySubtitle{ID: "s2", Language: "ja", Format: "ass"}, wire.CopySubtitle{ID: "s3", Format: "other"})
+	c.SubtitleTracks = append(c.SubtitleTracks, wire.CopySubtitle{ID: "s2", Language: "ja", Format: "ass"}, wire.CopySubtitle{ID: "s3", Format: "eia_608"})
 	h.info["movie/tmdb/949#0"] = msfp.CopyInfo{Fonts: 1, NotApart: []string{"s1"}}
 	h.files["ass/s2/0"], h.files["ass/s2/whole"], h.files["fonts/0"] = []byte(ass), []byte(ass), []byte(font)
 	h.files["subtitles/s2/whole"] = []byte("WEBVTT\n\n00:00:01.000 --> 00:00:02.000\n<b>whole</b>\n")

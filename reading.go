@@ -245,6 +245,8 @@ func (e *Engine) theirLibraries(ctx context.Context, p *PeerRecord, background b
 
 // readLimits reads a peer's limits (MSFP playback section 5, music
 // section 5.1): nil when they aren't an object of integers in range.
+// ScanBytes is the floor, 4 MiB, when the peer sent none: what this
+// server lets its media server read in one scan of that peer.
 func readLimits(raw json.RawMessage, music bool) *Limits {
 	if raw == nil {
 		return nil
@@ -254,7 +256,7 @@ func readLimits(raw json.RawMessage, music bool) *Limits {
 		return nil
 	}
 	l := Limits{Streams: k.Streams, Transcodes: k.Transcodes, BitrateKbps: k.BitrateKbps, Downloads: k.Downloads,
-		DownloadsPerDay: k.DownloadsPerDay, DownloadKbps: k.DownloadKbps, ScansPerDay: k.ScansPerDay}
+		DownloadsPerDay: k.DownloadsPerDay, DownloadKbps: k.DownloadKbps, ScansPerDay: k.ScansPerDay, ScanBytes: k.ScanBytes}
 	if music && k.HasAudioStreams && k.HasAudioTranscodes {
 		l.Audio, l.AudioStreams, l.AudioTranscodes = true, k.AudioStreams, k.AudioTranscodes
 	}
@@ -549,7 +551,7 @@ func (e *Engine) readTitle(p *PeerRecord, raw json.RawMessage, libs []string) (T
 		}
 		return &MusicTitle{TitleCommon: TitleCommon{Key: m.Key, Kind: m.Kind, Libraries: []string{m.Library}},
 			Name: m.Name, SortName: m.SortName, Artists: m.Artists, ArtistNames: m.ArtistNames,
-			ReleaseType: m.ReleaseType, Compilation: m.Compilation, Date: m.Date, OriginalDate: m.OriginalDate,
+			PrimaryType: m.PrimaryType, SecondaryTypes: m.SecondaryTypes, Compilation: m.Compilation, Date: m.Date, OriginalDate: m.OriginalDate,
 			Genres: m.Genres, Album: m.Album, Disc: m.Disc, Number: m.Number, Copies: m.Copies,
 			Image: m.Image != nil && *m.Image, IDs: m.IDs}, true
 	}

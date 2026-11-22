@@ -167,7 +167,7 @@ type OwnChange struct {
 // section 3.2, music section 3.3), so that a viewer's server lists them
 // as files of its own before anyone plays; each copy's ID is the host's
 // handle of it, the one Playback and Media are given. play takes the
-// title's copies as the catalog sends them (best first, the version IDs
+// title's copies as the catalog sends them (in the host's order, its preference; the version IDs
 // made of these handles): a copy is played only as it is described. Extras are titles of their own,
 // keyed under their film, series or season ("movie/tmdb/348/x/<opaque>",
 // kind "extra"), listed in its libraries. Titles no public database names
@@ -237,7 +237,8 @@ type Lyrics interface {
 
 // Playback is the owning side of a peer's playback here. The engine has
 // checked the request (wire.ReadPlay), found the title's copies as the
-// catalog sends them, picked the copy and the tracks, refused what MSFP
+// catalog sends them, picked the copy and the tracks (those the request
+// names, else Config.ChooseCopy's and Config.ChooseTracks'), refused what MSFP
 // refuses of the delivery asked and what the pool's limits refuse early;
 // then it asks the host how to serve the copy apart (Describe), and to
 // start.
@@ -245,9 +246,11 @@ type Playback interface {
 	// Describe gives what the catalog doesn't say of a copy: its previews'
 	// layout, its fonts, the subtitle tracks it can't serve apart.
 	Describe(ctx context.Context, copy string) (CopyInfo, error)
-	// Start starts serving the copy for its purpose and delivery. The host
-	// chooses how when no delivery is asked (direct, remux, transcode),
-	// and serves exactly the delivery asked otherwise; then it calls
+	// Start starts serving the copy for its purpose and delivery. Without
+	// a delivery it serves the baseline, H.264 and AAC in complete HLS
+	// (method direct or remux when the copy's streams already are those,
+	// transcode otherwise; never the file); it serves exactly the
+	// delivery asked otherwise; then it calls
 	// req.Admit before starting any work. Errors: ErrNotPlayable,
 	// ErrDeliveryRefused, ErrServerBusy, ErrStreamLimitReached.
 	Start(ctx context.Context, req StartRequest) (Started, error)

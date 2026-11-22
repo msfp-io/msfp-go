@@ -36,25 +36,6 @@ func TestChooseSubtitles(t *testing.T) {
 	}
 }
 
-func TestCoarsen(t *testing.T) {
-	c := coarsen(Capabilities{Containers: []string{"MP4", "mkv", "mp4", "avi"}, VideoCodecs: []string{"h264", "H265"},
-		MaxAudioChannels: 7, MaxHeight: 1079, MaxBitrateKbps: 8999}, true)
-	if len(c.Containers) != 3 || c.Containers[0] != "avi" || c.Containers[2] != "mp4" || len(c.VideoCodecs) != 1 ||
-		c.MaxAudioChannels != 6 || c.MaxHeight != 720 || c.MaxBitrateKbps != 8000 {
-		t.Errorf("coarsened: %+v", c)
-	}
-	if c := coarsen(Capabilities{MaxAudioChannels: 1, MaxHeight: 100, MaxBitrateKbps: 999}, true); c.MaxAudioChannels != 2 ||
-		c.MaxHeight != 480 || c.MaxBitrateKbps != 0 {
-		t.Errorf("coarsened low: %+v", c)
-	}
-	if c := coarsen(Capabilities{}, true); c != nil {
-		t.Errorf("nothing said: %+v", c)
-	}
-	if c := coarsen(Capabilities{VideoCodecs: []string{"h264"}, MaxHeight: 1080}, false); c != nil {
-		t.Errorf("a track's, with video's members only: %+v", c)
-	}
-}
-
 func TestParseRange(t *testing.T) {
 	for h, want := range map[string]*Range{
 		"bytes=0-99": {First: 0, Last: 99}, "bytes=5-": {First: 5, Last: -1}, "bytes=-10": {Suffix: 10},
@@ -66,5 +47,38 @@ func TestParseRange(t *testing.T) {
 		if ok != (want != nil) || ok && got != *want {
 			t.Errorf("%q: %+v %v", h, got, ok)
 		}
+	}
+}
+
+// The choice hooks (MSFP playback section 2.6): what the request names
+// wins; else the host's hook, the default's when it answers what the
+// copy hasn't.
+func TestChoiceHooks(t *testing.T) {
+	copies := []wire.Copy{
+		{ID: "v0", AudioTracks: []wire.CopyAudio{{ID: "a0", Language: "en"}}},
+		{ID: "v1", AudioTracks: []wire.CopyAudio{{ID: "a0", Language: "fr"}, {ID: "a1", Language: "fr", Role: "karaoke"}},
+			SubtitleTracks: []wire.CopySubtitle{{ID: "s0", Language: "en"}}},
+	}
+	e := &Engine{cfg: Config{}.withDefaults()}
+	if i := e.chosenCopy(copies, wire.PlayRequest{AudioLanguage: "fr"}); i != 1 {
+		t.Errorf("the default by language: %d", i)
+	}
+	e.cfg.ChooseCopy = func([]wire.Copy, wire.PlayRequest) int { return 7 }
+	if i := e.chosenCopy(copies, wire.PlayRequest{AudioLanguage: "fr"}); i != 0 {
+		t.Errorf("a hook out of range: %d", i)
+	}
+	if i := e.chosenCopy(copies, wire.PlayRequest{VersionID: "v1"}); i != 1 {
+		t.Errorf("versionId named: %d", i)
+	}
+	e.cfg.ChooseTracks = func(wire.Copy, wire.PlayRequest) (string, string) { return "a1", "s9" }
+	if a, s := e.chosenTracks(copies[1], wire.PlayRequest{SubtitleLanguage: "en"}); a != "a1" || s != "s0" {
+		t.Errorf("the hook's audio, the default's subtitles: %q %q", a, s)
+	}
+	if a, s := e.chosenTracks(copies[1], wire.PlayRequest{AudioTrack: "a0", SubtitleTrack: "off"}); a != "a0" || s != "" {
+		t.Errorf("named tracks: %q %q", a, s)
+	}
+	if DefaultCopyName("Film.2160p.WEB-DL-GRP.mkv") != "" || DefaultCopyName(" 4K  HDR ") != "4K HDR" ||
+		DefaultTrackTitle("English") != "" || DefaultTrackTitle("Commentary 5.1") != "Commentary 5.1" {
+		t.Error("the default names and titles")
 	}
 }

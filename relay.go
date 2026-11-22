@@ -412,6 +412,12 @@ func (e *Engine) relaySmall(rm *remote, path MediaPath, res *http.Response, out 
 	case rebuild != nil:
 		// An empty PGS part is a stretch with no subtitles: relayed as such.
 		again, ct, ok := rebuild(body)
+		if ok && path.Kind == MediaFont {
+			rs := &e.remotes
+			rs.mu.Lock()
+			ok = fontsWithin(&rm.fontBytes, path.Font, len(again))
+			rs.mu.Unlock()
+		}
 		if !ok {
 			return ErrNotFound
 		}

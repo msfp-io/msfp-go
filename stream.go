@@ -107,7 +107,7 @@ func ParseMediaPath(rest string) (MediaPath, bool) {
 		n, ok := number(parts[1], wire.MaxSheets-1)
 		return MediaPath{Kind: MediaSheet, Sheet: n}, ok
 	case len(parts) == 2 && parts[0] == "fonts":
-		n, ok := number(parts[1], 7)
+		n, ok := number(parts[1], wire.MaxFonts-1)
 		return MediaPath{Kind: MediaFont, Font: n}, ok
 	case len(parts) == 3 && (parts[0] == "subtitles" || parts[0] == "ass" || parts[0] == "pictures"):
 		kind := map[string]MediaKind{"subtitles": MediaSubtitles, "ass": MediaASS, "pictures": MediaPictures}[parts[0]]
@@ -313,7 +313,7 @@ func (e *Engine) serveFile(w http.ResponseWriter, r *http.Request, pb *playback,
 			w.WriteHeader(http.StatusServiceUnavailable)
 			return
 		}
-		s, en, ok := wire.ScanSpan(pb.scanSent, h, size)
+		s, en, ok := wire.ScanSpan(pb.scanSent, h, size, pb.scanCap)
 		if !ok {
 			ps.mu.Unlock()
 			unsatisfied()
@@ -578,6 +578,12 @@ func (e *Engine) serveSmall(w http.ResponseWriter, r *http.Request, pb *playback
 		return
 	}
 	body, ct, ok := rebuild(buf.body.Bytes())
+	if ok && path.Kind == MediaFont {
+		ps := &e.plays
+		ps.mu.Lock()
+		ok = fontsWithin(&pb.fontBytes, path.Font, len(body))
+		ps.mu.Unlock()
+	}
 	if !ok {
 		e.log.Warn("msfp: the host's subtitles or font are outside what MSFP allows; they aren't sent", "kind", path.Kind)
 		w.WriteHeader(http.StatusInternalServerError)
@@ -588,6 +594,27 @@ func (e *Engine) serveSmall(w http.ResponseWriter, r *http.Request, pb *playback
 	h.Set("Content-Length", strconv.Itoa(len(body)))
 	w.WriteHeader(http.StatusOK)
 	w.Write(body)
+}
+
+// fontsWithin notes font n of a copy, of size bytes, among those a
+// playback served or relayed (*sizes, by index), and says whether they
+// stay within 64 MiB in all (MSFP video section 6.6): a font past that
+// isn't served, and isn't noted.
+func fontsWithin(sizes *map[int]int, n, size int) bool {
+	total := size
+	for i, s := range *sizes {
+		if i != n {
+			total += s
+		}
+	}
+	if total > wire.MaxFontsBytes {
+		return false
+	}
+	if *sizes == nil {
+		*sizes = map[int]int{}
+	}
+	(*sizes)[n] = size
+	return true
 }
 
 // serveSheet serves a preview sheet the host made, checked (a JPEG

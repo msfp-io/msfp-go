@@ -97,12 +97,12 @@ func localHost(t *testing.T) (*fakeHost, string, []byte) {
 
 // Local titles are shared only once the owner allows it, per pairing
 // (MSFP catalog section 5): the change forces a whole reading. Extras go
-// with their title only, never theme songs.
+// with their title only, theme songs among them (video section 3.9).
 func TestLocalTitlesAndExtras(t *testing.T) {
 	ctx := context.Background()
 	h, local, _ := localHost(t)
 	s := newSharing(t, h, msfp.Config{}, msfp.Config{})
-	if got := keysOf(s.peerTitles(t)); !slices.Equal(got, []string{"movie/tmdb/1", "movie/tmdb/1/x/Tr7aQ1"}) {
+	if got := keysOf(s.peerTitles(t)); !slices.Equal(got, []string{"movie/tmdb/1", "movie/tmdb/1/x/Th3me", "movie/tmdb/1/x/Tr7aQ1"}) {
 		t.Fatalf("B keeps %v, before local titles are shared", got)
 	}
 	if _, _, err := s.b.eng.TitleImage(ctx, s.onB.ID, local); !errors.Is(err, msfp.ErrNotFound) {
@@ -127,7 +127,7 @@ func TestLocalTitlesAndExtras(t *testing.T) {
 		t.Errorf("the reading after local titles were shared: %s", body)
 	}
 	got := s.peerTitles(t)
-	if want := []string{local, local + "/x/Ex1", "movie/tmdb/1", "movie/tmdb/1/x/Tr7aQ1"}; !slices.Equal(keysOf(got), want) {
+	if want := []string{local, local + "/x/Ex1", "movie/tmdb/1", "movie/tmdb/1/x/Th3me", "movie/tmdb/1/x/Tr7aQ1"}; !slices.Equal(keysOf(got), want) {
 		t.Fatalf("B keeps %v, want %v", keysOf(got), want)
 	}
 	if v := got[local].(*msfp.VideoTitle); v.Name != "Summer 2019" || v.Year != 2019 || !v.Image || v.IDs != nil {
@@ -140,7 +140,7 @@ func TestLocalTitlesAndExtras(t *testing.T) {
 	if _, err := s.b.eng.ReadNow(ctx, s.onB.ID); err != nil {
 		t.Fatal(err)
 	}
-	if got := keysOf(s.peerTitles(t)); !slices.Equal(got, []string{"movie/tmdb/1", "movie/tmdb/1/x/Tr7aQ1"}) {
+	if got := keysOf(s.peerTitles(t)); !slices.Equal(got, []string{"movie/tmdb/1", "movie/tmdb/1/x/Th3me", "movie/tmdb/1/x/Tr7aQ1"}) {
 		t.Errorf("B keeps %v, after local titles are no longer shared", got)
 	}
 	// The film gone: its extra goes with it.

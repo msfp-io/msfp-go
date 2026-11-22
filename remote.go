@@ -6,7 +6,6 @@ import (
 	"errors"
 	"net/http"
 	"slices"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -16,8 +15,10 @@ import (
 
 // Playback, on the viewer's side (MSFP playback sections 2 to 8, video
 // section 5, music section 5): this server's people play, download or
-// scan a peer's title. The host decides who may; the engine coarsens
-// what it says of the device, calls play, checks and cleans every member
+// scan a peer's title. The host decides who may, and what to ask (the
+// copy, the delivery: it has every copy's facts and knows its device;
+// the engine says nothing of the device), the engine calls play, checks
+// and cleans every member
 // of the answer (its etag against the catalog's), keeps the peer's URLs
 // and ticket to itself, sends progress at its pace and stop, sends a
 // download's late reports, restarts a file being read on the same etag,
@@ -49,23 +50,25 @@ type PlayRequest struct {
 	// for the host's media server's reads to list a file, never to watch
 	// it.
 	Purpose string
-	// Delivery is DeliveryFile, DeliveryRemux (into Container),
-	// DeliveryTranscode (to Transcode's targets) or "": the peer then
-	// decides from the capabilities (MSFP playback section 2.7). A
-	// delivery refused is ErrDeliveryRefused: ask again with another one,
-	// or none.
+	// Delivery is DeliveryFile, DeliveryRemux (into Container, mpegts or
+	// mp4), DeliveryTranscode (to Transcode's targets, codecs as ffmpeg
+	// names them; those left out take the baseline's) or "": the peer
+	// then serves the baseline, H.264 and AAC in complete HLS (AAC alone
+	// for a track), which every viewer's server must play (MSFP playback
+	// section 2.7). The host chooses it from the copy's facts in the
+	// catalog and what its device plays: a copy with a value it doesn't
+	// know (a codec, a container) is one it can't play as it is (core
+	// section 8.5). A delivery refused is ErrDeliveryRefused: ask again
+	// with another one, or none.
 	Delivery  string
 	Container string
 	Transcode *TranscodeTargets
 	// AudioRenditions asks, for hls, every audio track as a rendition, so
-	// that switching tracks needs no new playback.
+	// that switching tracks needs no new playback; the peer may make none
+	// (RemotePlayback.AudioRenditions says).
 	AudioRenditions bool
-	// Capabilities are what the viewer's device plays, as the host knows
-	// it: the engine sends only the values MSFP lists, coarsened (MSFP
-	// playback section 2.1).
-	Capabilities Capabilities
 	// StartMs is where to start; MaxBitrateKbps the viewer's cap (0:
-	// none), rounded down to a whole 1,000 from 1,000 up.
+	// none).
 	StartMs        int64
 	MaxBitrateKbps int
 	// The viewer's wishes. Track and version IDs come from a former
@@ -85,9 +88,11 @@ type PlayRequest struct {
 }
 
 // Track is an audio or subtitle track of a playback on a peer, cleaned:
-// its ID (a<n>, s<n>), language tag, channels, role (commentary,
-// description, or "" for the title's own sound), flags; for subtitles,
-// its format, whether it is beside the video (External), and how it is
+// its ID (a<n>, s<n>), language tag, channels, role (a token of the
+// DASH role scheme, known or not: main, dub, commentary, description…;
+// "" for none; one the host doesn't know is never the title's own
+// sound), flags; for subtitles, its format (ffmpeg's codec_name, open),
+// whether it is beside the video (External), and how it is
 // fetched apart: Text as MediaSubtitles (WebVTT), ASS as MediaASS too,
 // Pictures as MediaPictures (PGS); none of them, only within the file or
 // burned in.
@@ -129,10 +134,13 @@ type RemotePlayback struct {
 	DurationMs  int64
 	// MaxBitrateKbps is the cap in effect, for a play.
 	MaxBitrateKbps int
-	Versions       []Version
-	VersionID      string
-	AudioTracks    []Track
-	AudioTrack     string
+	// VersionID is the copy playing: the title's copies are in the
+	// catalog. AudioRenditions: the playlist carries every audio track as
+	// a rendition; false, another track means a new playback.
+	VersionID       string
+	AudioTracks     []Track
+	AudioTrack      string
+	AudioRenditions bool
 	// Subtitles, video only: fetch a track's stretches, each covering
 	// SubtitleStretchSeconds, or the whole track (MediaPath.Whole);
 	// BurnedTrack is the track burned into the picture.
@@ -145,7 +153,6 @@ type RemotePlayback struct {
 	// Fonts is how many fonts the copy's ASS tracks use, fetched as
 	// MediaFont 0 to Fonts-1.
 	Fonts int
-	Info  *PlaybackInfo
 	// Trickplay is the copy's previews, with the number of sheets to
 	// fetch (MediaPath Sheet); nil when the peer sent none, or out of
 	// bounds.
@@ -198,6 +205,7 @@ type remote struct {
 	fresh      bool
 	track      string
 	playlists  map[string]bool // entry/name: names a master playlist named
+	fontBytes  map[int]int     // the fonts relayed, by index: 64 MiB in all
 }
 
 // pastDownload is a download on a peer, kept for its late reports (MSFP
@@ -219,48 +227,43 @@ type remotes struct {
 
 // playWire is play's request as sent.
 type playWire struct {
-	Title            string             `json:"title"`
-	Purpose          string             `json:"purpose,omitempty"`
-	Delivery         string             `json:"delivery,omitempty"`
-	Container        string             `json:"container,omitempty"`
-	Transcode        *TranscodeTargets  `json:"transcode,omitempty"`
-	AudioRenditions  bool               `json:"audioRenditions,omitempty"`
-	Capabilities     *wire.Capabilities `json:"capabilities,omitempty"`
-	StartPositionMs  int64              `json:"startPositionMs,omitempty"`
-	MaxBitrateKbps   int                `json:"maxBitrateKbps,omitempty"`
-	AudioLanguage    string             `json:"audioLanguage,omitempty"`
-	AudioTrack       string             `json:"audioTrack,omitempty"`
-	VersionID        string             `json:"versionId,omitempty"`
-	SubtitleLanguage string             `json:"subtitleLanguage,omitempty"`
-	SubtitleTrack    string             `json:"subtitleTrack,omitempty"`
-	Queue            []string           `json:"queue,omitempty"`
+	Title            string            `json:"title"`
+	Purpose          string            `json:"purpose,omitempty"`
+	Delivery         string            `json:"delivery,omitempty"`
+	Container        string            `json:"container,omitempty"`
+	Transcode        *TranscodeTargets `json:"transcode,omitempty"`
+	AudioRenditions  bool              `json:"audioRenditions,omitempty"`
+	StartPositionMs  int64             `json:"startPositionMs,omitempty"`
+	MaxBitrateKbps   int               `json:"maxBitrateKbps,omitempty"`
+	AudioLanguage    string            `json:"audioLanguage,omitempty"`
+	AudioTrack       string            `json:"audioTrack,omitempty"`
+	VersionID        string            `json:"versionId,omitempty"`
+	SubtitleLanguage string            `json:"subtitleLanguage,omitempty"`
+	SubtitleTrack    string            `json:"subtitleTrack,omitempty"`
+	Queue            []string          `json:"queue,omitempty"`
 }
 
-// coarsen is what a peer is told of a device (MSFP playback section 2.1,
-// video section 5.1): wire's coarsening, without video's members for a
-// track; nil when it says nothing.
-func coarsen(c Capabilities, video bool) *wire.Capabilities {
-	out := c.Coarsen()
-	if !video {
-		out.VideoCodecs, out.HDR, out.DVProfiles, out.MaxHeight = nil, nil, nil, 0
-	}
-	if out.Empty() {
-		return nil
-	}
-	return &out
-}
-
-// coarseTargets are a transcode's targets as sent: the bitrate a whole
-// 1,000, the height stepped down, as the capabilities are.
-func coarseTargets(t *TranscodeTargets, video bool) *TranscodeTargets {
+// targetsAsSent are a transcode's targets as sent, in the steps MSFP
+// gives them (playback section 2.7): the bitrate a whole 1,000, from
+// 1,000; the height stepped down to one of wire.Heights (480 below 480);
+// video's targets left out for a track.
+func targetsAsSent(t *TranscodeTargets, video bool) *TranscodeTargets {
 	if t == nil {
 		return nil
 	}
 	out := *t
 	if out.MaxBitrateKbps > 0 {
-		out.MaxBitrateKbps = max(wire.CoarsenBitrate(out.MaxBitrateKbps)/1000*1000, 1000)
+		out.MaxBitrateKbps = max(min(out.MaxBitrateKbps, wire.MaxKbps)/1000*1000, 1000)
 	}
-	out.MaxHeight = wire.StepHeight(out.MaxHeight)
+	if out.MaxHeight > 0 {
+		h := wire.Heights[0]
+		for _, s := range wire.Heights {
+			if s <= out.MaxHeight {
+				h = s
+			}
+		}
+		out.MaxHeight = h
+	}
 	if !video {
 		out.VideoCodec, out.MaxHeight, out.BurnSubtitle = "", 0, ""
 	}
@@ -294,7 +297,10 @@ func (e *Engine) Play(ctx context.Context, peer string, req PlayRequest) (Remote
 	}
 	if !slices.Contains([]string{wire.PurposePlay, wire.PurposeDownload, wire.PurposeScan}, purpose) ||
 		req.Delivery != "" && methodOf[req.Delivery] == "" || !wire.PurposeAllows(purpose, req.Delivery, req.Transcode) ||
-		req.Transcode != nil && req.Delivery != wire.DeliveryTranscode || (req.Container != "") != (req.Delivery == wire.DeliveryRemux) {
+		req.Transcode != nil && req.Delivery != wire.DeliveryTranscode || (req.Container != "") != (req.Delivery == wire.DeliveryRemux) ||
+		req.Container != "" && !wire.Token(req.Container) ||
+		req.Transcode != nil && (req.Transcode.VideoCodec != "" && !wire.Token(req.Transcode.VideoCodec) ||
+			req.Transcode.AudioCodec != "" && !wire.Token(req.Transcode.AudioCodec)) {
 		return RemotePlayback{}, ErrInvalidRequest.with(errors.New("a purpose, delivery or transcode MSFP doesn't allow"))
 	}
 	if err := e.usablePeer(p, wire.PartPlayback); err != nil {
@@ -329,8 +335,8 @@ func (e *Engine) Play(ctx context.Context, peer string, req PlayRequest) (Remote
 	}
 	e.waitStops(ctx, peer)
 	in := playWire{Title: req.Title, Delivery: req.Delivery, Container: req.Container, AudioRenditions: req.AudioRenditions,
-		Transcode: coarseTargets(req.Transcode, !audioOnly), Capabilities: coarsen(req.Capabilities, !audioOnly),
-		StartPositionMs: min(max(req.StartMs, 0), wire.MaxPositionMs), MaxBitrateKbps: wire.CoarsenBitrate(req.MaxBitrateKbps)}
+		Transcode:       targetsAsSent(req.Transcode, !audioOnly),
+		StartPositionMs: min(max(req.StartMs, 0), wire.MaxPositionMs), MaxBitrateKbps: min(max(req.MaxBitrateKbps, 0), wire.MaxKbps)}
 	if purpose != wire.PurposePlay {
 		in.Purpose, in.StartPositionMs = purpose, 0
 	}
@@ -481,16 +487,12 @@ func (e *Engine) readPlay(ctx context.Context, p *PeerRecord, raw json.RawMessag
 		v.MimeType = wire.RelayedMediaType(a.Stream.MimeType)
 	}
 	v.PositionMs, v.DurationMs, v.MaxBitrateKbps = a.PositionMs, a.DurationMs, a.MaxBitrateKbps
-	for _, ver := range a.Versions {
-		v.Versions = append(v.Versions, Version{ID: ver.ID, Name: ver.Name})
-	}
-	v.VersionID, v.AudioTrack = a.VersionID, a.AudioTrack
+	v.VersionID, v.AudioTrack, v.AudioRenditions = a.VersionID, a.AudioTrack, a.AudioRenditions
 	for _, t := range a.AudioTracks {
 		v.AudioTracks = append(v.AudioTracks, Track{ID: t.ID, Language: t.Language, Channels: t.Channels, Role: t.Role,
 			Default: t.Default, Forced: t.Forced})
 		rm.audio[t.ID] = true
 	}
-	v.Info = readInfo(o["info"])
 	// The copy as the catalog gave it: its etag and size.
 	catalogEtag, size := e.catalogCopy(ctx, p.ID, req.Title, cmpOr(a.VersionID, req.VersionID))
 	v.CopyChanged = catalogEtag != a.Etag
@@ -521,19 +523,6 @@ func (e *Engine) readPlay(ctx context.Context, p *PeerRecord, raw json.RawMessag
 		}
 	}
 	return rm, ""
-}
-
-// readInfo is an answer's info, made plain text, short; nil when it
-// isn't an object of its members.
-func readInfo(raw json.RawMessage) *PlaybackInfo {
-	if raw == nil {
-		return nil
-	}
-	var in PlaybackInfo
-	if wire.DecodeEntry(raw, &in) != nil {
-		return nil
-	}
-	return cleanInfo(&in)
 }
 
 // catalogCopy is the etag and size of a peer's copy as its catalog gave
@@ -591,16 +580,22 @@ func readVideoAnswer(o map[string]json.RawMessage, rm *remote, base, root, ticke
 			t.Forced, _ = m["forced"].(bool)
 			t.HearingImpaired, _ = m["hearingImpaired"].(bool)
 			t.External, _ = m["external"].(bool)
-			if f, _ := m["format"].(string); slices.Contains(textFormats, f) || slices.Contains(pictureFormats, f) || f == "other" {
+			if f, _ := m["format"].(string); wire.Token(f) {
 				t.Format = f
 			}
-			pictures := slices.Contains(pictureFormats, t.Format)
 			if u, there := m["url"]; there {
-				if s, _ := u.(string); s != wire.SubtitleURL(base, id, pictures) {
+				// A text format's URL is its WebVTT, a picture format's its
+				// PGS; a format MSFP's table doesn't name may be served
+				// either way (video section 5.4).
+				s, _ := u.(string)
+				text, pictures := s == wire.SubtitleURL(base, id, false), s == wire.SubtitleURL(base, id, true)
+				switch {
+				case slices.Contains(textFormats, t.Format) && !text, slices.Contains(pictureFormats, t.Format) && !pictures,
+					!text && !pictures:
 					bad = "a subtitle URL that isn't its track's"
 					return nil
 				}
-				t.Text, t.Pictures = !pictures, pictures
+				t.Text, t.Pictures = text, pictures
 			}
 			if u, there := m["assUrl"]; there {
 				if s, _ := u.(string); s != base+"ass/"+id || !slices.Contains(assFormats, t.Format) {
@@ -630,14 +625,12 @@ func readVideoAnswer(o map[string]json.RawMessage, rm *remote, base, root, ticke
 	if len(v.SubtitleTracks)+len(v.ForcedTracks) > 0 {
 		v.SubtitleStretchSeconds = wire.StretchSeconds
 	}
-	var fonts []string
-	if json.Unmarshal(o["fonts"], &fonts) == nil && len(fonts) <= 8 {
-		good := true
-		for n, f := range fonts {
-			good = good && f == base+"fonts/"+strconv.Itoa(n)
-		}
-		if good {
-			v.Fonts = len(fonts)
+	if raw, ok := o["fonts"]; ok {
+		var list any
+		if json.Unmarshal(raw, &list) == nil {
+			if fonts, err := wire.ReadFontURLs(list, base); err == nil {
+				v.Fonts = len(fonts)
+			}
 		}
 	}
 	if raw, ok := o["trickplay"]; ok {

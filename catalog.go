@@ -8,13 +8,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"regexp"
 	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
-	"unicode"
 
 	"github.com/msfp-io/msfp-go/wire"
 )
@@ -53,15 +51,9 @@ type ownLog struct {
 	seqSeen   atomic.Int64
 }
 
-// libraryKinds are the kinds of library MSFP lists (catalog section 2).
-var libraryKinds = []string{"movies", "tvshows", "music", "musicvideos", "homevideos", "boxsets", "books", "photos", "mixed"}
-
-func cleanKind(kind string) string {
-	if slices.Contains(libraryKinds, kind) {
-		return kind
-	}
-	return ""
-}
+// cleanKind is a library's kind as sent and kept (catalog section 2): a
+// token, known or not; "" (absent) for anything else.
+func cleanKind(kind string) string { return wire.LibraryKind(kind) }
 
 // HostLibraries are this server's libraries, as the host's catalog gives
 // them: what it may offer, to a server or a group (the panel lists them
@@ -498,7 +490,7 @@ type librariesAnswer struct {
 type libraryWire struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
-	Kind string `json:"kind"`
+	Kind string `json:"kind,omitempty"`
 }
 
 // limitsWire is a limits object as sent (MSFP playback section 5, music
@@ -511,6 +503,7 @@ type limitsWire struct {
 	DownloadsPerDay int  `json:"downloadsPerDay,omitempty"`
 	DownloadKbps    int  `json:"downloadKbps,omitempty"`
 	ScansPerDay     int  `json:"scansPerDay,omitempty"`
+	ScanBytes       int  `json:"scanBytes,omitempty"`
 	AudioStreams    *int `json:"audioStreams,omitempty"`
 	AudioTranscodes *int `json:"audioTranscodes,omitempty"`
 }
@@ -518,6 +511,9 @@ type limitsWire struct {
 func limitsOut(l Limits, music bool) *limitsWire {
 	w := &limitsWire{Streams: l.Streams, Transcodes: l.Transcodes, BitrateKbps: l.BitrateKbps, Downloads: l.Downloads,
 		DownloadsPerDay: l.DownloadsPerDay, DownloadKbps: l.DownloadKbps, ScansPerDay: l.ScansPerDay}
+	if l.ScansPerDay > 0 {
+		w.ScanBytes = l.ScanBytes
+	}
 	if l.Downloads == 0 {
 		w.DownloadsPerDay, w.DownloadKbps = 0, 0
 	}
@@ -968,11 +964,10 @@ type videoTitleWire struct {
 // would skip it: a film, an episode or an extra with no copy left, an
 // episode keyed by its TMDB episode ID without a valid place (MSFP video
 // sections 3.1 and 4.1), a local film or series without a name, or an
-// extra of no type MSFP lists (theme songs and videos are never sent).
+// extra whose type isn't a token. Theme songs and videos are extras like
+// any (video section 3.9): sent when the host gives them. The copies
+// keep the host's order, its preference (video section 3.7).
 func (s *sender) videoOut(k wire.VideoKey, t *VideoTitle, library string) (videoTitleWire, bool) {
-	if k.Kind == "extra" && !slices.Contains(wire.ExtraTypes, t.ExtraType) {
-		return videoTitleWire{}, false
-	}
 	in := videoTitleWire{Key: t.Key, Kind: t.Kind, Library: library, With: t.With, IDs: t.IDs,
 		ExtraType: t.ExtraType, Name: t.Name, Year: t.Year, Image: t.Image}
 	for _, c := range t.Copies {
@@ -991,7 +986,6 @@ func (s *sender) videoOut(k wire.VideoKey, t *VideoTitle, library string) (video
 	}
 	w := videoTitleWire{Key: v.Key, Kind: v.Kind, Library: library, Copies: v.Copies, Place: v.Place,
 		With: v.With, IDs: v.IDs, ExtraType: v.ExtraType, Name: v.Name}
-	wire.SortCopies(w.Copies)
 	slices.Sort(w.With)
 	if d := v.Description; d != nil {
 		w.Name, w.Year, w.Image = d.Name, d.Year, d.Image
@@ -1001,13 +995,13 @@ func (s *sender) videoOut(k wire.VideoKey, t *VideoTitle, library string) (video
 
 // sendCopy is one of the host's copies as it leaves toward a peer: its
 // ID the version ID play gives for it, never the host's handle; its
-// language tags as wire.SentTag gives them; its name only when it is an
-// edition or quality label, and a track's title only when it describes
-// the track (MSFP video section 3.6). What remains out of MSFP's bounds
-// is dropped when it is read back.
+// language tags as wire.SentTag gives them; its name and its tracks'
+// titles as Config.CopyName and Config.TrackTitle keep them (MSFP video
+// section 3.6). What remains out of MSFP's bounds is dropped when it is
+// read back.
 func (e *Engine) sendCopy(peer string, c wire.Copy) wire.Copy {
 	c.ID = e.versionID(peer, c.ID)
-	c.Name = copyLabel(c.Name)
+	c.Name = e.cfg.CopyName(c.Name)
 	c.Parts = slices.Clone(c.Parts)
 	c.Chapters = slices.Clone(c.Chapters)
 	c.Segments = slices.Clone(c.Segments)
@@ -1019,14 +1013,14 @@ func (e *Engine) sendCopy(peer string, c wire.Copy) wire.Copy {
 	audio := make([]wire.CopyAudio, 0, len(c.AudioTracks))
 	for _, a := range c.AudioTracks {
 		a.Language, _ = wire.SentTag(a.Language)
-		a.Title = trackTitle(a.Title)
+		a.Title = e.cfg.TrackTitle(a.Title)
 		audio = append(audio, a)
 	}
 	c.AudioTracks = audio
 	var subs []wire.CopySubtitle
 	for _, t := range c.SubtitleTracks {
 		t.Language, _ = wire.SentTag(t.Language)
-		t.Title = trackTitle(t.Title)
+		t.Title = e.cfg.TrackTitle(t.Title)
 		subs = append(subs, t)
 	}
 	c.SubtitleTracks = subs
@@ -1036,7 +1030,7 @@ func (e *Engine) sendCopy(peer string, c wire.Copy) wire.Copy {
 // sendMusicCopy is sendCopy for a track's copy (MSFP music section 3.3).
 func (e *Engine) sendMusicCopy(peer string, c wire.MusicCopy) wire.MusicCopy {
 	c.ID = e.versionID(peer, c.ID)
-	c.Name = copyLabel(c.Name)
+	c.Name = e.cfg.CopyName(c.Name)
 	if c.ReplayGain != nil {
 		g := *c.ReplayGain
 		c.ReplayGain = &g
@@ -1044,71 +1038,12 @@ func (e *Engine) sendMusicCopy(peer string, c wire.MusicCopy) wire.MusicCopy {
 	return c
 }
 
-// fileLike are the signs of a file name or a release's name in a label:
-// a path, an extension, words joined by dots or underscores, brackets, a
-// release group after a dash, a release's source or encoder.
-var fileLike = regexp.MustCompile(`[/\\_\[\]{}]|\.[A-Za-z0-9]{2,4}$|\w\.\w+\.\w|\S-[A-Za-z0-9]+$|(?i)\b(x26[45]|h\.?26[45]|web-?dl|web-?rip|blu-?ray|bdrip|brrip|hdtv|dvdrip)\b`)
-
-// copyLabel is a copy's name as sent (MSFP video section 3.6): an edition
-// or quality label of at most 32 characters, plain text; "" for one that
-// looks like a file name or a release's name, which is never sent.
-func copyLabel(name string) string {
-	name = wire.CleanText(name, len(name))
-	if fileLike.MatchString(name) {
-		return ""
-	}
-	return wire.CleanText(name, wire.MaxCopyName)
-}
-
-// trackWords are the words a track's title may hold (MSFP video section
-// 3.6: a description of the track, such as "Commentary", "SDH", "Signs &
-// Songs" or "Forced"), lowercase. A title with any other word (a
-// language's name, a release group's) is dropped: the engine can't tell
-// a description from the rest otherwise.
-var trackWords = map[string]bool{}
-
-func init() {
-	for _, w := range strings.Fields(`
-		commentary commentaries director director's directors cast crew writer writers producer producers composer
-		actor actors and & + with by of the track tracks
-		sdh cc hi hoh hearing impaired deaf captions closed
-		forced full complete signs songs sign song dialogue dialog dialogues lyrics karaoke
-		audio description descriptive described narration narrated visually
-		original dub dubbed dubbing stereo mono surround atmos lossless
-		music score isolated effects only simplified traditional
-		commentaire commentaires forcé forcés forcée forcées complets sourds malentendants audiodescription
-		kommentar erzwungen comentario comentarios forzados audiodescripción`) {
-		trackWords[w] = true
-	}
-}
-
-var trackNumber = regexp.MustCompile(`^[0-9]{1,2}(\.[0-9])?$`)
-
-// trackTitle is a track's title as sent (MSFP video section 3.6): plain
-// text of at most 32 characters, made only of trackWords and channel
-// counts ("5.1"); "" for any other.
-func trackTitle(title string) string {
-	title = wire.CleanText(title, wire.MaxCopyName)
-	words := strings.FieldsFunc(strings.ToLower(title), func(r rune) bool {
-		return !unicode.IsLetter(r) && !unicode.IsDigit(r) && r != '\'' && r != '.' && r != '&' && r != '+'
-	})
-	if len(words) == 0 {
-		return ""
-	}
-	for _, w := range words {
-		if !trackWords[w] && !trackNumber.MatchString(w) {
-			return ""
-		}
-	}
-	return title
-}
-
 // musicOut is the host's music title as sent, its copies made ready to
 // leave, read back as a receiver reads it: what a receiver would skip or
 // drop isn't sent.
 func (s *sender) musicOut(t *MusicTitle, library string) (wire.MusicTitle, bool) {
 	w := wire.MusicTitle{Key: t.Key, Kind: t.Kind, Library: library, Name: t.Name, SortName: t.SortName,
-		Artists: t.Artists, ArtistNames: t.ArtistNames, ReleaseType: t.ReleaseType, Compilation: t.Compilation,
+		Artists: t.Artists, ArtistNames: t.ArtistNames, PrimaryType: t.PrimaryType, SecondaryTypes: t.SecondaryTypes, Compilation: t.Compilation,
 		Date: t.Date, OriginalDate: t.OriginalDate, Genres: t.Genres, Album: t.Album, Disc: t.Disc,
 		Number: t.Number, IDs: t.IDs}
 	if t.Image {

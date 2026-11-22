@@ -223,7 +223,7 @@ func TestHostilePlayAnswers(t *testing.T) {
 			t.Errorf("%s: no stop sent", name)
 		}
 	}
-	edit(func(m map[string]any) { m["id"] = "play_UPPER" })
+	edit(func(m map[string]any) { m["id"] = "play.x" })
 	if _, err := s.b.eng.Play(ctx, s.onB.ID, msfp.PlayRequest{Title: "movie/tmdb/949"}); !errors.Is(err, msfp.ErrNotPlayable) {
 		t.Errorf("an id of another form: %v", err)
 	}
@@ -244,8 +244,8 @@ func TestHostilePlayAnswers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(pb.AudioTracks) != 3 || pb.AudioTracks[0].Language != "" || pb.AudioTracks[1].Channels != 0 || pb.AudioTracks[2].Role != "" ||
-		len(pb.Versions) != 1 || pb.Versions[0].Name != "<b>HD</b>" || pb.DurationMs != 0 || pb.Trickplay != nil {
+	if len(pb.AudioTracks) != 3 || pb.AudioTracks[0].Language != "" || pb.AudioTracks[1].Channels != 0 || pb.AudioTracks[2].Role != "evil" ||
+		pb.DurationMs != 0 || pb.Trickplay != nil {
 		t.Errorf("cleaned: %+v", pb)
 	}
 }

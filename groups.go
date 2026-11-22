@@ -2200,6 +2200,7 @@ func generous(p *PeerRecord) Limits {
 		}
 		out.Downloads = max(out.Downloads, l.Downloads)
 		out.ScansPerDay = max(out.ScansPerDay, l.ScansPerDay)
+		out.ScanBytes = max(out.ScanBytes, l.ScanBytes)
 	}
 	return out
 }
