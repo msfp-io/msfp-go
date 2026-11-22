@@ -234,7 +234,7 @@ func (f *folder) Image(_ context.Context, key string) ([]byte, error) {
 
 // copy describes a video file as the catalog lists a copy (MSFP video
 // section 3.2): its exact size, an etag from its size and its time, its
-// container from its extension, what ffprobe says of it (probe.go), its
+// container's ffmpeg name from its extension, what ffprobe says of it (probe.go), its
 // .vtt subtitles, its previews. Its ID is its handle: its path in the
 // folder.
 func (f *folder) copy(rel string) (wire.Copy, bool) {
@@ -245,7 +245,7 @@ func (f *folder) copy(rel string) (wire.Copy, bool) {
 	}
 	c := f.probes.describe(path, st)
 	c.ID, c.Size = rel, st.Size()
-	c.Container = wire.NameOrOther(wire.Containers, strings.TrimPrefix(filepath.Ext(rel), "."))
+	c.Container = muxers[strings.TrimPrefix(filepath.Ext(rel), ".")]
 	c.ETag = strconv.FormatInt(st.Size(), 36) + "-" + strconv.FormatInt(st.ModTime().UnixNano(), 36)
 	for i, s := range subtitles(path) {
 		c.SubtitleTracks = append(c.SubtitleTracks, wire.CopySubtitle{ID: "s" + strconv.Itoa(i), Language: language(s),
@@ -288,9 +288,13 @@ func (f *folder) Describe(_ context.Context, handle string) (msfp.CopyInfo, erro
 	return msfp.CopyInfo{Trickplay: t}, nil
 }
 
-// Start serves the file (delivery file, always that of a download or a
-// scan) when the viewer's server asks it or plays its container, the HLS
-// copy otherwise. The handle is the protocol and the file's path.
+// Start serves the file when the viewer's server asks it (delivery file,
+// always that of a download or a scan); its HLS copy, made beside it, for
+// a remux or without delivery (the baseline: this example counts on its
+// HLS copies being H.264 and AAC, as an operator makes them); it makes
+// no transcode, and no audio renditions, which the answer then says
+// (Started.AudioRenditions false: MSFP playback section 2.3). The handle
+// is the protocol and the file's path.
 func (f *folder) Start(_ context.Context, req msfp.StartRequest) (msfp.Started, error) {
 	if !filepath.IsLocal(req.Copy) {
 		return msfp.Started{}, msfp.ErrNotFound
@@ -310,12 +314,10 @@ func (f *folder) Start(_ context.Context, req msfp.StartRequest) (msfp.Started, 
 		}
 		method, protocol = "remux", "hls"
 	default:
-		if !slices.Contains(req.Capabilities.Containers, ext) {
-			if !hls {
-				return msfp.Started{}, msfp.ErrNotPlayable
-			}
-			method, protocol = "remux", "hls"
+		if !hls {
+			return msfp.Started{}, msfp.ErrNotPlayable
 		}
+		method, protocol = "remux", "hls"
 	}
 	if _, err := req.Admit(method); err != nil {
 		return msfp.Started{}, err

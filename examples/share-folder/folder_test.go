@@ -62,7 +62,7 @@ func TestFolderTitles(t *testing.T) {
 		t.Errorf("titles: %v", keys)
 	}
 	heat := byKey["movie/tmdb/949"]
-	if c := heat.Copies[0]; c.Size != 4 || c.ETag == "" || c.Container != "mkv" || len(c.SubtitleTracks) != 1 ||
+	if c := heat.Copies[0]; c.Size != 4 || c.ETag == "" || c.Container != "matroska" || len(c.SubtitleTracks) != 1 ||
 		c.SubtitleTracks[0].Language != "fr" || !c.Previews || c.ID != "Heat (1995) [tmdbid-949].mkv" {
 		t.Errorf("Heat's copy: %+v", c)
 	}

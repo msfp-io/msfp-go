@@ -172,6 +172,9 @@ func main() {
 			peer, rest, _ := strings.Cut(arg, " ")
 			var l msfp.Limits
 			_, err := fmt.Sscan(rest, &l.Streams, &l.Transcodes, &l.Downloads, &l.DownloadsPerDay, &l.DownloadKbps, &l.ScansPerDay)
+			if l.ScansPerDay > 0 {
+				l.ScanBytes = wire.RecommendedScanBytes // a scan reads at most 32 MiB
+			}
 			if err == nil || errors.Is(err, io.EOF) {
 				err = eng.SetLimits(ctx, peer, l)
 			}
@@ -211,9 +214,10 @@ func main() {
 			show("", err)
 		case "play":
 			peer, key, _ := strings.Cut(arg, " ")
-			pb, err := eng.Play(ctx, peer, msfp.PlayRequest{Title: key, Capabilities: msfp.Capabilities{
-				Containers: []string{"mp4", "mkv", "webm", "ts"}, VideoCodecs: []string{"h264", "hevc", "vp9", "av1"},
-				AudioCodecs: []string{"aac", "mp3", "opus", "ac3"}}})
+			// No delivery: the baseline, H.264 and AAC in HLS, which a
+			// browser plays (MSFP playback section 2.7). A viewer's server
+			// that knows its device would choose from the copy's facts.
+			pb, err := eng.Play(ctx, peer, msfp.PlayRequest{Title: key})
 			if err == nil {
 				watches.start(ctx, eng, pb.ID)
 			}
