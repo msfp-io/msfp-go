@@ -36,13 +36,15 @@ const imageTicketTime = 10 * time.Minute
 // imageTicket is what a short ticket opens, for one peer, for 10
 // minutes: of kind image, one title's image, while the library it was
 // sent in is still shared with it; of kind previews, one copy's sheets
-// (its handle, their count), while the title is still sent to it.
+// (its handle, their count and layout), while the title is still sent to it.
 type imageTicket struct {
 	kind      string
 	peer, key string
 	handle    string
 	sheets    int
-	expires   time.Time
+	// sheetWidth and sheetHeight bound a sheet: its layout's full sheet.
+	sheetWidth, sheetHeight int
+	expires                 time.Time
 }
 
 // The kinds of short tickets.

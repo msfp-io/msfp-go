@@ -181,6 +181,11 @@ func TestPlayRefusalsAndTickets(t *testing.T) {
 		{base + "trickplay/0", nil, 404}, {base + "subtitles/s0/01", nil, 404}, {base + "subtitles/s0/0", nil, 200},
 		{base + "pictures/s0/0", nil, 404},
 		{s.a.srv.URL + "/api/v1/stream/" + strings.Repeat("A", 43) + "/master.m3u8", nil, 404},
+		// HEAD on a ticket never given, of every media form: 405 still.
+		{s.a.srv.URL + "/api/v1/stream/" + strings.Repeat("A", 43) + "/master.m3u8", []string{"HEAD"}, 405},
+		{s.a.srv.URL + "/api/v1/stream/" + strings.Repeat("A", 43) + "/file", []string{"HEAD"}, 405},
+		{s.a.srv.URL + "/api/v1/stream/" + strings.Repeat("A", 43) + "/image", []string{"HEAD"}, 405},
+		{s.a.srv.URL + "/api/v1/stream/" + strings.Repeat("A", 43) + "/queue/1/seg0.m4s", []string{"PUT"}, 405},
 	}
 	for _, c := range cases {
 		if got := get(c.url, c.hdr...); got != c.want {
@@ -471,6 +476,29 @@ func TestOwnPlaylistChecked(t *testing.T) {
 		if err := s.b.eng.Fetch(ctx, pb.ID, p, "", &sink{}); !errors.Is(err, msfp.ErrNotFound) {
 			t.Errorf("%v: %v", p, err)
 		}
+	}
+}
+
+// Every fetch of a playlist under one ticket gives the same playlist
+// (MSFP media section 3.1): the first served is kept, whatever the host
+// makes after.
+func TestPlaylistSameEachFetch(t *testing.T) {
+	ctx := context.Background()
+	h := filmHost()
+	s := newSharing(t, h, msfp.Config{}, msfp.Config{})
+	if _, err := s.b.eng.Play(ctx, s.onB.ID, msfp.PlayRequest{Title: "movie/tmdb/949"}); err != nil {
+		t.Fatal(err)
+	}
+	url := lastStream(t, s)
+	first, body := get(t, s, http.MethodGet, url)
+	if first.StatusCode != 200 || body != master {
+		t.Fatalf("the master playlist: %d %q", first.StatusCode, body)
+	}
+	h.mu.Lock()
+	h.files["master.m3u8"] = []byte("#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1\nother.m3u8\n")
+	h.mu.Unlock()
+	if res, again := get(t, s, http.MethodGet, url); res.StatusCode != 200 || again != master {
+		t.Errorf("fetched again: %d %q", res.StatusCode, again)
 	}
 }
 

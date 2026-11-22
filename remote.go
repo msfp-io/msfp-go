@@ -412,6 +412,8 @@ func (e *Engine) Play(ctx context.Context, peer string, req PlayRequest) (Remote
 	}); err != nil {
 		e.log.Warn("msfp: a playback on a peer couldn't be noted", "error", err)
 	}
+	var past []DownloadRecord
+	var download *DownloadRecord
 	rs := &e.remotes
 	rs.mu.Lock()
 	if rs.byID == nil {
@@ -426,6 +428,7 @@ func (e *Engine) Play(ctx context.Context, peer string, req PlayRequest) (Remote
 		for id, d := range rs.downloads {
 			if now.Sub(d.playedAt) > wire.LateReports {
 				delete(rs.downloads, id)
+				past = append(past, DownloadRecord{ID: id, Viewer: true})
 			}
 		}
 		var queue []string
@@ -433,8 +436,14 @@ func (e *Engine) Play(ctx context.Context, peer string, req PlayRequest) (Remote
 			queue = append(queue, q.Title)
 		}
 		rs.downloads[rm.view.ID] = pastDownload{peer: p.ID, theirID: rm.theirID, title: req.Title, queue: queue, playedAt: now}
+		download = &DownloadRecord{ID: rm.view.ID, Viewer: true, Peer: p.ID, TheirID: rm.theirID, Title: req.Title,
+			Queue: queue, PlayedAt: now}
 	}
 	rs.mu.Unlock()
+	e.dropDownloads(ctx, past)
+	if download != nil {
+		e.keepDownload(ctx, *download)
+	}
 	if rm.view.CopyChanged {
 		e.readSoon(p.ID)
 	}

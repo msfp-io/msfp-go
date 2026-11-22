@@ -23,7 +23,8 @@ import (
 // a scan), the pool's limits counted in one step with the host's start
 // (Admit), the playbacks' states, tickets and endings, and a download's
 // late reports. Playbacks live in memory: after a restart, a peer's
-// progress gets 410 and it starts again.
+// progress gets 410 and it starts again; downloads alone are kept in the
+// store for their late reports (downloads.go).
 
 // Times of a playback (MSFP playback section 6.3).
 const (
@@ -85,8 +86,8 @@ type entryServed struct {
 }
 
 // playback is a peer's live playback here. Its fields are set once it
-// is registered, but used, active, open, lastAt, scanSent and
-// scanReads, which plays.mu guards.
+// is registered, but used, active, open, lastAt, scanSent, scanReads
+// and playlists, which plays.mu guards.
 type playback struct {
 	id, peer, peerName string
 	title              string
@@ -98,19 +99,23 @@ type playback struct {
 	ticket             [32]byte
 	started            time.Time
 	sheets, fonts      int
-	audio              map[string]bool // the copy's audio track IDs
-	subtitles          map[string]subtitleServed
-	entries            map[int]entryServed // 0: its own stream; n+1: queue entry n
-	slot               *countSlot
-	pace               *pacer // a download's, at downloadKbps; nil for none
-	ctx                context.Context
-	cancel             context.CancelFunc
-	used               time.Time
-	active             bool
-	open               int
-	lastAt             time.Time
-	scanSent           int64
-	scanReads          int
+	// sheetWidth and sheetHeight bound a sheet: its layout's full sheet.
+	sheetWidth, sheetHeight int
+	audio                   map[string]bool // the copy's audio track IDs
+	subtitles               map[string]subtitleServed
+	entries                 map[int]entryServed // 0: its own stream; n+1: queue entry n
+	slot                    *countSlot
+	pace                    *pacer // a download's, at downloadKbps; nil for none
+	ctx                     context.Context
+	cancel                  context.CancelFunc
+	used                    time.Time
+	active                  bool
+	open                    int
+	lastAt                  time.Time
+	scanSent                int64
+	scanReads               int
+	playlists               map[string][]byte // served, by entry/name: served the same again
+	playlistBytes           int
 }
 
 // countSlot is what a play counted in a pool (Admit): a stream, and when
@@ -887,7 +892,7 @@ func (e *Engine) register(p *PeerRecord, in wire.PlayRequest, queue, libs []stri
 		ticket: sha256.Sum256([]byte(ticket)), started: now, used: now, slot: slot, audio: map[string]bool{},
 		subtitles: map[string]subtitleServed{}, entries: map[int]entryServed{0: {protocol: s.Protocol, size: c.size, etag: c.etag}}}
 	if in.Purpose == wire.PurposeDownload && slot.limits.DownloadKbps > 0 {
-		pb.pace = newPacer(slot.limits.DownloadKbps)
+		pb.pace = newPacer(slot.limits.DownloadKbps, e.cfg.Clock)
 	}
 	if !audioOnly {
 		for _, a := range c.audio {
@@ -896,7 +901,7 @@ func (e *Engine) register(p *PeerRecord, in wire.PlayRequest, queue, libs []stri
 	}
 	if !audioOnly && in.Purpose != wire.PurposeScan {
 		if t, ok := trickplayOf(info.Trickplay); ok && c.previews && in.Purpose == wire.PurposePlay {
-			pb.sheets = t.Sheets
+			pb.sheets, pb.sheetWidth, pb.sheetHeight = t.Sheets, t.Columns*t.TileWidth, t.Rows*t.TileHeight
 		}
 		hasASS := false
 		for _, t := range c.subtitles {
@@ -919,6 +924,10 @@ func (e *Engine) register(p *PeerRecord, in wire.PlayRequest, queue, libs []stri
 	}
 	ps.byID[pb.id], ps.byTicket[pb.ticket] = pb, pb
 	ps.mu.Unlock()
+	if pb.purpose == wire.PurposeDownload {
+		e.keepDownload(context.Background(), DownloadRecord{ID: pb.id, Peer: pb.peer, Title: pb.title, Queue: pb.queue,
+			Handle: pb.handle, PlayedAt: pb.started})
+	}
 	return pb, ticket
 }
 
@@ -1065,16 +1074,19 @@ func (e *Engine) expirePlaybacks(force bool) {
 			expired = append(expired, pb)
 		}
 	}
+	var past []DownloadRecord
 	for id, ended := range ps.ended {
 		if ended.purpose == wire.PurposeDownload {
 			if now.Sub(ended.playedAt) > wire.LateReports {
 				delete(ps.ended, id)
+				past = append(past, DownloadRecord{ID: id})
 			}
 		} else if now.Sub(ended.at) >= endedKept {
 			delete(ps.ended, id)
 		}
 	}
 	ps.mu.Unlock()
+	e.dropDownloads(context.Background(), past)
 	for _, pb := range tooLong {
 		e.endPlayback(pb, EndTooLong)
 	}
@@ -1139,15 +1151,27 @@ func (e *Engine) report(req *request, call string) response {
 	}
 	if (out.Effect == wire.EffectRecorded || out.Effect == wire.EffectRecordedAndEnded) && e.cfg.Playback != nil {
 		handle := ""
+		var kept *DownloadRecord // a download's, its latest at kept across restarts
 		ps := &e.plays
 		ps.mu.Lock()
 		if pb != nil {
 			pb.lastAt, handle = out.At, pb.handle
+			if pb.purpose == wire.PurposeDownload {
+				kept = &DownloadRecord{ID: pb.id, Peer: pb.peer, Title: pb.title, Queue: pb.queue, Handle: pb.handle,
+					PlayedAt: pb.started, LastAt: pb.lastAt}
+			}
 		} else if ended, ok := ps.ended[r.ID]; ok {
 			ended.lastAt, handle = out.At, ended.handle
 			ps.ended[r.ID] = ended
+			if ended.purpose == wire.PurposeDownload {
+				kept = &DownloadRecord{ID: r.ID, Peer: ended.peer, Title: ended.title, Queue: ended.queue, Handle: ended.handle,
+					PlayedAt: ended.playedAt, LastAt: ended.lastAt}
+			}
 		}
 		ps.mu.Unlock()
+		if kept != nil {
+			e.keepDownload(req.r.Context(), *kept)
+		}
 		hr := Report{Handle: handle, Title: out.Title, PositionMs: out.PositionMs, HasPosition: out.HasPosition, Paused: r.Paused,
 			At: out.At, Stop: call == wire.CallStop, Late: pb == nil}
 		if err := e.cfg.Playback.Progress(req.r.Context(), hr); err != nil {
@@ -1252,32 +1276,48 @@ func (e *Engine) playAllowed(ctx context.Context, pb *playback) bool {
 // ten seconds' worth.
 type pacer struct {
 	mu     sync.Mutex
+	clock  Clock
 	rate   float64 // bytes per second
 	tokens float64
 	last   time.Time
 }
 
-func newPacer(kbps int) *pacer {
+func newPacer(kbps int, clock Clock) *pacer {
 	rate := float64(kbps) * 1000 / 8
-	return &pacer{rate: rate, tokens: rate, last: time.Now()}
+	return &pacer{clock: clock, rate: rate, tokens: rate, last: clock.Now()}
 }
 
-// take waits until n bytes may go, or ctx is done.
+// take waits until n bytes may go, or ctx is done: on the engine's
+// clock (Config.Clock), and with its timers when it has some (Timers).
 func (p *pacer) take(ctx context.Context, n int) error {
 	p.mu.Lock()
-	now := time.Now()
-	p.tokens = min(p.rate, p.tokens+now.Sub(p.last).Seconds()*p.rate*0.9)
-	p.last = now
+	now := p.clock.Now()
+	if now.After(p.last) {
+		p.tokens = min(p.rate, p.tokens+now.Sub(p.last).Seconds()*p.rate*0.9)
+		p.last = now
+	}
 	p.tokens -= float64(n)
 	debt := -p.tokens
 	p.mu.Unlock()
 	if debt <= 0 {
 		return nil
 	}
-	t := time.NewTimer(time.Duration(debt / (p.rate * 0.9) * float64(time.Second)))
-	defer t.Stop()
+	return sleep(ctx, p.clock, time.Duration(debt/(p.rate*0.9)*float64(time.Second)))
+}
+
+// sleep waits d on clock, or until ctx is done: with the clock's timer
+// when it is a Timers, the system's otherwise.
+func sleep(ctx context.Context, clock Clock, d time.Duration) error {
+	var c <-chan time.Time
+	if t, ok := clock.(Timers); ok {
+		c = t.After(d)
+	} else {
+		t := time.NewTimer(d)
+		defer t.Stop()
+		c = t.C
+	}
 	select {
-	case <-t.C:
+	case <-c:
 		return nil
 	case <-ctx.Done():
 		return ctx.Err()

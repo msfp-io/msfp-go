@@ -43,9 +43,13 @@ const streamRoute = "/api/v1/stream/"
 // StreamHandler serves the media of peers' playbacks here, under
 // <Prefix>/api/v1/stream/: mount it there, on the raw path, with no
 // authentication in front and no compression of its answers. A ticket
-// the engine doesn't know (one the host gave its own people) goes to
-// fallback, which may be nil: the host's not-found answer then
-// (Config.NotFound).
+// the engine doesn't know (one the host gave its own people, or one
+// ended) goes to fallback, which may be nil: the host's not-found answer
+// then (Config.NotFound). The fallback hears GET only on the media URL
+// forms (ParseMediaPath, and <ticket>/image): HEAD and every other
+// method get 405 with Allow: GET from the engine, whatever the ticket
+// (MSFP media section 2.2). A host that answers its own clients' HEAD
+// (a copy presented as a file) does so on a route of its own.
 func (e *Engine) StreamHandler(fallback http.Handler) http.Handler {
 	if fallback == nil {
 		fallback = e.cfg.NotFound
@@ -188,6 +192,11 @@ func (e *Engine) serveStream(w http.ResponseWriter, r *http.Request, fallback ht
 		fallback.ServeHTTP(w, r)
 		return
 	}
+	// HEAD and the rest get 405 on every media URL, whatever its ticket:
+	// live, ended, or never given (MSFP media section 2.2).
+	if _, media := ParseMediaPath(name); (media || name == "image") && !mediaMethod(w, r) {
+		return
+	}
 	if e.serveImage(w, r, ticket, name) {
 		return
 	}
@@ -260,6 +269,9 @@ func (e *Engine) serveStream(w http.ResponseWriter, r *http.Request, fallback ht
 	case MediaSubtitles, MediaASS, MediaPictures, MediaFont:
 		e.serveSmall(w, r, pb, path)
 		return
+	case MediaSheet:
+		e.serveSheet(w, r, pb.handle, path, pb.sheetWidth, pb.sheetHeight)
+		return
 	}
 	sink := &httpSink{w: w, ctx: ctx, pace: pb.pace}
 	err := e.cfg.Media.Serve(ctx, pb.handle, path, rng, sink)
@@ -291,6 +303,7 @@ func (e *Engine) serveFile(w http.ResponseWriter, r *http.Request, pb *playback,
 		h = hs[0]
 	}
 	start, end := int64(0), size-1
+	var unsent int64 // of a scan's range held, what wasn't sent
 	switch {
 	case pb.purpose == wire.PurposeScan:
 		ps := &e.plays
@@ -306,15 +319,20 @@ func (e *Engine) serveFile(w http.ResponseWriter, r *http.Request, pb *playback,
 			unsatisfied()
 			return
 		}
+		// The range is held against the cap while it is served, so that
+		// two fetches at once never pass it together; what wasn't sent
+		// (a fetch cut, a host's failure) is given back after: the cap
+		// counts the bytes sent (MSFP media section 4.2).
 		pb.scanSent += en - s + 1
 		pb.scanReads++
 		ps.mu.Unlock()
+		start, end = s, en
 		defer func() {
 			ps.mu.Lock()
 			pb.scanReads--
+			pb.scanSent -= unsent
 			ps.mu.Unlock()
 		}()
-		start, end = s, en
 	case h != "":
 		br, ok := wire.ParseRange(h)
 		if !ok {
@@ -335,6 +353,7 @@ func (e *Engine) serveFile(w http.ResponseWriter, r *http.Request, pb *playback,
 		sink.status, sink.contentRange = http.StatusPartialContent, wire.ContentRange(start, end, size)
 	}
 	err := e.cfg.Media.Serve(r.Context(), pb.handle, path, rng, sink)
+	unsent = sink.left
 	switch {
 	case sink.started || r.Context().Err() != nil:
 	case err == nil && sink.left == 0:
@@ -446,7 +465,21 @@ func (e *Engine) mediaError(w http.ResponseWriter, r *http.Request, err error) {
 // playlist audio renditions named by the copy's audio track IDs only.
 // One the host made outside it is refused, with a warning, rather than
 // refused by every peer.
+//
+// The first served of each name is kept and served again on every fetch
+// under the ticket: the same playlist on every fetch (section 3.1),
+// whatever the host makes the next time. At most playlistsKept are kept,
+// of playlistBytesKept bytes together; past that, each is checked only.
 func (e *Engine) servePlaylist(w http.ResponseWriter, r *http.Request, pb *playback, path MediaPath) {
+	key := strconv.Itoa(path.Entry) + "/" + path.Name
+	ps := &e.plays
+	ps.mu.Lock()
+	kept, ok := pb.playlists[key]
+	ps.mu.Unlock()
+	if ok {
+		writePlaylist(w, kept)
+		return
+	}
 	var buf boundedSink
 	buf.max = wire.MaxPlaylist
 	err := e.cfg.Media.Serve(r.Context(), pb.handle, path, nil, &buf)
@@ -463,7 +496,7 @@ func (e *Engine) servePlaylist(w http.ResponseWriter, r *http.Request, pb *playb
 	if path.Kind == MediaMaster {
 		subset = wire.MasterSubset
 	}
-	kept, err := wire.FilterPlaylist(buf.body.Bytes(), subset, func(id string) bool { return pb.audio[id] })
+	kept, err = wire.FilterPlaylist(buf.body.Bytes(), subset, func(id string) bool { return pb.audio[id] })
 	if err == nil && !bytes.Equal(kept, normalLines(buf.body.Bytes())) {
 		err = errors.New("tags outside MSFP's subset")
 	}
@@ -472,6 +505,28 @@ func (e *Engine) servePlaylist(w http.ResponseWriter, r *http.Request, pb *playb
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
+	ps.mu.Lock()
+	if first, ok := pb.playlists[key]; ok {
+		kept = first // another fetch kept it meanwhile
+	} else if len(pb.playlists) < playlistsKept && pb.playlistBytes+len(kept) <= playlistBytesKept {
+		if pb.playlists == nil {
+			pb.playlists = map[string][]byte{}
+		}
+		pb.playlists[key] = kept
+		pb.playlistBytes += len(kept)
+	}
+	ps.mu.Unlock()
+	writePlaylist(w, kept)
+}
+
+// Bounds of the playlists a playback keeps, to serve them the same.
+const (
+	playlistsKept     = 16
+	playlistBytesKept = 4 << 20
+)
+
+// writePlaylist answers with a checked playlist.
+func writePlaylist(w http.ResponseWriter, kept []byte) {
 	h := w.Header()
 	h.Set("Content-Type", wire.HLSType)
 	h.Set("Content-Length", strconv.Itoa(len(kept)))
@@ -533,6 +588,46 @@ func (e *Engine) serveSmall(w http.ResponseWriter, r *http.Request, pb *playback
 	h.Set("Content-Length", strconv.Itoa(len(body)))
 	w.WriteHeader(http.StatusOK)
 	w.Write(body)
+}
+
+// serveSheet serves a preview sheet the host made, checked (a JPEG
+// within the layout, MSFP video section 6.2) and re-encoded with the
+// SheetEncoder, so that only its pixels leave: whatever else the host's
+// file holds (metadata, trailing bytes) stays here. One outside the
+// layout isn't sent.
+func (e *Engine) serveSheet(w http.ResponseWriter, r *http.Request, handle string, path MediaPath, width, height int) {
+	ctx := r.Context()
+	select {
+	case e.sheetGate <- struct{}{}:
+		defer func() { <-e.sheetGate }()
+	case <-ctx.Done():
+		return
+	}
+	buf := boundedSink{max: wire.MaxSheetBytes}
+	err := e.cfg.Media.Serve(ctx, handle, path, nil, &buf)
+	if !buf.started {
+		e.mediaError(w, r, err)
+		return
+	}
+	if err != nil || buf.over || buf.status != http.StatusOK {
+		e.log.Warn("msfp: the host's preview sheet couldn't be served", "error", err, "status", buf.status)
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+	var sheet []byte
+	if sheetFits(buf.body.Bytes(), width, height) {
+		sheet, err = e.cfg.SheetEncoder.Reencode(buf.body.Bytes(), width, height)
+	}
+	if sheet == nil || err != nil {
+		e.log.Warn("msfp: the host's preview sheet isn't a JPEG within its layout; it isn't sent", "error", err)
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+	h := w.Header()
+	h.Set("Content-Type", "image/jpeg")
+	h.Set("Content-Length", strconv.Itoa(len(sheet)))
+	w.WriteHeader(http.StatusOK)
+	w.Write(sheet)
 }
 
 // normalLines is a playlist with its empty lines dropped, each line

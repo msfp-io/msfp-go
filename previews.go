@@ -62,7 +62,7 @@ func (e *Engine) previews(req *request) response {
 	}
 	ticket := wire.Encode64(b)
 	e.images.add(ticket, imageTicket{kind: ticketPreviews, peer: p.ID, key: in.Title, handle: c.handle, sheets: t.Sheets,
-		expires: e.now().Add(imageTicketTime)}, e.now())
+		sheetWidth: t.Columns * t.TileWidth, sheetHeight: t.Rows * t.TileHeight, expires: e.now().Add(imageTicketTime)}, e.now())
 	return answer(struct {
 		Trickplay *trickplayWire `json:"trickplay"`
 	}{sheetsWire(t, e.streamBase(req)+ticket+"/")})
@@ -108,11 +108,7 @@ func (e *Engine) servePreviewSheet(w http.ResponseWriter, r *http.Request, it im
 		return
 	}
 	defer free()
-	sink := &httpSink{w: w, ctx: ctx}
-	err = e.cfg.Media.Serve(ctx, it.handle, MediaPath{Kind: MediaSheet, Sheet: path.Sheet, OfCopy: true}, nil, sink)
-	if !sink.started && ctx.Err() == nil {
-		e.mediaError(w, r, err)
-	}
+	e.serveSheet(w, r, it.handle, MediaPath{Kind: MediaSheet, Sheet: path.Sheet, OfCopy: true}, it.sheetWidth, it.sheetHeight)
 }
 
 // lyrics answers a paired peer's lyrics call (MSFP music section 6): the

@@ -162,6 +162,9 @@ func Open(ctx context.Context, cfg Config) (*Engine, error) {
 	if err := e.loadKeys(ctx); err != nil {
 		return nil, err
 	}
+	if err := e.loadDownloads(ctx); err != nil {
+		return nil, err
+	}
 	if cfg.Catalog != nil && e.changeLog() == nil {
 		_ = cfg.Store.Read(ctx, func(tx Tx) error {
 			_, e.logKept = tx.(OwnLogTx)

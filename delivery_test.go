@@ -8,7 +8,9 @@ import (
 	"errors"
 	"net/http"
 	"os"
+	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -361,17 +363,148 @@ func TestDownloads(t *testing.T) {
 	}
 }
 
+// A download's late reports count after a restart of either side: both
+// keep it in their stores, 30 days after its play (MSFP playback section
+// 7).
+func TestDownloadsAfterRestart(t *testing.T) {
+	ctx := context.Background()
+	clock := newClock(time.Now().Unix())
+	h := filmHost()
+	limits := &msfp.Limits{Streams: 1, Transcodes: 1, Downloads: 1}
+	s := newSharing(t, h, msfp.Config{Clock: clock, NewPairing: limits}, msfp.Config{Clock: clock})
+	pb, err := s.b.eng.Play(ctx, s.onB.ID, msfp.PlayRequest{Title: "movie/tmdb/949", Purpose: msfp.PurposeDownload,
+		Delivery: msfp.DeliveryFile})
+	if err != nil {
+		t.Fatal(err)
+	}
+	kept := func(sv *server) []msfp.DownloadRecord {
+		var got []msfp.DownloadRecord
+		sv.store.Read(ctx, func(tx msfp.Tx) error { got, _ = tx.(msfp.DownloadsTx).Downloads(); return nil })
+		return got
+	}
+	if a, b := kept(s.a), kept(s.b); len(a) != 1 || a[0].Viewer || a[0].Handle == "" || len(b) != 1 || !b[0].Viewer || b[0].ID != pb.ID {
+		t.Fatalf("the downloads kept: %+v, %+v", a, b)
+	}
+	// Both restart, the download still live on A.
+	s.a.reopen(t, msfp.Config{Clock: clock, Store: s.a.store, Catalog: h, Playback: h, Media: h})
+	s.b.reopen(t, msfp.Config{Clock: clock, Store: s.b.store})
+	if v := s.a.eng.Playbacks(); len(v) != 0 {
+		t.Errorf("a live download after a restart: %+v", v)
+	}
+	clock.Add(48 * time.Hour)
+	at := clock.Now().Add(-time.Hour)
+	if err := s.b.eng.ReportOffline(ctx, pb.ID, msfp.OfflineReport{PositionMs: 5_000, At: at}); err != nil {
+		t.Fatalf("a late report after the restarts: %v", err)
+	}
+	h.mu.Lock()
+	last := h.reports[len(h.reports)-1]
+	h.mu.Unlock()
+	if !last.Late || last.PositionMs != 5_000 || !last.At.Equal(at) {
+		t.Errorf("the host's late report: %+v", last)
+	}
+	if a := kept(s.a); len(a) != 1 || !a[0].LastAt.Equal(at) {
+		t.Errorf("A's download after its late report: %+v", a)
+	}
+	// Once more after a restart: what was kept (the at) still counts.
+	s.a.reopen(t, msfp.Config{Clock: clock, Store: s.a.store, Catalog: h, Playback: h, Media: h})
+	h.mu.Lock()
+	reports := len(h.reports)
+	h.mu.Unlock()
+	if err := s.b.eng.ReportOffline(ctx, pb.ID, msfp.OfflineReport{PositionMs: 1, At: at.Add(-time.Minute)}); err != nil {
+		t.Fatal(err)
+	}
+	h.mu.Lock()
+	if len(h.reports) != reports {
+		t.Errorf("a report older than the one kept reached the host: %+v", h.reports[reports:])
+	}
+	h.mu.Unlock()
+	// After 30 days, gone on both sides.
+	clock.Add(30 * 24 * time.Hour)
+	s.a.eng.RunOnce(ctx)
+	if a := kept(s.a); len(a) != 0 {
+		t.Errorf("A keeps a download past 30 days: %+v", a)
+	}
+	if err := s.b.eng.ReportOffline(ctx, pb.ID, msfp.OfflineReport{At: clock.Now()}); !errors.Is(err, msfp.ErrNotFound) {
+		t.Errorf("a late report past 30 days: %v", err)
+	}
+	s.b.reopen(t, msfp.Config{Clock: clock, Store: s.b.store})
+	if b := kept(s.b); len(b) != 0 {
+		t.Errorf("B keeps a download past 30 days: %+v", b)
+	}
+}
+
+// A scan's cap counts the bytes sent: a read cut short counts only what
+// went (MSFP media section 4.2).
+func TestScanCapCountsSent(t *testing.T) {
+	ctx := context.Background()
+	h := filmHost()
+	big := make([]byte, wire.ScanCap+1000)
+	h.files["file"] = big
+	h.copyOf("movie/tmdb/949", 0).Size = int64(len(big))
+	s := newSharing(t, h, msfp.Config{NewPairing: &msfp.Limits{Streams: 1, Transcodes: 1, ScansPerDay: 1}}, msfp.Config{})
+	scan, err := s.b.eng.Play(ctx, s.onB.ID, msfp.PlayRequest{Title: "movie/tmdb/949", Purpose: msfp.PurposeScan})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The host fails after 1,000 bytes of a read of the whole cap.
+	h.mu.Lock()
+	h.serve = func(_ context.Context, _ msfp.MediaPath, rng *msfp.Range, out msfp.ResponseSink) error {
+		out.Start(206, "video/mp4", rng.Last-rng.First+1, "")
+		out.Write(big[:1000])
+		return errors.New("the disk failed")
+	}
+	h.mu.Unlock()
+	var out sink
+	if err := s.b.eng.Fetch(ctx, scan.ID, msfp.MediaPath{Kind: msfp.MediaFile}, "bytes=0-", &out); err == nil {
+		t.Fatal("a read cut short went through")
+	}
+	h.mu.Lock()
+	h.serve = nil
+	h.mu.Unlock()
+	out = sink{}
+	if err := s.b.eng.Fetch(ctx, scan.ID, msfp.MediaPath{Kind: msfp.MediaFile}, "bytes=0-", &out); err != nil ||
+		int64(len(out.body)) != wire.ScanCap-1000 {
+		t.Errorf("after 1,000 bytes sent: %v, %d bytes", err, len(out.body))
+	}
+}
+
 func jsonInt(n int64) string { b, _ := json.Marshal(n); return string(b) }
 
-// A download's reads are paced at its speed cap, a play's are not.
+// timerClock is a fakeClock whose timers fire at once, moving it on:
+// what the engine waited is counted, not waited.
+type timerClock struct {
+	*fakeClock
+	mu     sync.Mutex
+	waited time.Duration
+}
+
+func (c *timerClock) After(d time.Duration) <-chan time.Time {
+	c.mu.Lock()
+	c.waited += d
+	c.mu.Unlock()
+	c.Add(d)
+	ch := make(chan time.Time, 1)
+	ch <- c.Now()
+	return ch
+}
+
+func (c *timerClock) Waited() time.Duration {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.waited
+}
+
+// A download's reads are paced at its speed cap, on the engine's clock;
+// a play's are not.
 func TestDownloadPace(t *testing.T) {
 	ctx := context.Background()
+	clock := &timerClock{fakeClock: newClock(time.Now().Unix())}
 	h := filmHost()
 	big := bytes.Repeat([]byte("0123456789"), 30_000) // 300,000 bytes
 	h.files["file"] = big
 	h.copyOf("movie/tmdb/949", 0).Size = int64(len(big))
 	limits := &msfp.Limits{Streams: 1, Transcodes: 1, Downloads: 1, DownloadKbps: 800} // 100,000 bytes a second
-	s := newSharing(t, h, msfp.Config{NewPairing: limits}, msfp.Config{})
+	s := newSharing(t, h, msfp.Config{Clock: clock, NewPairing: limits}, msfp.Config{Clock: clock})
 	read := func(purpose string) time.Duration {
 		t.Helper()
 		pb, err := s.b.eng.Play(ctx, s.onB.ID, msfp.PlayRequest{Title: "movie/tmdb/949", Purpose: purpose, Delivery: msfp.DeliveryFile})
@@ -379,17 +512,19 @@ func TestDownloadPace(t *testing.T) {
 			t.Fatal(err)
 		}
 		defer s.b.eng.Stop(ctx, pb.ID, -1)
-		start := time.Now()
+		before := clock.Waited()
 		var out sink
 		if err := s.b.eng.Fetch(ctx, pb.ID, msfp.MediaPath{Kind: msfp.MediaFile}, "", &out); err != nil || !bytes.Equal(out.body, big) {
 			t.Fatalf("%s: %v, %d bytes", purpose, err, len(out.body))
 		}
-		return time.Since(start)
+		return clock.Waited() - before
 	}
-	if d := read(msfp.PurposeDownload); d < 1500*time.Millisecond {
-		t.Errorf("a download of 300,000 bytes at 100,000 a second in %v", d)
+	// A second's worth at once, then nine tenths of the cap: 200,000
+	// bytes at 90,000 a second.
+	if d := read(msfp.PurposeDownload); d < 2200*time.Millisecond || d > 2300*time.Millisecond {
+		t.Errorf("a download of 300,000 bytes at 100,000 a second waited %v", d)
 	}
-	if d := read(msfp.PurposePlay); d > time.Second {
+	if d := read(msfp.PurposePlay); d != 0 {
 		t.Errorf("a play's reads paced: %v", d)
 	}
 }
@@ -597,6 +732,22 @@ func TestPreviewsAndLyrics(t *testing.T) {
 	if res, _ := get(t, s, http.MethodHead, base+"trickplay/0"); res.StatusCode != 405 {
 		t.Errorf("HEAD under a previews ticket: %d", res.StatusCode)
 	}
+	// The owning side re-encodes the host's sheets: only their pixels
+	// leave; one outside the layout, or not a JPEG, isn't sent.
+	h.mu.Lock()
+	h.files["trickplay/0"] = append(slices.Clone(sheet), "trailing bytes"...)
+	h.files["trickplay/1"] = jpegOf(t, 21, 10)
+	h.mu.Unlock()
+	if res, body := get(t, s, http.MethodGet, base+"trickplay/0"); res.StatusCode != 200 || strings.Contains(body, "trailing") ||
+		res.Header.Get("Content-Type") != "image/jpeg" {
+		t.Errorf("a sheet with trailing bytes: %d, %q", res.StatusCode, res.Header.Get("Content-Type"))
+	}
+	if res, _ := get(t, s, http.MethodGet, base+"trickplay/1"); res.StatusCode != 500 {
+		t.Errorf("a sheet wider than the layout: %d", res.StatusCode)
+	}
+	h.mu.Lock()
+	h.files["trickplay/0"], h.files["trickplay/1"] = sheet, sheet
+	h.mu.Unlock()
 	var raw json.RawMessage
 	for body, want := range map[string]int{`{"title":"movie/tmdb/949"}`: 400, `{"title":"series/tmdb/1","versionId":"x"}`: 400,
 		`{"title":"movie/tmdb/949","versionId":"nope"}`: 404, `{"title":"movie/tmdb/949","versionId":"` + copies[1].ID + `"}`: 404} {
