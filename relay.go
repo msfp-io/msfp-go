@@ -290,7 +290,7 @@ func (e *Engine) relaySmall(rm *remote, path MediaPath, res *http.Response, out 
 		if path.Kind == MediaMaster {
 			subset = wire.MasterSubset
 		}
-		kept, err := wire.FilterPlaylist(body, subset)
+		kept, err := wire.FilterPlaylist(body, subset, nil) // B2: the playback's audio tracks, for a master's #EXT-X-MEDIA renditions
 		if err != nil {
 			e.log.Info("msfp: a peer's playlist was refused", "peer", rm.peer, "error", err)
 			return ErrNotFound

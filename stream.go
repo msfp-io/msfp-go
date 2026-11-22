@@ -262,7 +262,7 @@ func (e *Engine) servePlaylist(w http.ResponseWriter, r *http.Request, pb *playb
 	if path.Kind == MediaMaster {
 		subset = wire.MasterSubset
 	}
-	kept, err := wire.FilterPlaylist(buf.body.Bytes(), subset)
+	kept, err := wire.FilterPlaylist(buf.body.Bytes(), subset, nil) // B2: the playback's audio tracks, for a master's #EXT-X-MEDIA renditions
 	if err == nil && !bytes.Equal(kept, normalLines(buf.body.Bytes())) {
 		err = errors.New("tags outside media 1's subset")
 	}
