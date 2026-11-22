@@ -109,6 +109,7 @@ var calls = map[string]func(*Engine, *request) response{
 
 	callLibraries: (*Engine).libraries,
 	callTitles:    (*Engine).titles,
+	callImage:     (*Engine).image,
 	callPlay:      (*Engine).play,
 	callProgress:  (*Engine).progress,
 	callStop:      (*Engine).stop,

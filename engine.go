@@ -82,6 +82,7 @@ type Engine struct {
 	logKept                    bool
 	reading                    readings
 	plays                      plays
+	images                     imageTickets
 	remotes                    remotes
 	fetchSlots, peerFetchSlots *slots
 	relaySlots, peerRelaySlots *slots

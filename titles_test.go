@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"image"
 	"image/color"
 	"image/png"
+	"net/http"
 	"slices"
 	"strings"
 	"testing"
@@ -103,6 +105,9 @@ func TestLocalTitlesAndExtras(t *testing.T) {
 	if got := keysOf(s.peerTitles(t)); !slices.Equal(got, []string{"movie/tmdb/1", "movie/tmdb/1/x/Tr7aQ1"}) {
 		t.Fatalf("B keeps %v, before local titles are shared", got)
 	}
+	if _, _, err := s.b.eng.TitleImage(ctx, s.onB.ID, local); !errors.Is(err, msfp.ErrNotFound) {
+		t.Errorf("an image of a title not kept: %v", err)
+	}
 	x := s.peerTitles(t)["movie/tmdb/1/x/Tr7aQ1"].(*msfp.VideoTitle)
 	if x.ExtraType != "trailer" || x.Name != "Teaser" || len(x.Copies) != 1 {
 		t.Errorf("an extra kept: %+v", x)
@@ -146,6 +151,110 @@ func TestLocalTitlesAndExtras(t *testing.T) {
 	}
 	if got := keysOf(s.peerTitles(t)); len(got) != 0 {
 		t.Errorf("B keeps %v, the film gone", got)
+	}
+}
+
+// The image of a local title (MSFP catalog section 4.4): asked for, served
+// under its ticket only, checked and re-encoded.
+func TestLocalTitleImage(t *testing.T) {
+	ctx := context.Background()
+	h, local, raw := localHost(t)
+	s := newSharing(t, h, msfp.Config{}, msfp.Config{})
+	if err := s.a.eng.SetLocal(ctx, s.onA.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.b.eng.ReadNow(ctx, s.onB.ID); err != nil {
+		t.Fatal(err)
+	}
+	img, format, err := s.b.eng.TitleImage(ctx, s.onB.ID, local)
+	if err != nil || format != wire.ImagePNG {
+		t.Fatalf("the image: %v %q", err, format)
+	}
+	if bytes.Equal(img, raw) || bytes.Contains(img, []byte("trailing")) {
+		t.Error("the image wasn't re-encoded")
+	}
+	if c, err := png.DecodeConfig(bytes.NewReader(img)); err != nil || c.Width != 4 || c.Height != 3 {
+		t.Errorf("the image re-encoded: %+v %v", c, err)
+	}
+	calls := s.a.exchanges("federation/image")
+	if len(calls) != 1 || calls[0].status != 200 {
+		t.Fatalf("image calls: %+v", calls)
+	}
+	var ans struct{ URL string }
+	json.Unmarshal([]byte(calls[0].resBody), &ans)
+	if !strings.HasSuffix(ans.URL, "/image") || !strings.Contains(ans.URL, "/api/v1/stream/") {
+		t.Errorf("the answer: %s", calls[0].resBody)
+	}
+	// The ticket opens that image only: another name, a HEAD, a browser.
+	get := func(method, url string, header ...string) int {
+		path := url[strings.Index(url, "/api/v1/stream/"):]
+		req, _ := http.NewRequest(method, s.a.srv.URL+path, nil)
+		for i := 0; i+1 < len(header); i += 2 {
+			req.Header.Set(header[i], header[i+1])
+		}
+		res, err := s.a.srv.Client().Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		res.Body.Close()
+		return res.StatusCode
+	}
+	if got := get(http.MethodGet, ans.URL); got != 200 {
+		t.Errorf("GET of the image: %d", got)
+	}
+	base := strings.TrimSuffix(ans.URL, "image")
+	for _, c := range []struct {
+		method, url string
+		header      []string
+	}{
+		{http.MethodGet, base + "file", nil},
+		{http.MethodGet, base + "master.m3u8", nil},
+		{http.MethodHead, ans.URL, nil},
+		{http.MethodGet, ans.URL, []string{"Origin", "https://x.example"}},
+	} {
+		if got := get(c.method, c.url, c.header...); got != 404 && got != 405 {
+			t.Errorf("%s %s %v: %d", c.method, c.url[len(base)-1:], c.header, got)
+		}
+	}
+	// A title that isn't local, or isn't kept with an image: not asked.
+	for _, key := range []string{"movie/tmdb/1", local + "/x/Ex1", "movie/local/Other"} {
+		if _, _, err := s.b.eng.TitleImage(ctx, s.onB.ID, key); !errors.Is(err, msfp.ErrNotFound) {
+			t.Errorf("%s: %v", key, err)
+		}
+	}
+	if n := len(s.a.exchanges("federation/image")); n != 1 {
+		t.Errorf("%d image calls", n)
+	}
+	// An image a receiver refuses is never sent; one it would take, but
+	// off its stream root, is dropped by the viewer.
+	h.mu.Lock()
+	h.images[local] = []byte("GIF89a")
+	h.mu.Unlock()
+	if _, _, err := s.b.eng.TitleImage(ctx, s.onB.ID, local); err == nil {
+		t.Error("a GIF went")
+	}
+	h.mu.Lock()
+	h.images[local] = raw
+	h.mu.Unlock()
+	s.a.setRewrite(func(path string, _ http.Header, body []byte) ([]byte, bool) {
+		if !strings.HasSuffix(path, "/federation/image") {
+			return nil, false
+		}
+		return []byte(`{"url":"https://elsewhere.example/api/v1/stream/abc/image"}`), true
+	})
+	if _, _, err := s.b.eng.TitleImage(ctx, s.onB.ID, local); !errors.Is(err, msfp.ErrUnreachable) {
+		t.Errorf("an image off its stream root: %v", err)
+	}
+	s.a.setRewrite(nil)
+	// Local titles no longer shared: the owner refuses.
+	if err := s.a.eng.SetLocal(ctx, s.onA.ID, false); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := s.b.eng.TitleImage(ctx, s.onB.ID, local); !errors.Is(err, msfp.ErrNotFound) {
+		t.Errorf("after local titles are no longer shared: %v", err)
+	}
+	if got := get(http.MethodGet, ans.URL); got != 404 {
+		t.Errorf("the earlier ticket, after local titles are no longer shared: %d", got)
 	}
 }
 

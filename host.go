@@ -174,6 +174,17 @@ type Catalog interface {
 	Copies(ctx context.Context, key string, libraries []string) ([]Copy, error)
 }
 
+// Images is what a Catalog implements, besides Catalog, when it shares
+// the images of its local titles (MSFP catalog section 4.4): the local
+// films, series, artists and albums whose Image it sets. Without it, no
+// image is given, whatever Image says.
+type Images interface {
+	// Image gives the one image of a local title: a JPEG or a PNG of at
+	// most 1 MiB, 1 to 4,096 pixels wide and tall. The engine checks it
+	// (wire.CheckImage) and sends nothing else. ErrNotFound for none.
+	Image(ctx context.Context, key string) ([]byte, error)
+}
+
 // ChangeLog is what a Catalog implements, besides Catalog, when its
 // database notes changes itself. Without it, the engine keeps the log
 // from snapshots of Titles (OwnLogTx).

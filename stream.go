@@ -144,6 +144,9 @@ func (e *Engine) serveStream(w http.ResponseWriter, r *http.Request, fallback ht
 		fallback.ServeHTTP(w, r)
 		return
 	}
+	if e.serveImage(w, r, ticket, name) {
+		return
+	}
 	ps := &e.plays
 	ps.mu.Lock()
 	pb := ps.byTicket[sha256.Sum256([]byte(ticket))]
