@@ -107,9 +107,19 @@ const (
 // a year is ignored).
 var MusicDescription = DescriptionBounds{NameRequired: true, MaxName: MaxMusicName}
 
-// ReleaseTypes are an album's releaseType values (music section 3); an
-// unknown string is kept as Other.
-var ReleaseTypes = []string{"album", "single", "ep", "compilation", "soundtrack", "live", "remix", Other}
+// MaxSecondaryTypes is how many secondaryTypes an album keeps (music
+// section 3.2).
+const MaxSecondaryTypes = 8
+
+// musicTypeRe is the form of an album's primaryType and of each of its
+// secondaryTypes (music section 3): MusicBrainz's release-group types,
+// lowercased, 1 to 32 characters of a–z 0–9 space . _ - /, with no space
+// at either end.
+var musicTypeRe = regexp.MustCompile(`^[a-z0-9._/-](?:[a-z0-9 ._/-]{0,30}[a-z0-9._/-])?$`)
+
+// MusicType says whether s is of the form of a release-group type (music
+// section 3): kept as it is, known or not; the caller doesn't lowercase.
+func MusicType(s string) bool { return musicTypeRe.MatchString(s) }
 
 // CleanText cleans a peer's text as MSFP core section 9.1 cleans a
 // server's name, cut to max code points: each run of white space one
@@ -202,43 +212,49 @@ func MusicID(kind, scheme, value string) bool {
 // MusicTitle is a music title as sent in titles, and as a peer's is kept
 // (music section 3): its key, kind and library, and its description,
 // cleaned. Text and numbers are "" or 0 when absent; Compilation and
-// Image are nil when absent. A track carries no dates and no genres, an
-// artist only a name, an image and ids. The JSON is the wire's: an
+// Image are nil when absent. An album's PrimaryType and SecondaryTypes
+// are MusicBrainz's release-group types, lowercased, open. A track may
+// carry its own dates and genres (without them, its album's are its
+// own); an artist carries only a name, an image and ids. The JSON is the wire's: an
 // owning server writes its own titles with it, and reads them back with
 // ReadMusicTitle to send only what a receiver keeps.
 type MusicTitle struct {
-	Key          string            `json:"key"`
-	Kind         string            `json:"kind"`
-	Library      string            `json:"library"`
-	Name         string            `json:"name"`
-	SortName     string            `json:"sortName,omitempty"`
-	Artists      []string          `json:"artists,omitempty"`
-	ArtistNames  string            `json:"artistNames,omitempty"`
-	ReleaseType  string            `json:"releaseType,omitempty"`
-	Compilation  *bool             `json:"compilation,omitempty"`
-	Date         string            `json:"date,omitempty"`
-	OriginalDate string            `json:"originalDate,omitempty"`
-	Genres       []string          `json:"genres,omitempty"`
-	Album        string            `json:"album,omitempty"`
-	Disc         int               `json:"disc,omitempty"`
-	Number       int               `json:"number,omitempty"`
-	Copies       []MusicCopy       `json:"copies,omitempty"` // tracks only, at least one
-	Image        *bool             `json:"image,omitempty"`  // local artists and albums only
-	IDs          map[string]string `json:"ids,omitempty"`
+	Key            string            `json:"key"`
+	Kind           string            `json:"kind"`
+	Library        string            `json:"library"`
+	Name           string            `json:"name"`
+	SortName       string            `json:"sortName,omitempty"`
+	Artists        []string          `json:"artists,omitempty"`
+	ArtistNames    string            `json:"artistNames,omitempty"`
+	PrimaryType    string            `json:"primaryType,omitempty"`
+	SecondaryTypes []string          `json:"secondaryTypes,omitempty"`
+	Compilation    *bool             `json:"compilation,omitempty"`
+	Date           string            `json:"date,omitempty"`
+	OriginalDate   string            `json:"originalDate,omitempty"`
+	Genres         []string          `json:"genres,omitempty"`
+	Album          string            `json:"album,omitempty"`
+	Disc           int               `json:"disc,omitempty"`
+	Number         int               `json:"number,omitempty"`
+	Copies         []MusicCopy       `json:"copies,omitempty"` // tracks only, at least one
+	Image          *bool             `json:"image,omitempty"`  // local artists and albums only
+	IDs            map[string]string `json:"ids,omitempty"`
 }
 
 // MusicCopy is a track's copy (music section 3.3). The numbers that are
 // optional are 0 when absent (none of their ranges holds 0).
+// Container and Codec are ffmpeg's names, open (tokens); Codecs is the
+// RFC 6381 codecs string; DurationMs and BitrateKbps are exact.
 type MusicCopy struct {
 	ID          string      `json:"id"`
-	Name        string      `json:"name,omitempty"` // a quality label, never a file name
+	Name        string      `json:"name,omitempty"` // plain text; what it says is the owner's choice
 	DurationMs  int64       `json:"durationMs"`
 	Container   string      `json:"container"`
 	Codec       string      `json:"codec"`
+	Codecs      string      `json:"codecs,omitempty"`
 	Size        int64       `json:"size"`
 	Etag        string      `json:"etag"`
-	Added       string      `json:"added,omitempty"`       // YYYY-MM-DD
-	BitrateKbps int         `json:"bitrateKbps,omitempty"` // a whole 8
+	Added       string      `json:"added,omitempty"` // YYYY-MM-DD
+	BitrateKbps int         `json:"bitrateKbps,omitempty"`
 	SampleRate  int         `json:"sampleRate,omitempty"`
 	BitDepth    int         `json:"bitDepth,omitempty"`
 	Channels    int         `json:"channels,omitempty"`
@@ -262,14 +278,15 @@ const (
 	MaxMusicDurationMs = 86_400_000
 	// MaxCopySize (wire/copies.go) bounds a track copy's size too.
 	// MaxCopyName (wire/copies.go) bounds a track copy's name too.
-	MaxAudioBitrate = 100_000 // kbit/s, from 8
+	MaxAudioBitrate = 100_000 // kbit/s, from 1
 	MaxGain         = 64      // dB, either way
 	MaxPeak         = 10
 )
 
 // R128Gain converts an EBU R128 gain (Opus's R128_TRACK_GAIN: 1/256 dB,
-// relative to −23 LUFS) to ReplayGain 2.0's reference, as an owning
-// server sends it: the value over 256, plus 5 dB.
+// relative to −23 LUFS) to ReplayGain 2.0's reference, which music
+// section 3.3 asks for: the value over 256, plus 5 dB (a helper; the
+// implementers' notes give the conversion).
 func R128Gain(q78 int) float64 { return float64(q78)/256 + 5 }
 
 // ReadMusicTitle reads one entry of a titles answer as catalog section
@@ -280,27 +297,28 @@ func R128Gain(q78 int) float64 { return float64(q78)/256 + 5 }
 // track/mb whose album isn't an album/mb key, or has no copy left (a
 // copies that isn't an array included). Every other member of the wrong
 // type, out of range or for another kind counts as absent; a bad entry
-// of artists, genres or ids is skipped alone. Whether library is one
+// of artists, secondaryTypes, genres or ids is skipped alone. Whether library is one
 // asked for is the caller's to check.
 func ReadMusicTitle(raw json.RawMessage) (MusicTitle, bool) {
 	var t struct {
-		Key          string          `json:"key"`
-		Kind         string          `json:"kind"`
-		Library      string          `json:"library"`
-		SortName     json.RawMessage `json:"sortName"`
-		Artists      json.RawMessage `json:"artists"`
-		ArtistNames  json.RawMessage `json:"artistNames"`
-		ReleaseType  json.RawMessage `json:"releaseType"`
-		Compilation  json.RawMessage `json:"compilation"`
-		Date         json.RawMessage `json:"date"`
-		OriginalDate json.RawMessage `json:"originalDate"`
-		Genres       json.RawMessage `json:"genres"`
-		Album        json.RawMessage `json:"album"`
-		Disc         json.RawMessage `json:"disc"`
-		Number       json.RawMessage `json:"number"`
-		Copies       json.RawMessage `json:"copies"`
-		Image        json.RawMessage `json:"image"`
-		IDs          json.RawMessage `json:"ids"`
+		Key            string          `json:"key"`
+		Kind           string          `json:"kind"`
+		Library        string          `json:"library"`
+		SortName       json.RawMessage `json:"sortName"`
+		Artists        json.RawMessage `json:"artists"`
+		ArtistNames    json.RawMessage `json:"artistNames"`
+		PrimaryType    json.RawMessage `json:"primaryType"`
+		SecondaryTypes json.RawMessage `json:"secondaryTypes"`
+		Compilation    json.RawMessage `json:"compilation"`
+		Date           json.RawMessage `json:"date"`
+		OriginalDate   json.RawMessage `json:"originalDate"`
+		Genres         json.RawMessage `json:"genres"`
+		Album          json.RawMessage `json:"album"`
+		Disc           json.RawMessage `json:"disc"`
+		Number         json.RawMessage `json:"number"`
+		Copies         json.RawMessage `json:"copies"`
+		Image          json.RawMessage `json:"image"`
+		IDs            json.RawMessage `json:"ids"`
 	}
 	if DecodeEntry(raw, &t) != nil {
 		return MusicTitle{}, false
@@ -330,10 +348,20 @@ func ReadMusicTitle(raw json.RawMessage) (MusicTitle, bool) {
 	case "album":
 		sortName, _ := musicString(t.SortName)
 		out.SortName = CleanText(sortName, MaxMusicName)
-		if rt, ok := musicString(t.ReleaseType); ok {
-			out.ReleaseType = NameOrOther(ReleaseTypes, rt)
+		if pt, ok := musicString(t.PrimaryType); ok && MusicType(pt) {
+			out.PrimaryType = pt
+		}
+		for _, st := range stringsOf(t.SecondaryTypes) {
+			if len(out.SecondaryTypes) == MaxSecondaryTypes {
+				break
+			}
+			if MusicType(st) && !slices.Contains(out.SecondaryTypes, st) {
+				out.SecondaryTypes = append(out.SecondaryTypes, st)
+			}
 		}
 		out.Compilation = musicBool(t.Compilation)
+	}
+	if k.Kind == "album" || k.Kind == "track" {
 		dateYear := 0
 		if s, _ := musicString(t.Date); s != "" {
 			if y, ok := MusicDate(s); ok {
@@ -346,6 +374,8 @@ func ReadMusicTitle(raw json.RawMessage) (MusicTitle, bool) {
 			}
 		}
 		out.Genres = CleanGenres(stringsOf(t.Genres))
+	}
+	switch k.Kind {
 	case "track":
 		if s, _ := musicString(t.Album); IsMusicKey(s, "album") {
 			out.Album = s
@@ -378,11 +408,11 @@ func ReadMusicTitle(raw json.RawMessage) (MusicTitle, bool) {
 }
 
 // ReadMusicCopies reads a track's copies as music section 3.3 says: false
-// when copies isn't an array; else the copies kept, best first, at most
+// when copies isn't an array; else the copies kept, in the owner's order, at most
 // MaxMusicCopies, the first. A copy is skipped alone when it isn't an
 // object, misses a required member or breaks its form (id and etag of
 // ID's form, size from 1 to MaxCopySize, durationMs from 1 to
-// MaxMusicDurationMs, container and codec strings), or repeats a kept
+// MaxMusicDurationMs, container and codec tokens), or repeats a kept
 // copy's id. Its optional members out of range or of the wrong type
 // count as absent; video's members of a copy are ignored.
 func ReadMusicCopies(raw json.RawMessage) ([]MusicCopy, bool) {
@@ -411,23 +441,25 @@ func readMusicCopy(raw json.RawMessage) (MusicCopy, bool) {
 	}
 	id, _ := musicString(o["id"])
 	etag, _ := musicString(o["etag"])
-	container, okContainer := musicString(o["container"])
-	codec, okCodec := musicString(o["codec"])
+	container, _ := musicString(o["container"])
+	codec, _ := musicString(o["codec"])
 	duration, okDuration := musicInt(o["durationMs"], 1, MaxMusicDurationMs)
 	size, okSize := musicInt(o["size"], 1, MaxCopySize)
-	if !ID(id) || !ID(etag) || !okContainer || !okCodec || !okDuration || !okSize {
+	if !ID(id) || !ID(etag) || !Token(container) || !Token(codec) || !okDuration || !okSize {
 		return MusicCopy{}, false
 	}
-	c := MusicCopy{ID: id, DurationMs: duration, Container: NameOrOther(Containers, container),
-		Codec: NameOrOther(AudioCodecs, codec), Size: size, Etag: etag}
+	c := MusicCopy{ID: id, DurationMs: duration, Container: container, Codec: codec, Size: size, Etag: etag}
+	if codecs, ok := musicString(o["codecs"]); ok && copyCodecsRe.MatchString(codecs) {
+		c.Codecs = codecs
+	}
 	if name, ok := musicString(o["name"]); ok {
 		c.Name = CleanText(name, MaxCopyName)
 	}
 	if added, ok := musicString(o["added"]); ok && musicDay(added) {
 		c.Added = added
 	}
-	if b, ok := musicInt(o["bitrateKbps"], 8, MaxAudioBitrate); ok {
-		c.BitrateKbps = int(b / 8 * 8)
+	if b, ok := musicInt(o["bitrateKbps"], 1, MaxAudioBitrate); ok {
+		c.BitrateKbps = int(b)
 	}
 	rate, _ := musicInt(o["sampleRate"], 8_000, 768_000)
 	depth, _ := musicInt(o["bitDepth"], 8, 32)

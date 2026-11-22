@@ -27,12 +27,14 @@ type pbVectors struct {
 }
 
 type pbContext struct {
-	Copies     map[string][]pbCopy `json:"copies"`
-	OwnCapKbps int                 `json:"ownCapKbps"`
-	Limits     Limits              `json:"limits"`
-	InUse      pbUse               `json:"inUse"`
-	StreamRoot string              `json:"streamRoot"`
-	Now        int64               `json:"now"`
+	Copies        map[string][]pbCopy `json:"copies"`
+	VideoEncoders []string            `json:"videoEncoders"`
+	AudioEncoders []string            `json:"audioEncoders"`
+	OwnCapKbps    int                 `json:"ownCapKbps"`
+	Limits        Limits              `json:"limits"`
+	InUse         pbUse               `json:"inUse"`
+	StreamRoot    string              `json:"streamRoot"`
+	Now           int64               `json:"now"`
 }
 
 type pbCopy struct {
@@ -187,16 +189,14 @@ func pbTree(t *testing.T, b []byte) any {
 func TestPlaybackVectors(t *testing.T) {
 	var v pbVectors
 	readVectors(t, "playback.json", &v)
-	if len(v.Requests)+len(v.Delivers)+len(v.Downs)+len(v.Scans) != 131+58+36+16 || len(v.Reports) != 49 ||
-		len(v.Answers) != 59 || len(v.Restarts) != 16 || len(v.Limits) != 17 {
+	if len(v.Requests)+len(v.Delivers)+len(v.Downs)+len(v.Scans) != 114+74+36+20 || len(v.Reports) != 56 ||
+		len(v.Answers) != 70 || len(v.Restarts) != 16 || len(v.Limits) != 23 {
 		t.Fatal("not every case read")
 	}
 	now := time.Unix(v.Context.Now, 0)
 	for _, list := range [][]pbCase{v.Requests, v.Delivers, v.Downs, v.Scans, v.Reports} {
 		for _, c := range list {
 			switch {
-			case c.By == "viewer":
-				pbSame(t, c.Name, pbCoarsen(t, c.Text), c.Output)
 			case c.Call == "play":
 				out, err := pbPlay(v.Context, c, []byte(c.Text))
 				pbCheck(t, c, out, err)
@@ -254,6 +254,7 @@ func pbPlay(ctx pbContext, c pbCase, body []byte) (any, error) {
 	}
 	cp := copies[i]
 	audio := ChooseAudio(cp.Audio, r.AudioTrack, r.AudioLanguage)
+	named := cp.ID == r.VersionID && audio == r.AudioTrack
 	// 5.
 	if err := lim.Room(r.Purpose, u); err != nil {
 		return nil, err
@@ -264,7 +265,8 @@ func pbPlay(ctx pbContext, c pbCase, body []byte) (any, error) {
 		capKbps = r.BitrateCap(ctx.OwnCapKbps, lim.BitrateKbps)
 	}
 	// 7.
-	if err := RefuseDelivery(r, cp, capKbps); err != nil {
+	picture := !strings.HasPrefix(r.Title, "track/")
+	if err := RefuseDelivery(r, cp, capKbps, picture, Encoders{Video: ctx.VideoEncoders, Audio: ctx.AudioEncoders}); err != nil {
 		return nil, err
 	}
 	// 8.
@@ -277,11 +279,26 @@ func pbPlay(ctx pbContext, c pbCase, body []byte) (any, error) {
 		if r.Purpose == PurposeDownload {
 			transcodes = "server"
 		}
+		t := TranscodeTargets{}
+		if r.Transcode != nil {
+			t = *r.Transcode
+		}
+		t = t.WithBaseline(picture)
+		r.Transcode = &t
+	}
+	baseline := ""
+	if r.Delivery == "" {
+		baseline = "h264 aac hls"
+		if !picture {
+			baseline = "aac hls"
+		}
 	}
 	out := struct {
 		PlayRequest
+		Baseline string `json:"baseline,omitempty"`
 		Copy     string `json:"versionId"`
 		Audio    string `json:"audioTrack"`
+		Defaults bool   `json:"defaults,omitempty"`
 		Start    int64  `json:"startPositionMs"`
 		Cap      int    `json:"bitrateCapKbps,omitempty"`
 		Speed    int    `json:"speedCapKbps,omitempty"`
@@ -289,13 +306,14 @@ func pbPlay(ctx pbContext, c pbCase, body []byte) (any, error) {
 		Codes    string `json:"transcodes,omitempty"`
 		Ticket   int    `json:"ticketSeconds,omitempty"`
 		Idle     int    `json:"idleSeconds,omitempty"`
-		ReadCap  int    `json:"readCapBytes,omitempty"`
+		ReadCap  int64  `json:"readCapBytes,omitempty"`
 		NoTitle  string `json:"title"`
 		NoSubLan string `json:"subtitleLanguage,omitempty"`
-	}{PlayRequest: r, Copy: cp.ID, Audio: audio, Start: r.StartPositionMs, Cap: capKbps, Codes: transcodes,
-		Ticket: int(Life(r.Purpose).Seconds()), NoTitle: r.Title}
+	}{PlayRequest: r, Baseline: baseline, Copy: cp.ID, Audio: audio, Defaults: !named, Start: r.StartPositionMs, Cap: capKbps,
+		Codes: transcodes, Ticket: int(Life(r.Purpose).Seconds()), NoTitle: r.Title}
 	// The vectors' output holds no request member it doesn't list.
 	out.PlayRequest.AudioLanguage, out.PlayRequest.SubtitleTrack, out.PlayRequest.MaxBitrateKbps = "", "", 0
+	out.PlayRequest.VersionID, out.PlayRequest.AudioTrack = "", ""
 	if Idles(r.Purpose) {
 		out.Idle = int(IdleEnd.Seconds())
 	}
@@ -305,50 +323,9 @@ func pbPlay(ctx pbContext, c pbCase, body []byte) (any, error) {
 	case PurposeDownload:
 		out.Counts, out.Speed, out.Start = "downloads", lim.DownloadKbps, 0
 	case PurposeScan:
-		out.Counts, out.ReadCap = "scansPerDay", ScanReadCap
+		out.Counts, out.ReadCap = "scansPerDay", lim.ScanCap()
 	}
 	return out, nil
-}
-
-// pbCoarsen is what a viewer's server sends of a device's description:
-// {title, capabilities, maxBitrateKbps}, read leniently (it is its own).
-func pbCoarsen(t *testing.T, text string) any {
-	d := json.NewDecoder(strings.NewReader(text))
-	d.UseNumber()
-	var in map[string]any
-	if err := d.Decode(&in); err != nil {
-		t.Fatal(err)
-	}
-	m, _ := in["capabilities"].(map[string]any)
-	strs := func(name string) []string {
-		var out []string
-		list, _ := m[name].([]any)
-		for _, e := range list {
-			if s, ok := e.(string); ok {
-				out = append(out, s)
-			}
-		}
-		return out
-	}
-	num := func(v any) int { n, _ := integerOf(v); return int(n) }
-	c := Capabilities{Containers: strs("containers"), VideoCodecs: strs("videoCodecs"), AudioCodecs: strs("audioCodecs"),
-		AudioProfiles: strs("audioProfiles"), HDR: strs("hdr"), MaxHeight: num(m["maxHeight"]),
-		MaxAudioChannels: num(m["maxAudioChannels"]), MaxAudioSampleRate: num(m["maxAudioSampleRate"]),
-		MaxAudioBitDepth: num(m["maxAudioBitDepth"]), MaxBitrateKbps: num(m["maxBitrateKbps"])}
-	list, _ := m["dvProfiles"].([]any)
-	for _, e := range list {
-		if n, ok := integerOf(e); ok {
-			c.DVProfiles = append(c.DVProfiles, int(n))
-		}
-	}
-	out := map[string]any{"title": in["title"]}
-	if cc := c.Coarsen(); !cc.Empty() {
-		out["capabilities"] = cc
-	}
-	if v, ok := in["maxBitrateKbps"]; ok {
-		out["maxBitrateKbps"] = CoarsenBitrate(num(v))
-	}
-	return out
 }
 
 // pbReport is an owning server's progress or stop.
@@ -423,7 +400,7 @@ func TestLimitsVectors(t *testing.T) {
 			continue
 		}
 		out := map[string]any{"downloads": k.Downloads, "downloadsPerDay": k.DownloadsPerDay, "downloadKbps": k.DownloadKbps,
-			"scansPerDay": k.ScansPerDay, "offersDownloads": k.OffersDownloads(), "offersScans": k.OffersScans()}
+			"scansPerDay": k.ScansPerDay, "scanBytes": k.ScanBytes, "offersDownloads": k.OffersDownloads(), "offersScans": k.OffersScans()}
 		for _, m := range []struct {
 			name string
 			has  bool
@@ -446,10 +423,8 @@ func TestLimitsVectors(t *testing.T) {
 
 // A request a viewer's server builds is one ReadPlay reads back as it is.
 func TestPlayRequestRoundTrip(t *testing.T) {
-	caps := Capabilities{Containers: []string{"MP4", "ts", "dash"}, HDR: []string{"dv"}, DVProfiles: []int{8, 5},
-		MaxHeight: 1600, MaxAudioChannels: 7, MaxBitrateKbps: 25999}.Coarsen()
-	in := PlayRequest{Title: "movie/tmdb/949", Delivery: DeliveryTranscode, Capabilities: &caps,
-		Transcode: &TranscodeTargets{MaxHeight: 1080, BurnSubtitle: "s4"}, MaxBitrateKbps: CoarsenBitrate(25999), AudioTrack: "a2"}
+	in := PlayRequest{Title: "movie/tmdb/949", Delivery: DeliveryTranscode,
+		Transcode: &TranscodeTargets{VideoCodec: "vvc", MaxHeight: 1080, BurnSubtitle: "s4"}, MaxBitrateKbps: 25999, AudioTrack: "a2"}
 	b, err := Marshal(in)
 	if err != nil {
 		t.Fatal(err)
@@ -465,7 +440,7 @@ func TestPlayRequestRoundTrip(t *testing.T) {
 	if !reflect.DeepEqual(got, in) || !got.TrackIDsOK() {
 		t.Errorf("%+v\n%+v", got, in)
 	}
-	if got.BitrateCap(0, 0) != 25000 {
+	if got.BitrateCap(0, 0) != 25999 || (PlayRequest{}).BitrateCap(0, 0) != 0 {
 		t.Error(got.BitrateCap(0, 0))
 	}
 }
@@ -477,7 +452,9 @@ func TestLimitsCheck(t *testing.T) {
 	}
 	for _, bad := range []func(*Limits){
 		func(l *Limits) { l.Transcodes = 3 },
-		func(l *Limits) { l.Streams = 51 },
+		func(l *Limits) { l.Streams = 1001 },
+		func(l *Limits) { l.ScanBytes = MinScanBytes - 1 },
+		func(l *Limits) { l.ScanBytes = MaxScanBytes + 1 },
 		func(l *Limits) { l.ScansPerDay = 1_000_001 },
 		func(l *Limits) { l.DownloadKbps = -1 },
 		func(l *Limits) { l.AudioTranscodes = 1 },
@@ -486,14 +463,6 @@ func TestLimitsCheck(t *testing.T) {
 		bad(&l)
 		if l.Check() == nil {
 			t.Errorf("%+v accepted", l)
-		}
-	}
-}
-
-func TestStepDown(t *testing.T) {
-	for _, c := range []struct{ v, want int }{{0, 0}, {-3, 0}, {1, 16}, {16, 16}, {23, 16}, {24, 24}, {64, 32}} {
-		if got := StepDown(c.v, BitDepthSteps); got != c.want {
-			t.Errorf("%d: %d", c.v, got)
 		}
 	}
 }

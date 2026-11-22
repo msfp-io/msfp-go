@@ -10,13 +10,13 @@ import (
 // section 1, video section 6.1): the forms of what a play answer gives,
 // as the viewer's server checks them.
 
-var (
-	playIDRe = regexp.MustCompile(`^play_[a-z2-7]{26}$`)
-	idRe     = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
-)
+var idRe = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
 
-// PlayID says whether s is a playback ID (playback section 2.3).
-func PlayID(s string) bool { return playIDRe.MatchString(s) }
+// PlayID says whether s is a playback ID (playback section 2.3): the
+// form of other opaque IDs (ID). An owning server makes it from at least
+// 128 bits of a secure random source, so that nobody guesses another
+// pairing's playback.
+func PlayID(s string) bool { return ID(s) }
 
 // ID says whether s has the form of a library's, a track's or a
 // version's ID (catalog section 2, playback section 2.3), and of a

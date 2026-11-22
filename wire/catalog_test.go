@@ -226,3 +226,37 @@ func TestLanguageValidTag(t *testing.T) {
 		}
 	}
 }
+
+// openTokens and libraryKinds of strict.json (core section 8.5, catalog
+// section 2.2).
+func TestOpenTokens(t *testing.T) {
+	var v struct {
+		OpenTokens []struct {
+			Text  string `json:"text"`
+			Valid bool   `json:"valid"`
+		} `json:"openTokens"`
+		LibraryKinds []struct {
+			Name    string `json:"name"`
+			Library string `json:"library"`
+			Kind    string `json:"kind"`
+		} `json:"libraryKinds"`
+	}
+	readVectors(t, "strict.json", &v)
+	if len(v.OpenTokens) == 0 || len(v.LibraryKinds) == 0 {
+		t.Fatal("no cases")
+	}
+	for _, c := range v.OpenTokens {
+		if Token(c.Text) != c.Valid {
+			t.Errorf("%q: %v", c.Text, !c.Valid)
+		}
+	}
+	for _, c := range v.LibraryKinds {
+		var lib map[string]any
+		if err := json.Unmarshal([]byte(c.Library), &lib); err != nil {
+			t.Fatal(err)
+		}
+		if got := LibraryKind(lib["kind"]); got != c.Kind {
+			t.Errorf("%s: %q, want %q", c.Name, got, c.Kind)
+		}
+	}
+}

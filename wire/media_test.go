@@ -143,6 +143,7 @@ type mediaCase struct {
 	ContentRange  string `json:"contentRange"`
 	ContentLength string `json:"contentLength"`
 	Sent          int64  `json:"sent"`
+	ScanBytes     int    `json:"scanBytes"`
 }
 
 type mediaVectors struct {
@@ -290,9 +291,10 @@ func TestMediaScanVectors(t *testing.T) {
 	}
 	for _, c := range v.Scans {
 		status, cr := 416, UnsatisfiedRange(c.Size)
-		if start, end, ok := ScanSpan(c.Sent, c.Range, c.Size); ok {
+		capBytes := Limits{ScanBytes: c.ScanBytes}.ScanCap()
+		if start, end, ok := ScanSpan(c.Sent, c.Range, c.Size, capBytes); ok {
 			status, cr = 206, ContentRange(start, end, c.Size)
-			if c.Sent+end-start+1 > ScanCap {
+			if c.Sent+end-start+1 > capBytes {
 				t.Errorf("%s: past the cap", c.Name)
 			}
 		}

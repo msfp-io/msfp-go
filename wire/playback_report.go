@@ -34,8 +34,9 @@ type Report struct {
 	// else now.
 	At     time.Time
 	AtSaid bool
-	// Title is the track playing, of a music queue; "" when not said.
-	Title string
+	// Title is the track playing, of a music queue, when TitleSaid.
+	Title     string
+	TitleSaid bool
 }
 
 // reportMembers are the members each call knows.
@@ -79,7 +80,7 @@ func ReadReport(call string, body []byte, now time.Time) (Report, error) {
 		}
 		r.At, r.AtSaid = time.Unix(n, 0), true
 	}
-	if r.Title, _, err = o.text("title"); err != nil {
+	if r.Title, r.TitleSaid, err = o.text("title"); err != nil {
 		return r, err
 	}
 	return r, nil
@@ -148,7 +149,7 @@ func (s PlaybackState) Apply(call string, r Report, now time.Time) (ReportOutcom
 		return unchanged, nil
 	}
 	title := r.Title
-	if title == "" {
+	if !r.TitleSaid {
 		title = s.Title
 	} else if title != s.Title && !slices.Contains(s.Queue, title) {
 		return ReportOutcome{}, badPlay("title is neither the playback's nor of its queue")

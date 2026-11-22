@@ -189,23 +189,20 @@ func checkPartial(r ByteRange, a MediaAnswer) (int64, error) {
 	return total, nil
 }
 
-// ScanCap is how many body bytes the owning server sends under one scan
-// ticket, a byte sent twice counted twice: 32 MiB (media section 4.2).
-const ScanCap = 32 << 20
-
 // ScanSpan is what the owning server sends for a fetch under a scan
-// ticket that has sent sent bytes so far, of a copy of size bytes: a
-// 206 of start to end, the range cut short at the cap when it would pass
-// it. False is a 416, with UnsatisfiedRange(size): a fetch without Range
-// or with a malformed one, one that can't be satisfied, or one once the
-// cap is spent.
-func ScanSpan(sent int64, rangeHeader string, size int64) (start, end int64, ok bool) {
+// ticket that has sent sent bytes so far, of a copy of size bytes, the
+// ticket serving capBytes in all, a byte sent twice counted twice (its
+// scanBytes: Limits.ScanCap; media section 4.2): a 206 of start to end,
+// the range cut short at the cap when it would pass it. False is a 416,
+// with UnsatisfiedRange(size): a fetch without Range or with a malformed
+// one, one that can't be satisfied, or one once the cap is spent.
+func ScanSpan(sent int64, rangeHeader string, size, capBytes int64) (start, end int64, ok bool) {
 	r, ok := ParseRange(rangeHeader)
-	if !ok || sent >= ScanCap {
+	if !ok || sent >= capBytes {
 		return 0, 0, false
 	}
 	if start, end, ok = r.Span(size); !ok {
 		return 0, 0, false
 	}
-	return start, min(end, start+(ScanCap-sent)-1), true
+	return start, min(end, start+(capBytes-sent)-1), true
 }

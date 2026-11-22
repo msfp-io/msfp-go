@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"reflect"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -111,13 +112,14 @@ func TestReadVideoTitle(t *testing.T) {
 	if got, ok := read(`{"key":"series/tmdb/1399/s1","kind":"season","library":"L",` + copies + `,"ids":{"imdb":"tt0944947"}}`); !ok || got.Copies != nil || got.IDs != nil {
 		t.Errorf("season %+v %v", got, ok)
 	}
-	// Repeated copy IDs: the first kept; at most 8.
+	// Repeated copy IDs: the first kept; at most 16; an unknown container
+	// kept as it is.
 	var list []string
-	for i := range 10 {
-		list = append(list, `{"id":"v`+string(rune('0'+i%9))+`","durationMs":1,"container":"x","size":1,"etag":"t","audioTracks":[]}`)
+	for i := range 20 {
+		list = append(list, `{"id":"v`+strconv.Itoa(i%17)+`","durationMs":1,"container":"x","size":1,"etag":"t","audioTracks":[]}`)
 	}
 	got, _ = read(`{"key":"movie/tmdb/1","kind":"movie","library":"L","copies":[` + strings.Join(list, ",") + `]}`)
-	if len(got.Copies) != MaxCopies || got.Copies[0].Container != Other {
+	if len(got.Copies) != MaxCopies || got.Copies[0].Container != "x" {
 		t.Errorf("copies %+v", got.Copies)
 	}
 }
@@ -140,32 +142,32 @@ func TestOtherID(t *testing.T) {
 		{"imdb", "tt0133093", true}, {"imdb", "tt1234567890", true}, {"imdb", "tt012345", false},
 		{"imdb", "tt12345678901", false}, {"imdb", "nm0000206", false}, {"imdb", "TT0133093", false},
 		{"tvdb", "81189", true}, {"tvdb", "9999999999", true}, {"tvdb", "081189", false}, {"tvdb", "0", false},
-		{"tvdb", "12345678901", false}, {"tmdb", "949", false},
+		{"tvdb", "12345678901", false}, {"tmdb", "949", true}, {"tmdb", "0949", false}, {"mb", "949", false},
 	} {
 		if OtherID(c.scheme, c.value) != c.ok {
 			t.Errorf("%s %s: %v", c.scheme, c.value, !c.ok)
 		}
 	}
-}
-
-func TestStepHeight(t *testing.T) {
-	for in, want := range map[int]int{0: 0, -5: 0, 1: 480, 479: 480, 480: 480, 719: 480, 720: 720, 1600: 1440, 2160: 2160, 3000: 2160, 4320: 4320, 9000: 4320} {
-		if got := StepHeight(in); got != want {
-			t.Errorf("StepHeight(%d) = %d, want %d", in, got, want)
-		}
+	if !VideoOtherID("series", "tvdb", "tmdb", "1399") || VideoOtherID("series", "tmdb", "tmdb", "1399") ||
+		VideoOtherID("movie", "local", "tmdb", "949") || !VideoOtherID("movie", "tmdb", "tvdb", "81189") {
+		t.Error("VideoOtherID")
 	}
 }
 
 // The order of copies (video section 3.7).
 func TestCopiesOrder(t *testing.T) {
 	v := func(w, h int, hdr ...string) *VideoStream { return &VideoStream{Width: w, Height: h, HDR: hdr} }
+	pq := v(3840, 2160)
+	pq.Colour = &VideoColour{Transfer: "smpte2084"}
+	dv := v(3840, 2160, "dv", "hdr10plus")
+	dv.Colour = &VideoColour{Transfer: "smpte2084"}
 	copies := []Copy{
 		{ID: "none"},
 		{ID: "hd", Video: v(1920, 1080)},
 		{ID: "wide", Video: v(3840, 1600)}, // counts as 2160
-		{ID: "uhd-dv", Video: v(3840, 2160, "hdr10", "dv")},
+		{ID: "uhd-dv", Video: dv},
 		{ID: "uhd", Video: v(3840, 2160)},
-		{ID: "uhd-hdr", Video: v(3840, 2160, "hdr10")},
+		{ID: "uhd-hdr", Video: pq},
 		{ID: "hd2", Video: v(1920, 1080)},
 	}
 	SortCopies(copies)
@@ -186,8 +188,9 @@ func TestCopiesOrder(t *testing.T) {
 func TestCopiesRoundTrip(t *testing.T) {
 	start, idx, level := int64(0), 0, 4.1
 	c := Copy{ID: "v1", DurationMs: 1000, StartMs: &start, Container: "mkv", Size: 3, ETag: "t",
-		Parts:       []CopyPart{{1, 500}, {2, 500}},
-		Video:       &VideoStream{Codec: "h264", Width: 1920, Height: 1080, Level: &level, FPS: 23.98, HDR: []string{"hdr10"}},
+		Parts: []CopyPart{{1, 500}, {2, 500}},
+		Video: &VideoStream{Codec: "h264", Width: 1920, Height: 1080, Level: &level, FPS: "24000/1001", HDR: []string{"dv"},
+			Codecs: "avc1.640028", SampleAspect: "32:27", Rotation: &idx, Colour: &VideoColour{Transfer: "smpte2084"}},
 		AudioTracks: []CopyAudio{{ID: "a0", Codec: "aac", FileIndex: &idx, Default: true}},
 		Chapters:    []CopyChapter{{StartMs: 0, Name: "One"}}, Segments: []CopySegment{{Kind: "intro", StartMs: 0, EndMs: 10}},
 	}
@@ -218,6 +221,7 @@ func TestVideoVectors(t *testing.T) {
 		Copies                      []valued
 		LocalKeys, TvdbKeys         []valued
 		Previews                    []valued
+		FontURLs, FontSets          []valued
 	}
 	readVectors(t, "video.json", &v)
 	if len(v.Titles) == 0 || len(v.Copies) == 0 || len(v.Extras) == 0 || len(v.LocalTitles) == 0 ||
@@ -236,6 +240,7 @@ func TestVideoVectors(t *testing.T) {
 		b, _ := json.Marshal(got)
 		var have, want any
 		json.Unmarshal(b, &have)
+		have = videoNoFalse(have)
 		if err := json.Unmarshal([]byte(c.Output), &want); err != nil {
 			t.Fatal(err)
 		}
@@ -264,6 +269,38 @@ func TestVideoVectors(t *testing.T) {
 				t.Errorf("%s %s: kind %s, %s", list, c.Name, k.Kind, k)
 			}
 		}
+	}
+	if len(v.FontURLs) == 0 || len(v.FontSets) == 0 {
+		t.Fatal("no fonts cases")
+	}
+	for _, c := range v.FontURLs {
+		var raw any
+		if err := json.Unmarshal([]byte(c.Text), &raw); err != nil {
+			t.Fatal(err)
+		}
+		// The stream's base: the first URL's ticket under the stream root.
+		base := v.StreamRoot
+		if list, ok := raw.([]any); ok && len(list) > 0 {
+			first, _ := list[0].(string)
+			if rest, ok := strings.CutPrefix(first, v.StreamRoot); ok {
+				ticket, _, _ := strings.Cut(rest, "/")
+				base += ticket + "/"
+			}
+		}
+		urls, err := ReadFontURLs(raw, base)
+		check("fontURLs", c, urls, err == nil)
+	}
+	for _, c := range v.FontSets {
+		var sizes []int64
+		err := json.Unmarshal([]byte(c.Text), &sizes)
+		if err == nil {
+			err = CheckFontSet(sizes)
+		}
+		var total int64
+		for _, n := range sizes {
+			total += n
+		}
+		check("fontSets", c, map[string]any{"fonts": len(sizes), "bytes": total}, err == nil)
 	}
 	for _, c := range v.Previews {
 		if c.Side == "request" {

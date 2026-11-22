@@ -8,29 +8,28 @@ import (
 // play's answer (MSFP playback section 2.3), as a viewer's server checks
 // and cleans it, and the restart of a file being read (section 2.7).
 
-// MaxVersionName is how long a version's name is kept, in code points
-// (playback section 2.3, video section 3.6).
-const MaxVersionName = 32
-
 // HLSType is the only mimeType an hls stream may name.
 const HLSType = "application/vnd.apple.mpegurl"
 
 // PlayAnswer is what a viewer's server keeps of play's answer: the
 // playback's own members, checked and cleaned (ReadPlayAnswer). The
 // content parts' members (video's subtitles and previews, music's queue)
-// are theirs to read; info, title and next aren't kept.
+// are theirs to read; unknown members (versions, info, title, next)
+// aren't kept. AudioRenditions: the playlist carries every audio track
+// as a rendition (media section 3.1); false, the owning server made none,
+// and switching tracks means a new playback.
 type PlayAnswer struct {
-	ID             string        `json:"id"`
-	Method         string        `json:"method"`
-	Stream         PlayStream    `json:"stream"`
-	Etag           string        `json:"etag"`
-	PositionMs     int64         `json:"positionMs"`
-	DurationMs     int64         `json:"durationMs,omitempty"`
-	Versions       []PlayVersion `json:"versions,omitempty"`
-	VersionID      string        `json:"versionId,omitempty"`
-	AudioTracks    []PlayTrack   `json:"audioTracks,omitempty"`
-	AudioTrack     string        `json:"audioTrack,omitempty"`
-	MaxBitrateKbps int           `json:"maxBitrateKbps,omitempty"`
+	ID              string      `json:"id"`
+	Method          string      `json:"method"`
+	Stream          PlayStream  `json:"stream"`
+	Etag            string      `json:"etag"`
+	PositionMs      int64       `json:"positionMs"`
+	DurationMs      int64       `json:"durationMs,omitempty"`
+	VersionID       string      `json:"versionId,omitempty"`
+	AudioTracks     []PlayTrack `json:"audioTracks,omitempty"`
+	AudioTrack      string      `json:"audioTrack,omitempty"`
+	AudioRenditions bool        `json:"audioRenditions,omitempty"`
+	MaxBitrateKbps  int         `json:"maxBitrateKbps,omitempty"`
 	// ReadTitleAgain: the etag isn't the catalog's. The answer wins for
 	// this playback; the title is read again from titles.
 	ReadTitleAgain bool `json:"readTitleAgain,omitempty"`
@@ -45,12 +44,6 @@ type PlayStream struct {
 	Protocol string `json:"protocol"`
 	MimeType string `json:"mimeType,omitempty"`
 	Base     string `json:"-"`
-}
-
-// PlayVersion is an entry of an answer's versions.
-type PlayVersion struct {
-	ID   string `json:"id"`
-	Name string `json:"name,omitempty"`
 }
 
 // PlayTrack is a track of an answer, of playback section 2.3's members
@@ -80,13 +73,13 @@ var methodOf = map[string]string{DeliveryFile: MethodDirect, DeliveryRemux: Meth
 // its top, a member of the wrong type; id not a playback ID; method not
 // direct, remux or transcode, or not the delivery's (direct for file);
 // stream not under root as its protocol says (StreamBase), an hls
-// mimeType other than HLSType, a file stream for a remux or a
-// transcode, an hls one for delivery file; etag not 1 to 64 characters
-// of A–Z a–z 0–9 - _; positionMs absent or out of 0 to MaxPositionMs.
-// Cleaned: durationMs out of range set to 0; versions and tracks with
-// another ID dropped, names made plain and cut; other IDs cleared; track
-// members of the wrong type or value dropped; maxBitrateKbps out of
-// range dropped.
+// mimeType other than HLSType, a file stream for a remux, a transcode or
+// the baseline (no delivery), an hls one for delivery file; etag not 1
+// to 64 characters of A–Z a–z 0–9 - _; positionMs absent or out of 0 to
+// MaxPositionMs; audioRenditions not a boolean. Cleaned: durationMs out
+// of range set to 0; tracks with another ID dropped; other IDs cleared;
+// track members of the wrong type or value dropped; audioRenditions true
+// with the file dropped; maxBitrateKbps out of range dropped.
 func ReadPlayAnswer(body []byte, delivery, root, catalogEtag string) (PlayAnswer, error) {
 	var a PlayAnswer
 	tree, err := strictTree(body, true)
@@ -129,7 +122,7 @@ func ReadPlayAnswer(body []byte, delivery, root, catalogEtag string) (PlayAnswer
 	file := a.Stream.Protocol == "file"
 	if a.Stream.Base, ok = StreamBase(a.Stream.URL, root, a.Stream.Protocol); !ok ||
 		!file && a.Stream.MimeType != "" && a.Stream.MimeType != HLSType ||
-		file && a.Method != MethodDirect || delivery == DeliveryFile && !file {
+		file && a.Method != MethodDirect || delivery == DeliveryFile && !file || delivery == "" && file {
 		return a, ErrPlayAnswer
 	}
 	pos, ok := integerOf(o["positionMs"])
@@ -146,20 +139,12 @@ func ReadPlayAnswer(body []byte, delivery, root, catalogEtag string) (PlayAnswer
 			a.DurationMs = n
 		}
 	}
-	if v, there := o["versions"]; there {
-		list, ok := v.([]any)
+	if v, there := o["audioRenditions"]; there {
+		b, ok := v.(bool)
 		if !ok {
 			return a, ErrPlayAnswer
 		}
-		for _, e := range list {
-			eo, _ := e.(map[string]any)
-			id, _ := eo["id"].(string)
-			if !ID(id) {
-				continue
-			}
-			name, _ := eo["name"].(string)
-			a.Versions = append(a.Versions, PlayVersion{ID: id, Name: CleanText(name, MaxVersionName)})
-		}
+		a.AudioRenditions = b && !file
 	}
 	if v, there := o["audioTracks"]; there {
 		list, ok := v.([]any)
@@ -210,12 +195,10 @@ func readPlayTrack(e any) (PlayTrack, bool) {
 	if l, _ := o["language"].(string); LanguageTag(l) {
 		t.Language = l
 	}
-	if n, ok := integerOf(o["channels"]); ok && n >= 0 {
+	if n, ok := integerOf(o["channels"]); ok && n >= 1 && n <= 64 {
 		t.Channels = int(n)
 	}
-	if r, _ := o["role"].(string); r == "commentary" || r == "description" {
-		t.Role = r
-	}
+	t.Role = tokenOf(o["role"])
 	t.Default, _ = o["default"].(bool)
 	t.Forced, _ = o["forced"].(bool)
 	t.HearingImpaired, _ = o["hearingImpaired"].(bool)

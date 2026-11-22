@@ -216,49 +216,37 @@ func CleanWith(episode VideoKey, keys []string) []string {
 }
 
 // Other identifiers of a film, a series or an episode (video section
-// 4.3), by scheme: IMDb's and TheTVDB's.
-var otherIDs = map[string]*regexp.Regexp{
-	"imdb": regexp.MustCompile(`^tt[0-9]{7,10}$`),
-	"tvdb": regexp.MustCompile(`^[1-9][0-9]{0,9}$`),
+// 4.3, the registry's ids schemes), by scheme: their form, and the kinds
+// that carry them.
+var otherIDs = map[string]struct {
+	re    *regexp.Regexp
+	kinds []string
+}{
+	"imdb": {regexp.MustCompile(`^tt[0-9]{7,10}$`), []string{"movie", "series", "episode"}},
+	"tvdb": {regexp.MustCompile(`^[1-9][0-9]{0,9}$`), []string{"movie", "series", "episode"}},
+	"tmdb": {regexp.MustCompile(`^[1-9][0-9]{0,9}$`), []string{"series", "episode"}},
 }
 
 // OtherID says whether value is an identifier of a known scheme, in its
-// form: what a sender sends, and a receiver keeps.
+// form (video section 4.3): what a sender sends, and a receiver keeps.
+// Whether the title's kind and key carry that scheme is VideoOtherID's.
 func OtherID(scheme, value string) bool {
-	re, known := otherIDs[scheme]
-	return known && re.MatchString(value)
+	id, known := otherIDs[scheme]
+	return known && id.re.MatchString(value)
 }
 
-// The heights a picture is stepped to (video section 5.1's coarsening of
-// maxHeight); a copy's HDR formats are HDRFormats (names.go).
+// VideoOtherID says whether a title of that kind, keyed under keyScheme,
+// carries ids' value under scheme (video section 4.3): of the scheme's
+// form, on a kind the registry gives it; tmdb only on a title keyed
+// under another scheme than tmdb.
+func VideoOtherID(kind, keyScheme, scheme, value string) bool {
+	id, known := otherIDs[scheme]
+	return known && id.re.MatchString(value) && slices.Contains(id.kinds, kind) && !(scheme == "tmdb" && keyScheme == "tmdb")
+}
+
+// Heights are the values of a transcode's maxHeight (playback section
+// 2.7).
 var Heights = []int{480, 720, 1080, 1440, 2160, 4320}
-
-// StepHeight steps a height down to the greatest of Heights not above
-// it, 480 below 480 (video section 5.1's coarsening); 0 stays 0, unknown.
-func StepHeight(h int) int {
-	if h <= 0 {
-		return 0
-	}
-	out := Heights[0]
-	for _, s := range Heights {
-		if s <= h {
-			out = s
-		}
-	}
-	return out
-}
-
-// CleanHDR keeps of formats those HDRFormats lists, each once, in its
-// order (video section 3.3); none for standard range.
-func CleanHDR(formats []string) []string {
-	var out []string
-	for _, f := range HDRFormats {
-		if slices.Contains(formats, f) {
-			out = append(out, f)
-		}
-	}
-	return out
-}
 
 // Place is an episode's place in TMDB's numbering (video section 4.1):
 // TMDB's current season and episode numbers, sent with each episode keyed
@@ -300,6 +288,14 @@ func readPlace(v any) *Place {
 // The length of an extra's name, in code points (video section 3.9).
 const MaxExtraName = 64
 
+// Theme songs and theme videos are extras like the others (video section
+// 3.9): an owning server may offer them, and the viewer's server decides
+// whether and how to present them.
+const (
+	ExtraThemeSong  = "themesong"
+	ExtraThemeVideo = "themevideo"
+)
+
 // VideoTitle is a peer's video title, as kept (video section 3.1): its
 // key, its kind, the library it gives, and the members video adds,
 // cleaned. Copies are set for films, episodes and extras, and always for
@@ -325,7 +321,8 @@ type VideoTitle struct {
 // when it isn't an object whose key, kind and library are strings, when
 // the key isn't a canonical video key of a known scheme, when its kind
 // isn't the key's, when it is a film, an episode or an extra whose
-// copies isn't an array or keeps no copy (ReadCopy), an episode keyed
+// copies isn't an array or keeps no copy (ReadCopy), an extra whose
+// extraType is missing or isn't a token, an episode keyed
 // by its TMDB episode ID without a valid place, or a local film or
 // series without a name. A member of the wrong type otherwise counts as
 // absent; a bad entry of one of its lists is skipped alone; members a
@@ -359,9 +356,8 @@ func readVideoTitle(raw json.RawMessage) (VideoTitle, error) {
 	t := VideoTitle{Key: key, Kind: kind, Library: library}
 	// Extras (section 3.9).
 	if k.Kind == "extra" {
-		t.ExtraType = "clip"
-		if s, ok := o["extraType"].(string); ok && slices.Contains(ExtraTypes, s) {
-			t.ExtraType = s
+		if t.ExtraType = tokenOf(o["extraType"]); t.ExtraType == "" {
+			return VideoTitle{}, errors.New("an extra whose extraType isn't a token")
 		}
 		if s, ok := o["name"].(string); ok {
 			t.Name = CleanText(s, MaxExtraName)
@@ -388,7 +384,7 @@ func readVideoTitle(raw json.RawMessage) (VideoTitle, error) {
 	// ids (section 4.3): films, series and episodes of a public database.
 	if ids, ok := o["ids"].(map[string]any); ok && k.Scheme != SchemeLocal && k.Kind != "season" && k.Kind != "extra" {
 		for scheme, v := range ids {
-			if value, ok := v.(string); ok && OtherID(scheme, value) {
+			if value, ok := v.(string); ok && VideoOtherID(k.Kind, k.Scheme, scheme, value) {
 				if t.IDs == nil {
 					t.IDs = map[string]string{}
 				}

@@ -3,7 +3,6 @@ package wire
 import (
 	"encoding/json"
 	"errors"
-	"slices"
 )
 
 // The lyrics call (MSFP music section 6): a signed call, with no ticket,
@@ -20,8 +19,10 @@ const (
 	MaxDisplayTitle = 256 // displayArtist takes MaxArtistNames
 )
 
-// LyricsKinds are a lyrics set's kind values; anything else is kept as
-// the first, main.
+// LyricsKinds are OpenSubsonic's kinds of a lyrics set (music section
+// 6): examples, since kind is open. A kind that isn't a token is kept as
+// main; a viewer's server never shows a set of a kind it doesn't know as
+// the main lyrics.
 var LyricsKinds = []string{"main", "translation", "pronunciation"}
 
 // LyricsRequest is a lyrics call's request: a track key, as the owning
@@ -50,7 +51,7 @@ type LyricsAnswer struct {
 }
 
 // Lyrics is a set of lyrics, one per language, kind and timing. Lang is
-// a tag (LanguageTag), "" when unknown; Kind one of LyricsKinds; Offset
+// a tag (LanguageTag), "" when unknown; Kind a token (LyricsKinds are examples); Offset
 // the milliseconds to add to every line's start.
 type Lyrics struct {
 	Lang          string       `json:"lang,omitempty"`
@@ -77,7 +78,7 @@ var ErrLyrics = errors.New("federation: lyrics outside what music section 6 allo
 
 // ReadLyrics is what the viewer's server keeps of a lyrics answer (music
 // section 6): per set, synced a boolean, else the set is skipped; lang a
-// valid tag, else absent; kind one of LyricsKinds, else main; offset an
+// valid tag, else absent; kind a token, kept known or not, else main; offset an
 // integer within ±MaxLyricsOffset, else 0; displayArtist and
 // displayTitle cleaned (CleanText), empty counting as absent. Per line,
 // value a string, cleaned and cut to MaxLyricsLine but kept when empty;
@@ -127,7 +128,7 @@ func readLyrics(raw json.RawMessage) (Lyrics, bool) {
 	if lang, _ := musicString(o["lang"]); LanguageTag(lang) {
 		s.Lang = lang
 	}
-	if kind, _ := musicString(o["kind"]); slices.Contains(LyricsKinds, kind) {
+	if kind, _ := musicString(o["kind"]); Token(kind) {
 		s.Kind = kind
 	}
 	s.Offset, _ = musicInt(o["offset"], -MaxLyricsOffset, MaxLyricsOffset)

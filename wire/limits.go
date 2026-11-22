@@ -11,7 +11,8 @@ import (
 
 // Limits is the limits object: playbacks of purpose play at once, of
 // them transcoded, a bitrate cap (0: none); downloads at once, a day,
-// their speed cap (0: none); scans a day; with music, audio playbacks
+// their speed cap (0: none); scans a day and the bytes one scan may read
+// (ScanBytes, 0: none sent, the floor); with music, audio playbacks
 // apart.
 type Limits struct {
 	Streams         int `json:"streams"`
@@ -21,17 +22,24 @@ type Limits struct {
 	DownloadsPerDay int `json:"downloadsPerDay"`
 	DownloadKbps    int `json:"downloadKbps"`
 	ScansPerDay     int `json:"scansPerDay"`
+	ScanBytes       int `json:"scanBytes,omitempty"`
 	AudioStreams    int `json:"audioStreams,omitempty"`
 	AudioTranscodes int `json:"audioTranscodes,omitempty"`
 }
 
 // The tops of the limits' members (playback section 5).
 const (
-	MaxStreams         = 50
+	MaxStreams         = 1000
 	MaxLimitKbps       = 1_000_000
-	MaxDownloads       = 50
+	MaxDownloads       = 1000
 	MaxDownloadsPerDay = 10_000
 	MaxScansPerDay     = 1_000_000
+	// MinScanBytes and MaxScanBytes bound scanBytes: 4 MiB, the floor a
+	// caller counts on when it is absent or out of range, to 1 GiB.
+	// RecommendedScanBytes is the recommended default for owners.
+	MinScanBytes         = 4 << 20
+	MaxScanBytes         = 1 << 30
+	RecommendedScanBytes = 32 << 20
 )
 
 // ErrLimits is a limits object out of its ranges.
@@ -39,27 +47,32 @@ var ErrLimits = errors.New("msfp: limits out of range")
 
 // limitTops are the members a caller reads, with their tops.
 var limitTops = []struct {
-	name string
-	top  int64
-	of   func(*Limits) *int
+	name    string
+	lo, top int64
+	of      func(*Limits) *int
 }{
-	{"streams", MaxStreams, func(l *Limits) *int { return &l.Streams }},
-	{"transcodes", MaxStreams, func(l *Limits) *int { return &l.Transcodes }},
-	{"bitrateKbps", MaxLimitKbps, func(l *Limits) *int { return &l.BitrateKbps }},
-	{"downloads", MaxDownloads, func(l *Limits) *int { return &l.Downloads }},
-	{"downloadsPerDay", MaxDownloadsPerDay, func(l *Limits) *int { return &l.DownloadsPerDay }},
-	{"downloadKbps", MaxLimitKbps, func(l *Limits) *int { return &l.DownloadKbps }},
-	{"scansPerDay", MaxScansPerDay, func(l *Limits) *int { return &l.ScansPerDay }},
-	{"audioStreams", MaxStreams, func(l *Limits) *int { return &l.AudioStreams }},
-	{"audioTranscodes", MaxStreams, func(l *Limits) *int { return &l.AudioTranscodes }},
+	{"streams", 0, MaxStreams, func(l *Limits) *int { return &l.Streams }},
+	{"transcodes", 0, MaxStreams, func(l *Limits) *int { return &l.Transcodes }},
+	{"bitrateKbps", 0, MaxLimitKbps, func(l *Limits) *int { return &l.BitrateKbps }},
+	{"downloads", 0, MaxDownloads, func(l *Limits) *int { return &l.Downloads }},
+	{"downloadsPerDay", 0, MaxDownloadsPerDay, func(l *Limits) *int { return &l.DownloadsPerDay }},
+	{"downloadKbps", 0, MaxLimitKbps, func(l *Limits) *int { return &l.DownloadKbps }},
+	{"scansPerDay", 0, MaxScansPerDay, func(l *Limits) *int { return &l.ScansPerDay }},
+	{"scanBytes", MinScanBytes, MaxScanBytes, func(l *Limits) *int { return &l.ScanBytes }},
+	{"audioStreams", 0, MaxStreams, func(l *Limits) *int { return &l.AudioStreams }},
+	{"audioTranscodes", 0, MaxStreams, func(l *Limits) *int { return &l.AudioTranscodes }},
 }
 
 // Check says whether an owning server may send l: every member within
-// its range, transcodes at most streams, audioTranscodes at most
-// audioStreams.
+// its range (ScanBytes 0, not sent, or MinScanBytes to MaxScanBytes),
+// transcodes at most streams, audioTranscodes at most audioStreams.
 func (l Limits) Check() error {
 	for _, m := range limitTops {
-		if v := *m.of(&l); v < 0 || int64(v) > m.top {
+		v := int64(*m.of(&l))
+		if m.name == "scanBytes" && v == 0 {
+			continue
+		}
+		if v < m.lo || v > m.top {
 			return ErrLimits
 		}
 	}
@@ -71,7 +84,8 @@ func (l Limits) Check() error {
 
 // KeptLimits is what a caller keeps of a peer's limits (playback section
 // 5). Downloads, DownloadsPerDay, DownloadKbps and ScansPerDay are 0 when
-// absent or out of range: no downloads, no scan access. Streams,
+// absent or out of range: no downloads, no scan access; ScanBytes is
+// MinScanBytes then. Streams,
 // Transcodes, BitrateKbps, AudioStreams and AudioTranscodes say whether
 // the peer sent them, in range.
 type KeptLimits struct {
@@ -86,6 +100,18 @@ func (k KeptLimits) OffersDownloads() bool { return k.Downloads > 0 }
 // OffersScans says whether the caller asks the peer for scans:
 // scansPerDay above 0 (playback section 8).
 func (k KeptLimits) OffersScans() bool { return k.ScansPerDay > 0 }
+
+// ScanCap is the bytes one scan ticket serves in all (playback section
+// 8, media section 4.2): ScanBytes, or MinScanBytes when it is 0 (not
+// sent) or out of range. Both sides count on it: the owning server cuts
+// its scans there, the viewer's server lets its media server read no
+// more in one scan.
+func (l Limits) ScanCap() int64 {
+	if l.ScanBytes < MinScanBytes || l.ScanBytes > MaxScanBytes {
+		return MinScanBytes
+	}
+	return int64(l.ScanBytes)
+}
 
 // ReadLimits reads the limits object of a libraries answer as a caller
 // keeps it (playback section 5): false, ignored whole, for one that isn't
@@ -113,7 +139,7 @@ func ReadLimits(raw []byte) (KeptLimits, bool) {
 		if !ok {
 			return KeptLimits{}, false
 		}
-		if n >= 0 && n <= m.top {
+		if n >= m.lo && n <= m.top {
 			*m.of(&k.Limits) = int(n)
 			has[m.name] = true
 		}
@@ -123,6 +149,9 @@ func ReadLimits(raw []byte) (KeptLimits, bool) {
 	}
 	if has["audioTranscodes"] && has["audioStreams"] && k.AudioTranscodes > k.AudioStreams {
 		k.AudioTranscodes, has["audioTranscodes"] = 0, false
+	}
+	if !has["scanBytes"] {
+		k.ScanBytes = MinScanBytes
 	}
 	k.HasStreams, k.HasTranscodes, k.HasBitrate = has["streams"], has["transcodes"], has["bitrateKbps"]
 	k.HasAudioStreams, k.HasAudioTranscodes = has["audioStreams"], has["audioTranscodes"]
@@ -208,8 +237,6 @@ const (
 	// LateReports: a download's progress and stop with at are recorded
 	// for that long after its play, even once it has ended.
 	LateReports = 30 * 24 * time.Hour
-	// ScanReadCap is how many bytes a scan's ticket serves in all.
-	ScanReadCap = 32 << 20
 	// ScanReadsAtOnce is how many reads of one scan are served at once.
 	ScanReadsAtOnce = 2
 	// DownloadPace is the span over which a download's speed is

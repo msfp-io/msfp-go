@@ -3,14 +3,12 @@ package wire
 import (
 	"encoding/json"
 	"slices"
-	"sort"
 	"strconv"
-	"strings"
 )
 
 // play's request (MSFP playback sections 2.1, 2.2 and 2.7, video section
-// 5.1): what a viewer's server sends of a device, coarsened, and how an
-// owning server reads it, refusing what step 1 of section 2.2 refuses.
+// 5.1): what a viewer's server asks to be served, and how an owning
+// server reads it, refusing what step 1 of section 2.2 refuses.
 
 // The purposes of a playback (playback section 1).
 const (
@@ -20,7 +18,7 @@ const (
 )
 
 // The deliveries a play asks for (playback section 2.7); none means the
-// owning server decides.
+// baseline.
 const (
 	DeliveryFile      = "file"
 	DeliveryRemux     = "remux"
@@ -47,22 +45,27 @@ const (
 
 // Bounds of play's numbers (playback section 2.1, video section 5.1).
 const (
-	MaxPositionMs  = 8_640_000_000 // 100 days
-	MaxKbps        = 10_000_000
-	DefaultCapKbps = 120_000 // the cap of section 2.2, step 6, without any other
-
-	maxCapHeight     = 100_000
-	maxCapChannels   = 64
-	maxCapSampleRate = 768_000
-	maxCapBitDepth   = 64
+	MaxPositionMs = 8_640_000_000 // 100 days
+	MaxKbps       = 10_000_000
 )
 
-// The steps capabilities are coarsened to (playback section 2.1); the
-// heights are video's (Heights).
-var (
-	ChannelSteps    = []int{2, 6, 8}
-	SampleRateSteps = []int{44_100, 48_000, 96_000, 192_000}
-	BitDepthSteps   = []int{16, 24, 32}
+// ChannelSteps are the values of a transcode's audioChannels (playback
+// section 2.7).
+var ChannelSteps = []int{2, 6, 8}
+
+// RemuxContainers are the containers a remux is made in (playback
+// section 2.7), as ffmpeg names them: MPEG-TS and fragmented MP4
+// segments, the two segment formats of HLS. Another token is refused
+// with 409 delivery-refused.
+var RemuxContainers = []string{"mpegts", "mp4"}
+
+// The baseline every viewer's server plays (playback section 2.7): what
+// the owning server serves without delivery, and the values of the
+// transcode targets left out. A track's baseline is BaselineAudio alone.
+const (
+	BaselineVideo    = "h264"
+	BaselineAudio    = "aac"
+	BaselineChannels = 2
 )
 
 // PlayRefusal is an owning server's refusal of a play, a progress or a
@@ -77,138 +80,12 @@ func (r *PlayRefusal) Error() string { return "msfp: " + r.Problem + ": " + r.Wh
 
 func badPlay(why string) *PlayRefusal { return &PlayRefusal{400, ProblemInvalid, why} }
 
-// Capabilities are what a viewer's device plays (playback section 2.1,
-// video section 5.1). Each list holds only values of its names list,
-// each once, sorted (DVProfiles in increasing order); 0 is not said.
-type Capabilities struct {
-	Containers         []string `json:"containers,omitempty"`
-	VideoCodecs        []string `json:"videoCodecs,omitempty"`
-	AudioCodecs        []string `json:"audioCodecs,omitempty"`
-	AudioProfiles      []string `json:"audioProfiles,omitempty"`
-	HDR                []string `json:"hdr,omitempty"`
-	DVProfiles         []int    `json:"dvProfiles,omitempty"`
-	MaxHeight          int      `json:"maxHeight,omitempty"`
-	MaxAudioChannels   int      `json:"maxAudioChannels,omitempty"`
-	MaxAudioSampleRate int      `json:"maxAudioSampleRate,omitempty"`
-	MaxAudioBitDepth   int      `json:"maxAudioBitDepth,omitempty"`
-	MaxBitrateKbps     int      `json:"maxBitrateKbps,omitempty"`
-}
-
-// Empty says whether c says nothing, as capabilities left out.
-func (c Capabilities) Empty() bool {
-	return len(c.Containers)+len(c.VideoCodecs)+len(c.AudioCodecs)+len(c.AudioProfiles)+len(c.HDR)+len(c.DVProfiles) == 0 &&
-		c.MaxHeight == 0 && c.MaxAudioChannels == 0 && c.MaxAudioSampleRate == 0 && c.MaxAudioBitDepth == 0 && c.MaxBitrateKbps == 0
-}
-
-// capLists are the string lists of capabilities, with their names lists.
-// subtitles has no values yet (video section 5.1): read for its type, kept
-// empty.
-var capLists = []struct {
-	name string
-	list []string
-	of   func(*Capabilities) *[]string
-}{
-	{"containers", Containers, func(c *Capabilities) *[]string { return &c.Containers }},
-	{"videoCodecs", VideoCodecs, func(c *Capabilities) *[]string { return &c.VideoCodecs }},
-	{"audioCodecs", AudioCodecs, func(c *Capabilities) *[]string { return &c.AudioCodecs }},
-	{"audioProfiles", AudioProfiles, func(c *Capabilities) *[]string { return &c.AudioProfiles }},
-	{"hdr", HDRFormats, func(c *Capabilities) *[]string { return &c.HDR }},
-	{"subtitles", nil, func(*Capabilities) *[]string { return new([]string) }},
-}
-
-// capNumbers are the integers of capabilities, with their tops and steps.
-var capNumbers = []struct {
-	name  string
-	top   int
-	steps []int
-	of    func(*Capabilities) *int
-}{
-	{"maxHeight", maxCapHeight, Heights, func(c *Capabilities) *int { return &c.MaxHeight }},
-	{"maxAudioChannels", maxCapChannels, ChannelSteps, func(c *Capabilities) *int { return &c.MaxAudioChannels }},
-	{"maxAudioSampleRate", maxCapSampleRate, SampleRateSteps, func(c *Capabilities) *int { return &c.MaxAudioSampleRate }},
-	{"maxAudioBitDepth", maxCapBitDepth, BitDepthSteps, func(c *Capabilities) *int { return &c.MaxAudioBitDepth }},
-	{"maxBitrateKbps", MaxKbps, nil, func(c *Capabilities) *int { return &c.MaxBitrateKbps }},
-}
-
-// listed keeps of entries those list holds, each once, sorted.
-func listed(entries, list []string) []string {
-	var out []string
-	for _, e := range entries {
-		if slices.Contains(list, e) && !slices.Contains(out, e) {
-			out = append(out, e)
-		}
-	}
-	sort.Strings(out)
-	return out
-}
-
-// dvListed keeps of profiles those DVProfiles holds, each once, in
-// increasing order.
-func dvListed(profiles []int) []int {
-	var out []int
-	for _, p := range profiles {
-		if slices.Contains(DVProfiles, p) && !slices.Contains(out, p) {
-			out = append(out, p)
-		}
-	}
-	slices.Sort(out)
-	return out
-}
-
-// StepDown is v stepped down to the greatest of steps not above it, the
-// first below the first; 0 (or less) is not said, and stays 0, never
-// stepped up.
-func StepDown(v int, steps []int) int {
-	if v <= 0 {
-		return 0
-	}
-	out := steps[0]
-	for _, s := range steps {
-		if s <= v {
-			out = s
-		}
-	}
-	return out
-}
-
-// Coarsen is what a viewer's server sends of its device's capabilities
-// (playback section 2.1, video section 5.1): the lists lowercased, only
-// their listed values, each once, sorted; maxHeight, maxAudioChannels,
-// maxAudioSampleRate and maxAudioBitDepth stepped down; maxBitrateKbps
-// rounded down to a whole 1,000, below 1,000 left out; 0 left out.
-func (c Capabilities) Coarsen() Capabilities {
-	var out Capabilities
-	for _, l := range capLists {
-		var lower []string
-		for _, e := range *l.of(&c) {
-			lower = append(lower, strings.ToLower(e))
-		}
-		*l.of(&out) = listed(lower, l.list)
-	}
-	out.DVProfiles = dvListed(c.DVProfiles)
-	for _, n := range capNumbers {
-		if n.steps != nil {
-			*n.of(&out) = StepDown(*n.of(&c), n.steps)
-		}
-	}
-	if c.MaxBitrateKbps >= 1000 {
-		out.MaxBitrateKbps = min(c.MaxBitrateKbps, MaxKbps) / 1000 * 1000
-	}
-	return out
-}
-
-// CoarsenBitrate is the request's maxBitrateKbps as a viewer's server
-// sends it (playback section 2.1): rounded down to a whole 1,000 from
-// 1,000 up, kept as it is below; never above MaxKbps, never below 0.
-func CoarsenBitrate(kbps int) int {
-	if kbps >= 1000 {
-		return min(kbps, MaxKbps) / 1000 * 1000
-	}
-	return max(kbps, 0)
-}
+func refusedDelivery(why string) *PlayRefusal { return &PlayRefusal{409, ProblemDeliveryRefused, why} }
 
 // TranscodeTargets are a play's transcode object (playback section 2.7,
-// video section 5.1): each left out is the owning server's choice.
+// video section 5.1). The codecs are tokens, as ffmpeg names its
+// encoders' codecs; each target left out takes the baseline's value
+// (WithBaseline).
 type TranscodeTargets struct {
 	VideoCodec     string `json:"videoCodec,omitempty"`
 	MaxHeight      int    `json:"maxHeight,omitempty"`
@@ -222,9 +99,33 @@ type TranscodeTargets struct {
 // maxHeight, maxBitrateKbps or both.
 func (t TranscodeTargets) Sized() bool { return t.MaxHeight != 0 || t.MaxBitrateKbps != 0 }
 
+// WithBaseline is t with the baseline's values for the targets left out
+// (playback section 2.7): videoCodec h264, audioCodec aac, audioChannels
+// 2; maxHeight left out is the copy's own height, maxBitrateKbps no cap
+// but step 6's. For a title without a picture (a track) the video
+// targets are dropped, an unknown codec too.
+func (t TranscodeTargets) WithBaseline(picture bool) TranscodeTargets {
+	if !picture {
+		t.VideoCodec, t.MaxHeight, t.BurnSubtitle = "", 0, ""
+	} else if t.VideoCodec == "" {
+		t.VideoCodec = BaselineVideo
+	}
+	if t.AudioCodec == "" {
+		t.AudioCodec = BaselineAudio
+	}
+	if t.AudioChannels == 0 {
+		t.AudioChannels = BaselineChannels
+	}
+	return t
+}
+
 // PlayRequest is play's request, as ReadPlay reads it and as a viewer's
 // server sends it (Marshal leaves out what is empty). Purpose is
-// PurposePlay when the request says none. Music's queue is music's.
+// PurposePlay when the request says none. Delivery and Container are
+// tokens, of their lists or not: one not of its list is refused at step
+// 7 (RefuseDelivery). The request says nothing of the viewer's device:
+// without Delivery, the owning server serves the baseline. Music's queue
+// is music's.
 type PlayRequest struct {
 	Title           string            `json:"title"`
 	Purpose         string            `json:"purpose,omitempty"`
@@ -232,7 +133,6 @@ type PlayRequest struct {
 	Container       string            `json:"container,omitempty"`
 	Transcode       *TranscodeTargets `json:"transcode,omitempty"`
 	AudioRenditions bool              `json:"audioRenditions,omitempty"`
-	Capabilities    *Capabilities     `json:"capabilities,omitempty"`
 	StartPositionMs int64             `json:"startPositionMs,omitempty"`
 	MaxBitrateKbps  int               `json:"maxBitrateKbps,omitempty"`
 	AudioLanguage   string            `json:"audioLanguage,omitempty"`
@@ -243,7 +143,8 @@ type PlayRequest struct {
 	SubtitleTrack    string `json:"subtitleTrack,omitempty"`
 
 	// emptyTrack: the request had an audioTrack, a subtitleTrack or a
-	// burnSubtitle that was "", which reads as absent but is malformed.
+	// burnSubtitle that was "" (or a burnSubtitle that wasn't a string),
+	// which reads as absent but is malformed.
 	emptyTrack bool
 }
 
@@ -269,10 +170,21 @@ func (r PlayRequest) TrackIDsOK() bool {
 	return true
 }
 
+// KnownDelivery says whether d is a delivery of playback section 2.7's
+// list: file, remux or transcode.
+func KnownDelivery(d string) bool {
+	return d == DeliveryFile || d == DeliveryRemux || d == DeliveryTranscode
+}
+
 // PurposeAllows is playback section 2.7's table of purpose and delivery:
 // a play takes any delivery or none; a download file, or a transcode with
-// a size (TranscodeTargets.Sized); a scan file only.
+// a size (TranscodeTargets.Sized); a scan file only. A delivery that is a
+// token not of the list is allowed here, whatever the purpose: it is
+// refused at step 7, 409 delivery-refused.
 func PurposeAllows(purpose, delivery string, t *TranscodeTargets) bool {
+	if delivery != "" && !KnownDelivery(delivery) {
+		return true
+	}
 	switch purpose {
 	case PurposePlay, "":
 		return true
@@ -285,15 +197,12 @@ func PurposeAllows(purpose, delivery string, t *TranscodeTargets) bool {
 }
 
 // BitrateCap is the cap of playback section 2.2, step 6, for a play: the
-// lowest non-zero of the request's maxBitrateKbps, its capabilities' and
-// its transcode's, the owning server's own cap and the pairing's
-// bitrateKbps; DefaultCapKbps without any. A download's and a scan's
-// aren't capped so (sections 7 and 8).
+// lowest non-zero of the request's maxBitrateKbps and its transcode's,
+// the owning server's own cap and the pairing's bitrateKbps; 0, no cap,
+// without any. A download's and a scan's aren't capped so (sections 7
+// and 8).
 func (r PlayRequest) BitrateCap(own, pairing int) int {
 	caps := []int{r.MaxBitrateKbps, own, pairing}
-	if r.Capabilities != nil {
-		caps = append(caps, r.Capabilities.MaxBitrateKbps)
-	}
 	if r.Transcode != nil {
 		caps = append(caps, r.Transcode.MaxBitrateKbps)
 	}
@@ -303,27 +212,26 @@ func (r PlayRequest) BitrateCap(own, pairing int) int {
 			out = c
 		}
 	}
-	if out == 0 {
-		return DefaultCapKbps
-	}
 	return out
 }
 
 // playMembers are the members of play's request this part and video
 // know: null in any of them, anywhere, refuses the request (core section
 // 2.3).
-var playMembers = []string{"title", "purpose", "delivery", "container", "transcode", "audioRenditions", "capabilities",
+var playMembers = []string{"title", "purpose", "delivery", "container", "transcode", "audioRenditions",
 	"startPositionMs", "maxBitrateKbps", "audioLanguage", "audioTrack", "versionId", "subtitleLanguage", "subtitleTrack"}
 
 // ReadPlay reads play's request as step 1 of playback section 2.2 checks
 // it: an I-JSON object; title a key playable says play takes (nil:
-// ParseKey's); purpose, delivery and container of their lists, container
-// with delivery remux only, and then required; a transcode object with
-// delivery transcode only, each target of its values; numbers in range;
-// languages valid tags (LanguageTag); capabilities as section 2.1 reads
-// them, unknown entries ignored; purpose and delivery together as
-// PurposeAllows says. A refusal is a *PlayRefusal (400). Track IDs are
-// checked later, at step 4 (TrackIDsOK).
+// ParseKey's); purpose of its list; delivery and container tokens (core
+// section 8.5), container with delivery remux only, and then required; a
+// transcode object with delivery transcode only, its codecs tokens and
+// its numbers of their values; numbers in range; languages valid tags
+// (LanguageTag); purpose and delivery together as PurposeAllows says. A
+// refusal is a *PlayRefusal (400). Unknown members are ignored,
+// capabilities among them. Track IDs are checked later, at step 4
+// (TrackIDsOK); a delivery, a container or a codec the owning server
+// doesn't make, at step 7 (RefuseDelivery).
 func ReadPlay(body []byte, playable func(title string) bool) (PlayRequest, error) {
 	o, err := requestObject(body, playMembers)
 	if err != nil {
@@ -351,8 +259,8 @@ func ReadPlay(body []byte, playable func(title string) bool) (PlayRequest, error
 	}
 	if r.Delivery, have, err = o.text("delivery"); err != nil {
 		return r, err
-	} else if have && !slices.Contains([]string{DeliveryFile, DeliveryRemux, DeliveryTranscode}, r.Delivery) {
-		return r, badPlay("delivery isn't file, remux or transcode")
+	} else if have && !Token(r.Delivery) {
+		return r, badPlay("delivery isn't a token")
 	}
 	if r.Container, have, err = o.text("container"); err != nil {
 		return r, err
@@ -360,8 +268,8 @@ func ReadPlay(body []byte, playable func(title string) bool) (PlayRequest, error
 	switch {
 	case have && r.Delivery != DeliveryRemux:
 		return r, badPlay("container without delivery remux")
-	case have && !IsContainer(r.Container):
-		return r, badPlay("container isn't one of containers")
+	case have && !Token(r.Container):
+		return r, badPlay("container isn't a token")
 	case !have && r.Delivery == DeliveryRemux:
 		return r, badPlay("delivery remux without container")
 	}
@@ -377,15 +285,6 @@ func ReadPlay(body []byte, playable func(title string) bool) (PlayRequest, error
 	}
 	if r.AudioRenditions, _, err = o.boolean("audioRenditions"); err != nil {
 		return r, err
-	}
-	if v, ok := o["capabilities"]; ok {
-		c, err := readCapabilities(v)
-		if err != nil {
-			return r, err
-		}
-		if !c.Empty() {
-			r.Capabilities = &c
-		}
 	}
 	if r.StartPositionMs, err = o.integer("startPositionMs", MaxPositionMs); err != nil {
 		return r, err
@@ -424,73 +323,11 @@ func ReadPlay(body []byte, playable func(title string) bool) (PlayRequest, error
 	return r, nil
 }
 
-// readCapabilities reads capabilities as an owning server does (playback
-// section 2.1, video section 5.1): an array of the wrong type or with an
-// entry of the wrong type, or a number out of range, refuses; an unknown
-// entry, in another case included, is ignored; dv counts only with
-// dvProfiles.
-func readCapabilities(v any) (Capabilities, error) {
-	var c Capabilities
-	o, ok := v.(map[string]any)
-	if !ok {
-		return c, badPlay("capabilities isn't an object")
-	}
-	for _, l := range capLists {
-		raw, ok := o[l.name]
-		if !ok {
-			continue
-		}
-		arr, ok := raw.([]any)
-		if !ok {
-			return c, badPlay("capabilities." + l.name + " isn't an array")
-		}
-		var entries []string
-		for _, e := range arr {
-			s, ok := e.(string)
-			if !ok {
-				return c, badPlay("capabilities." + l.name + " has an entry that isn't a string")
-			}
-			entries = append(entries, s)
-		}
-		*l.of(&c) = listed(entries, l.list)
-	}
-	if raw, ok := o["dvProfiles"]; ok {
-		arr, ok := raw.([]any)
-		if !ok {
-			return c, badPlay("capabilities.dvProfiles isn't an array")
-		}
-		var profiles []int
-		for _, e := range arr {
-			n, ok := integerOf(e)
-			if !ok {
-				return c, badPlay("capabilities.dvProfiles has an entry that isn't an integer")
-			}
-			if n >= 0 && n <= 10 {
-				profiles = append(profiles, int(n))
-			}
-		}
-		c.DVProfiles = dvListed(profiles)
-	}
-	co := members(o)
-	for _, n := range capNumbers {
-		v, err := co.integer(n.name, int64(n.top))
-		if err != nil {
-			return c, badPlay("capabilities." + n.name + " isn't an integer from 0 to " + strconv.Itoa(n.top))
-		}
-		*n.of(&c) = int(v)
-	}
-	if len(c.DVProfiles) == 0 {
-		c.HDR = slices.DeleteFunc(c.HDR, func(s string) bool { return s == "dv" })
-		if len(c.HDR) == 0 {
-			c.HDR = nil
-		}
-	}
-	return c, nil
-}
-
 // readTargets reads a transcode object (playback section 2.7, video
-// section 5.1): each target present of its values, else refused; empty
-// says burnSubtitle was "" (malformed, refused at step 4 with the track
+// section 5.1): the codecs tokens, the numbers of their values, else
+// refused (400); a codec the owning server doesn't encode is refused at
+// step 7 (RefuseDelivery). empty
+// says burnSubtitle was "" or not a string (malformed, refused at step 4 with the track
 // IDs).
 func readTargets(v any) (t TranscodeTargets, empty bool, err error) {
 	m, ok := v.(map[string]any)
@@ -500,15 +337,14 @@ func readTargets(v any) (t TranscodeTargets, empty bool, err error) {
 	o := members(m)
 	for _, s := range []struct {
 		name string
-		list []string
 		dst  *string
-	}{{"videoCodec", VideoCodecs, &t.VideoCodec}, {"audioCodec", AudioCodecs, &t.AudioCodec}} {
+	}{{"videoCodec", &t.VideoCodec}, {"audioCodec", &t.AudioCodec}} {
 		val, have, err := o.text(s.name)
 		if err != nil {
 			return t, false, err
 		}
-		if have && !slices.Contains(s.list, val) {
-			return t, false, badPlay("transcode." + s.name + " isn't one of its list")
+		if have && !Token(val) {
+			return t, false, badPlay("transcode." + s.name + " isn't a token")
 		}
 		*s.dst = val
 	}
@@ -531,12 +367,12 @@ func readTargets(v any) (t TranscodeTargets, empty bool, err error) {
 		}
 		*n.dst = int(v)
 	}
-	val, have, err := o.text("burnSubtitle")
-	if err != nil {
-		return t, false, err
-	}
+	// A burnSubtitle of another form, a string or not, is refused at
+	// step 4, with the track IDs.
+	raw, have := o["burnSubtitle"]
+	val, isString := raw.(string)
 	t.BurnSubtitle = val
-	return t, have && val == "", nil
+	return t, have && (!isString || val == ""), nil
 }
 
 // members is a JSON object as strictTree reads it, its numbers
