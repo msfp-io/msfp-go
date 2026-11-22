@@ -634,7 +634,7 @@ func (e *Engine) endPlaybacksNotOffered(ctx context.Context) {
 	})
 	e.endPlaybacks(func(pb *playback) bool {
 		o, ok := offers[pb.peer]
-		return ok && pb.library != "" && !slices.Contains(o, pb.library)
+		return ok && !offeredIn(pb.libraries, o)
 	}, EndNotOffered)
 }
 
@@ -2140,23 +2140,24 @@ func (e *Engine) groupMember(r *http.Request, key []byte) bool {
 	return found
 }
 
-// poolRoom says whether one of a link's pools has a stream free now
-// (room), and whether one allows any stream at all (any).
-func (e *Engine) poolRoom(p *PeerRecord, audio bool) (room, any bool) {
+// poolRoom says whether one of a link's pools has room now for a
+// playback of purpose (room), and whether one allows any at all (open).
+func (e *Engine) poolRoom(p *PeerRecord, purpose string, audio bool) (room, open bool) {
 	for _, pool := range pools(p) {
-		used, most := e.inUse(poolKey(p, pool), pool.Limits, audio)
-		any = any || most > 0
-		room = room || used < most
+		r, o := e.roomIn(poolKey(p, pool), pool.Limits, purpose, audio)
+		room, open = room || r, open || o
 	}
-	return room, any
+	return room, open
 }
 
-// admitPools admits a stream in the first of a link's pools with room
-// (groups section 9): each playback counts against exactly one.
-func (e *Engine) admitPools(p *PeerRecord, audio bool, method string) (*countSlot, error) {
+// admitPools admits a playback of purpose in the first of a link's pools
+// with room (groups section 9, playback section 5): each playback counts
+// against exactly one, and a day's counts are kept in the pool it
+// counted against.
+func (e *Engine) admitPools(p *PeerRecord, purpose string, audio bool, method string) (*countSlot, error) {
 	err := error(ErrStreamLimitReached)
 	for _, pool := range pools(p) {
-		s, e2 := e.admitStream(poolKey(p, pool), pool.Limits, audio, method)
+		s, e2 := e.admitIn(poolKey(p, pool), pool.Limits, purpose, audio, method)
 		if e2 == nil {
 			return s, nil
 		}
@@ -2166,14 +2167,21 @@ func (e *Engine) admitPools(p *PeerRecord, audio bool, method string) (*countSlo
 }
 
 // generous is the most generous of a link's pools (what libraries tells
-// it, groups section 9): the most streams and transcodes, and the highest
-// bitrate cap (none, 0, above all).
+// it, groups section 9): the most streams, transcodes, downloads and
+// scans, and the highest caps (none, 0, above all; a daily download cap
+// only among pools that allow downloads).
 func generous(p *PeerRecord) Limits {
 	ps := pools(p)
 	if len(ps) == 0 {
 		return Limits{}
 	}
 	out := ps[0].Limits
+	most := func(a, b int) int {
+		if a == 0 || b == 0 {
+			return 0
+		}
+		return max(a, b)
+	}
 	for _, pool := range ps[1:] {
 		l := pool.Limits
 		out.Streams = max(out.Streams, l.Streams)
@@ -2181,9 +2189,17 @@ func generous(p *PeerRecord) Limits {
 		out.AudioStreams = max(out.AudioStreams, l.AudioStreams)
 		out.AudioTranscodes = max(out.AudioTranscodes, l.AudioTranscodes)
 		out.Audio = out.Audio || l.Audio
-		if out.BitrateKbps != 0 && (l.BitrateKbps == 0 || l.BitrateKbps > out.BitrateKbps) {
-			out.BitrateKbps = l.BitrateKbps
+		out.BitrateKbps = most(out.BitrateKbps, l.BitrateKbps)
+		out.DownloadKbps = most(out.DownloadKbps, l.DownloadKbps)
+		switch {
+		case l.Downloads == 0:
+		case out.Downloads == 0:
+			out.DownloadsPerDay = l.DownloadsPerDay
+		default:
+			out.DownloadsPerDay = most(out.DownloadsPerDay, l.DownloadsPerDay)
 		}
+		out.Downloads = max(out.Downloads, l.Downloads)
+		out.ScansPerDay = max(out.ScansPerDay, l.ScansPerDay)
 	}
 	return out
 }

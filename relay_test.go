@@ -11,10 +11,12 @@ import (
 	"image/png"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/msfp-io/msfp-go"
+	"github.com/msfp-io/msfp-go/wire"
 )
 
 // The relay against a hostile peer: everything a peer sends is checked
@@ -69,9 +71,9 @@ func TestRelayHostilePeer(t *testing.T) {
 	ctx := context.Background()
 	h := filmHost()
 	sheet := jpegOf(t, 20, 10)
-	h.info["movie/tmdb/949#0"] = msfp.CopyInfo{AudioTracks: []msfp.Track{{ID: "a0", Label: "English", Language: "en"}},
-		SubtitleTracks: []msfp.Track{{ID: "s0", Label: "Français", Language: "fr"}, {ID: "s1", Label: "PGS", Pictures: true}},
-		Trickplay:      &msfp.Trickplay{TileWidth: 10, TileHeight: 10, Columns: 2, Rows: 1, IntervalMs: 10_000, TileCount: 3}}
+	h.copyOf("movie/tmdb/949", 0).Previews = true
+	h.info["movie/tmdb/949#0"] = msfp.CopyInfo{
+		Trickplay: &msfp.Trickplay{TileWidth: 10, TileHeight: 10, Columns: 2, Rows: 1, IntervalMs: 10_000, TileCount: 3}}
 	h.files["pictures/s1/0"] = nil
 	h.files["trickplay/0"], h.files["trickplay/1"] = sheet, sheet
 	s := newHostile(t, h)
@@ -118,7 +120,7 @@ func TestRelayHostilePeer(t *testing.T) {
 	// empty PGS part relayed empty.
 	s.body("subtitles/s0/0", "WEBVTT\nSTYLE\n::cue{}\n\n1\n00:00:01.000 --> 00:00:02.000 align:start\n<c.x>&lt;b&gt;hi</c>\n")
 	if out, err := fetch(msfp.MediaPath{Kind: msfp.MediaSubtitles, Track: "s0"}, ""); err != nil ||
-		string(out.body) != "WEBVTT\n\n00:00:01.000 --> 00:00:02.000\nhi\n" {
+		string(out.body) != "WEBVTT\n\n00:00:01.000 --> 00:00:02.000 align:start\nhi\n" {
 		t.Errorf("WebVTT: %v %q", err, out.body)
 	}
 	if out, err := fetch(msfp.MediaPath{Kind: msfp.MediaPictures, Track: "s1"}, ""); err != nil || out.status != 200 || len(out.body) != 0 ||
@@ -230,10 +232,9 @@ func TestHostilePlayAnswers(t *testing.T) {
 		s.a.eng.StopPlayback(v.ID, msfp.EndOperator)
 	}
 	edit(func(m map[string]any) {
-		m["audioTracks"] = []any{map[string]any{"id": "a0", "label": "Eng\u202elish\u0007"}, map[string]any{"id": "a01", "label": "x"},
-			map[string]any{"id": "a2", "label": ""}, map[string]any{"id": "a3", "label": "y", "role": "evil"}}
+		m["audioTracks"] = []any{map[string]any{"id": "a0", "language": "e\u202en"}, map[string]any{"id": "../a1"},
+			map[string]any{"id": "a2", "channels": "2"}, map[string]any{"id": "a3", "role": "evil"}}
 		m["versions"] = []any{map[string]any{"id": "../x", "name": "x"}, map[string]any{"id": "v1", "name": "<b>HD</b>"}}
-		m["segments"] = []any{map[string]any{"kind": "intro", "startMs": 0, "endMs": 1000}, map[string]any{"kind": "ad", "startMs": 0, "endMs": 1}}
 		m["durationMs"] = 9_000_000_000
 		m["title"] = map[string]any{"name": "whatever"}
 		m["trickplay"] = map[string]any{"tileWidth": 5000, "tileHeight": 10, "columns": 1, "rows": 1, "intervalMs": 1000,
@@ -243,8 +244,8 @@ func TestHostilePlayAnswers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(pb.AudioTracks) != 2 || pb.AudioTracks[0].Label != "English" || pb.AudioTracks[1].Role != "" ||
-		len(pb.Versions) != 1 || pb.Versions[0].Name != "<b>HD</b>" || len(pb.Segments) != 1 || pb.DurationMs != 0 || pb.Trickplay != nil {
+	if len(pb.AudioTracks) != 3 || pb.AudioTracks[0].Language != "" || pb.AudioTracks[1].Channels != 0 || pb.AudioTracks[2].Role != "" ||
+		len(pb.Versions) != 1 || pb.Versions[0].Name != "<b>HD</b>" || pb.DurationMs != 0 || pb.Trickplay != nil {
 		t.Errorf("cleaned: %+v", pb)
 	}
 }
@@ -276,6 +277,13 @@ func TestMediaVectorsThroughRelay(t *testing.T) {
 	}
 	h := filmHost()
 	h.files["pictures/s1/0"] = nil
+	// The playback of the hls vectors: audio tracks a1 to a32 (32 at
+	// most in a copy).
+	c := h.copyOf("movie/tmdb/949", 0)
+	c.AudioTracks = nil
+	for n := 1; n <= 32; n++ {
+		c.AudioTracks = append(c.AudioTracks, wire.CopyAudio{ID: "a" + strconv.Itoa(n), Codec: "aac"})
+	}
 	s := newHostile(t, h)
 	pb := s.play(t)
 	fetch := func(name string, body []byte, p msfp.MediaPath) (sink, error) {

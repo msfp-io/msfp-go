@@ -113,6 +113,8 @@ var calls = map[string]func(*Engine, *request) response{
 	callPlay:      (*Engine).play,
 	callProgress:  (*Engine).progress,
 	callStop:      (*Engine).stop,
+	callPreviews:  (*Engine).previews,
+	callLyrics:    (*Engine).lyrics,
 
 	callGroupSync: (*Engine).groupSync,
 	callGroupPush: (*Engine).groupPush,

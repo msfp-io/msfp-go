@@ -479,7 +479,7 @@ func TestTitleCopies(t *testing.T) {
 	if !slices.Equal(v.AudioLanguages(), []string{"fr", "de", "en"}) || !slices.Equal(v.SubtitleLanguages(), []string{"fr"}) {
 		t.Errorf("languages: %v %v", v.AudioLanguages(), v.SubtitleLanguages())
 	}
-	if c := v.Copies[1]; len(c.Chapters) != 2 || c.Size != 1000 || c.ETag != "e0" || c.Name != "Copy en" {
+	if c := v.Copies[1]; len(c.Chapters) != 2 || c.Size != 20 || c.ETag != "e0" || c.Name != "Copy en" {
 		t.Errorf("the other copy: %+v", c)
 	}
 	for _, c := range v.Copies {

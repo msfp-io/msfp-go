@@ -23,62 +23,65 @@ type fakeHost struct {
 	mu     sync.Mutex
 	libs   []msfp.Library
 	titles map[string]msfp.Title
-	copies map[string][]msfp.Copy
-	info   map[string]msfp.CopyInfo
+	// info is what Describe gives, by copy handle.
+	info map[string]msfp.CopyInfo
 	// method and protocol of Start; startErr fails it; noAdmit starts
 	// without Admit; started and stopped note what happened.
 	method, protocol string
 	startErr         error
 	noAdmit          bool
-	segments         []msfp.Segment
+	queue            bool // Start prepares every queued track
 	started          []msfp.StartRequest
 	stopped          map[string]msfp.EndReason
 	progress         []int64
+	reports          []msfp.Report
 	handles          int
 	// files are what Serve answers, by name ("master.m3u8", "file",
 	// "subtitles/s0/0"…); serve, when set, answers instead.
 	files  map[string][]byte
 	serve  func(ctx context.Context, path msfp.MediaPath, rng *msfp.Range, out msfp.ResponseSink) error
 	served []msfp.MediaPath
-	// images are what Image gives, by title key.
+	// images are what Image gives, by title key; lyrics what Lyrics
+	// gives, by copy handle.
 	images map[string][]byte
+	lyrics map[string][]wire.Lyrics
 	// hold makes Start wait until it is closed, so that plays cross;
 	// entered, when set, is told each Start that waits.
 	hold, entered chan struct{}
 }
 
 func newFakeHost() *fakeHost {
-	return &fakeHost{titles: map[string]msfp.Title{}, copies: map[string][]msfp.Copy{}, info: map[string]msfp.CopyInfo{},
+	return &fakeHost{titles: map[string]msfp.Title{}, info: map[string]msfp.CopyInfo{},
 		stopped: map[string]msfp.EndReason{}, files: map[string][]byte{}, method: "direct", protocol: "hls"}
 }
 
 // film adds a film to library lib, with one copy per audio language
-// given (handle "<key>#<n>"), each with an audio track and a French
-// subtitle track.
+// given (handle "<key>#<n>", size 20, the size of files["file"]), each
+// with an audio track, a French text subtitle track and a French PGS
+// one.
 func (h *fakeHost) film(lib, key string, audio ...string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	t := &msfp.VideoTitle{TitleCommon: msfp.TitleCommon{Key: key, Kind: "movie", Libraries: []string{lib}}}
 	h.titles[key] = t
-	h.copies[key] = nil
 	for i, a := range audio {
 		handle := key + "#" + strconv.Itoa(i)
 		t.Copies = append(t.Copies, wire.Copy{ID: handle, Name: "Copy " + a, DurationMs: 5_400_000, Container: "mkv",
-			Size: int64(1000 + i), ETag: "e" + strconv.Itoa(i),
+			Size: 20, ETag: "e" + strconv.Itoa(i),
 			AudioTracks:    []wire.CopyAudio{{ID: "a0", Language: a, Channels: 2, Default: true, Codec: "aac"}},
 			SubtitleTracks: []wire.CopySubtitle{{ID: "s0", Language: "fr", Format: "subrip"}, {ID: "s1", Language: "fr", Format: "pgs"}}})
-		h.copies[key] = append(h.copies[key], msfp.Copy{Handle: handle, Name: "Copy " + a, Audio: []string{a}, Library: lib})
-		h.info[handle] = msfp.CopyInfo{DurationMs: 5_400_000,
-			AudioTracks:    []msfp.Track{{ID: "a0", Label: "Audio " + a, Language: a, Channels: 2, Default: true}},
-			SubtitleTracks: []msfp.Track{{ID: "s0", Label: "Français", Language: "fr"}, {ID: "s1", Label: "PGS", Language: "fr", Pictures: true}}}
 	}
+}
+
+// copyOf is a pointer to copy n of a video title, to change it.
+func (h *fakeHost) copyOf(key string, n int) *wire.Copy {
+	return &h.titles[key].(*msfp.VideoTitle).Copies[n]
 }
 
 func (h *fakeHost) remove(key string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	delete(h.titles, key)
-	delete(h.copies, key)
 }
 
 func (h *fakeHost) Libraries(context.Context) ([]msfp.Library, error) {
@@ -113,23 +116,20 @@ func copyTitle(t msfp.Title) msfp.Title {
 	return c
 }
 
-func (h *fakeHost) Copies(_ context.Context, key string, libs []string) ([]msfp.Copy, error) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	var out []msfp.Copy
-	for _, c := range h.copies[key] {
-		if slices.Contains(libs, c.Library) {
-			out = append(out, c)
-		}
-	}
-	return out, nil
-}
-
 func (h *fakeHost) Image(_ context.Context, key string) ([]byte, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if img, ok := h.images[key]; ok {
 		return img, nil
+	}
+	return nil, msfp.ErrNotFound
+}
+
+func (h *fakeHost) Lyrics(_ context.Context, copy string) ([]wire.Lyrics, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if l, ok := h.lyrics[copy]; ok {
+		return l, nil
 	}
 	return nil, msfp.ErrNotFound
 }
@@ -142,7 +142,7 @@ func (h *fakeHost) Describe(_ context.Context, copy string) (msfp.CopyInfo, erro
 
 func (h *fakeHost) Start(_ context.Context, req msfp.StartRequest) (msfp.Started, error) {
 	h.mu.Lock()
-	method, protocol, err, noAdmit, hold, entered, segments := h.method, h.protocol, h.startErr, h.noAdmit, h.hold, h.entered, h.segments
+	method, protocol, err, noAdmit, hold, entered, queue := h.method, h.protocol, h.startErr, h.noAdmit, h.hold, h.entered, h.queue
 	h.mu.Unlock()
 	if hold != nil {
 		if entered != nil {
@@ -153,6 +153,15 @@ func (h *fakeHost) Start(_ context.Context, req msfp.StartRequest) (msfp.Started
 	if err != nil {
 		return msfp.Started{}, err
 	}
+	// A delivery asked is served as asked.
+	switch req.Delivery {
+	case msfp.DeliveryFile:
+		method, protocol = "direct", "file"
+	case msfp.DeliveryRemux:
+		method, protocol = "remux", "hls"
+	case msfp.DeliveryTranscode:
+		method, protocol = "transcode", "hls"
+	}
 	if !noAdmit {
 		if _, err := req.Admit(method); err != nil {
 			return msfp.Started{}, err
@@ -162,13 +171,22 @@ func (h *fakeHost) Start(_ context.Context, req msfp.StartRequest) (msfp.Started
 	defer h.mu.Unlock()
 	h.handles++
 	h.started = append(h.started, req)
-	return msfp.Started{Handle: "h" + strconv.Itoa(h.handles), Method: method, Protocol: protocol, MimeType: "video/mp4",
-		PositionMs: req.StartMs, Info: &msfp.PlaybackInfo{Container: "mp4"}, Segments: segments}, nil
+	st := msfp.Started{Handle: "h" + strconv.Itoa(h.handles), Method: method, Protocol: protocol, MimeType: "video/mp4",
+		PositionMs: req.StartMs, Info: &msfp.PlaybackInfo{Container: "mp4"}}
+	if queue {
+		for _, q := range req.Queue {
+			st.Queue = append(st.Queue, msfp.StartedEntry{Place: q.Place, Method: method, Protocol: protocol, MimeType: "audio/flac"})
+		}
+	}
+	return st, nil
 }
 
-func (h *fakeHost) Progress(_ context.Context, _ string, positionMs int64, _ bool) error {
+func (h *fakeHost) Progress(_ context.Context, r msfp.Report) error {
 	h.mu.Lock()
-	h.progress = append(h.progress, positionMs)
+	if !r.Stop && !r.Late {
+		h.progress = append(h.progress, r.PositionMs)
+	}
+	h.reports = append(h.reports, r)
 	h.mu.Unlock()
 	return nil
 }
@@ -192,15 +210,27 @@ func mediaName(p msfp.MediaPath) string {
 	case msfp.MediaMaster:
 		return "master.m3u8"
 	case msfp.MediaFile:
-		return "file"
-	case msfp.MediaSubtitles:
-		return fmt.Sprintf("subtitles/%s/%d", p.Track, p.Part)
-	case msfp.MediaPictures:
-		return fmt.Sprintf("pictures/%s/%d", p.Track, p.Part)
+		return entryOf(p) + "file"
+	case msfp.MediaSubtitles, msfp.MediaASS, msfp.MediaPictures:
+		part := strconv.Itoa(p.Part)
+		if p.Whole {
+			part = "whole"
+		}
+		return fmt.Sprintf("%s/%s/%s", p.Kind, p.Track, part)
+	case msfp.MediaFont:
+		return fmt.Sprintf("fonts/%d", p.Font)
 	case msfp.MediaSheet:
 		return fmt.Sprintf("trickplay/%d", p.Sheet)
 	}
-	return p.Name
+	return entryOf(p) + p.Name
+}
+
+// entryOf is a queue entry's folder ("" for the playback's own stream).
+func entryOf(p msfp.MediaPath) string {
+	if p.Entry == 0 {
+		return ""
+	}
+	return fmt.Sprintf("queue/%d/", p.Entry-1)
 }
 
 func (h *fakeHost) Serve(ctx context.Context, _ string, path msfp.MediaPath, rng *msfp.Range, out msfp.ResponseSink) error {
@@ -224,6 +254,10 @@ func typeOf(p msfp.MediaPath) string {
 		return "application/vnd.apple.mpegurl"
 	case msfp.MediaSubtitles:
 		return "text/vtt; charset=utf-8"
+	case msfp.MediaASS:
+		return "text/x-ass"
+	case msfp.MediaFont:
+		return "font/ttf"
 	case msfp.MediaSheet:
 		return "image/jpeg"
 	case msfp.MediaPictures:

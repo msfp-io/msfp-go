@@ -163,7 +163,7 @@ type WantsGone struct {
 // PlaybackStarted: a peer's playback of Title started here (MSFP
 // playback section 6.1), for the host's live view.
 type PlaybackStarted struct {
-	Peer, Name, Playback, Title, Method string
+	Peer, Name, Playback, Title, Method, Purpose string
 }
 
 // PlaybackEnded: a peer's playback here ended, and why.

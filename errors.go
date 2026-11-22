@@ -65,6 +65,13 @@ var (
 	ErrNotPlayable = &Error{Code: "NotPlayable"}
 	// ErrPlaybackStopped: the playback is over.
 	ErrPlaybackStopped = &Error{Code: "PlaybackStopped"}
+	// ErrDeliveryRefused: the owning server won't serve the delivery
+	// asked of that copy (MSFP playback section 2.5): ask again with
+	// another delivery, or without one.
+	ErrDeliveryRefused = &Error{Code: "DeliveryRefused"}
+	// ErrCopyChanged: a restart's copy isn't the one being read any more
+	// (another etag): its bytes can't follow; read the title again.
+	ErrCopyChanged = &Error{Code: "CopyChanged"}
 	// ErrRateLimited: the peer asked this server to wait; calls hold
 	// until then.
 	ErrRateLimited = &Error{Code: "RateLimited"}
@@ -132,6 +139,7 @@ const (
 	probRotation     problemType = "rotation-refused"
 	probStreamLimit  problemType = "stream-limit-reached"
 	probNotPlayable  problemType = "not-playable"
+	probDelivery     problemType = "delivery-refused"
 	probStopped      problemType = "playback-stopped"
 	probRateLimited  problemType = "rate-limited"
 	probInternal     problemType = "internal-error"
@@ -150,6 +158,7 @@ var problems = map[problemType]struct {
 	probRotation:     {http.StatusConflict, "Rotation refused"},
 	probStreamLimit:  {http.StatusConflict, "Too many streams on this account"},
 	probNotPlayable:  {http.StatusConflict, "This item can't be played"},
+	probDelivery:     {http.StatusConflict, "This delivery isn't served"},
 	probStopped:      {http.StatusGone, "Playback was stopped"},
 	probRateLimited:  {http.StatusTooManyRequests, "Too many requests"},
 	probInternal:     {http.StatusInternalServerError, "Internal error"},
@@ -171,6 +180,8 @@ func refusalError(status int, typ string) error {
 		return ErrRotationRefused
 	case status == http.StatusConflict && typ == string(probNotPlayable):
 		return ErrNotPlayable
+	case status == http.StatusConflict && typ == string(probDelivery):
+		return ErrDeliveryRefused
 	case status == http.StatusConflict:
 		return ErrStreamLimitReached
 	case status == http.StatusGone:

@@ -24,7 +24,7 @@ import (
 // Bounds of the relay (MSFP media section 2.4).
 const (
 	// smallReadTime bounds the reading whole of a playlist, a subtitle
-	// part, a PGS part or a sheet.
+	// part, a PGS part, a font or a sheet.
 	smallReadTime = 2 * time.Minute
 	// smallReads and sheetReads bound how many of them are held in memory
 	// at once across the server.
@@ -33,20 +33,24 @@ const (
 )
 
 // Fetch serves a piece of a playback on a peer, for the viewer playing
-// it: the same MediaPath the owning side serves; rng is the viewer's
-// Range header as received ("" for none), sent on for the file and
-// segments only, once well-formed. Content-Type is set by the engine. A
-// fetch is cut when its playback ends. Errors (nothing written then):
-// ErrNotFound (any failed fetch: the peer's body and headers never pass
-// with a failure), ErrRangeNotSatisfiable (a malformed Range: nothing is
-// fetched; or the peer's 416), ErrServerBusy (the bounds of fetches at
-// once, or the peer's 503).
+// it: the same MediaPath the owning side serves (MediaPath.Entry for a
+// queue entry's stream); rng is the viewer's Range header as received
+// ("" for none), sent on for the file and segments only, once
+// well-formed. Content-Type is set by the engine; an out that implements
+// ETagSink is given the file's ETag first. The file's answers are
+// checked against the copy's etag and exact size (a different one: the
+// copy changed, ErrNotFound, and Restart won't join it). A fetch is cut
+// when its playback ends. Errors (nothing written then): ErrNotFound (any
+// failed fetch: the peer's body and headers never pass with a failure),
+// ErrRangeNotSatisfiable (a malformed Range: nothing is fetched; or the
+// peer's 416, a scan's past its cap among them), ErrServerBusy (the
+// bounds of fetches at once, or the peer's 503).
 func (e *Engine) Fetch(ctx context.Context, id string, path MediaPath, rng string, out ResponseSink) error {
 	rm := e.liveRemote(id)
 	if rm == nil {
 		return ErrNotFound
 	}
-	if path.Kind == MediaSegment && e.isPlaylist(rm, path.Name) {
+	if path.Kind == MediaSegment && e.isPlaylist(rm, path.Entry, path.Name) {
 		path.Kind = MediaPlaylist
 	}
 	name, ok := e.relayName(rm, path)
@@ -129,31 +133,57 @@ func (e *Engine) Fetch(ctx context.Context, id string, path MediaPath, rng strin
 	default:
 		return ErrNotFound
 	}
-	if media {
+	switch {
+	case path.Kind == MediaFile:
+		return e.relayFile(rm, path.Entry, res, rng, want, out)
+	case media:
 		return e.relayMedia(rm, res, rng, want, out)
 	}
 	return e.relaySmall(rm, path, res, out)
 }
 
+// entryBase is the folder of a stream of a playback on a peer, under its
+// base: its own, or a queue entry's (media section 1).
+func entryBase(entry int) string {
+	if entry == 0 {
+		return ""
+	}
+	return "queue/" + strconv.Itoa(entry-1) + "/"
+}
+
 // relayName is the name fetched under the peer's stream base for path;
 // false for what the playback doesn't have.
 func (e *Engine) relayName(rm *remote, path MediaPath) (string, bool) {
+	rs := &e.remotes
+	rs.mu.Lock()
+	ent, has := rm.entries[path.Entry]
+	rs.mu.Unlock()
 	v := rm.view
+	part := func() (string, bool) {
+		if path.Whole {
+			return "whole", path.Kind != MediaPictures
+		}
+		return strconv.Itoa(path.Part), path.Part >= 0 && path.Part <= 9999
+	}
 	switch path.Kind {
 	case MediaFile:
-		return "file", v.Protocol == "file"
+		return entryBase(path.Entry) + "file", has && ent.protocol == "file"
 	case MediaMaster:
-		return "master.m3u8", v.Protocol == "hls"
+		return entryBase(path.Entry) + "master.m3u8", has && ent.protocol == "hls"
 	case MediaPlaylist, MediaSegment:
-		return path.Name, v.Protocol == "hls" && wire.FileName(path.Name) && path.Name != "master.m3u8"
-	case MediaSubtitles, MediaPictures:
-		pictures, ok := rm.subtitles[path.Track]
-		if !ok || pictures != (path.Kind == MediaPictures) || path.Part < 0 || path.Part > 9999 {
+		return entryBase(path.Entry) + path.Name, has && ent.protocol == "hls" && wire.FileName(path.Name) && path.Name != "master.m3u8"
+	case MediaSubtitles, MediaASS, MediaPictures:
+		how, ok := rm.subtitles[path.Track]
+		n, partOK := part()
+		served := map[MediaKind]bool{MediaSubtitles: how.text, MediaASS: how.ass, MediaPictures: how.pictures}[path.Kind]
+		if !ok || !served || !partOK || path.Entry != 0 {
 			return "", false
 		}
-		return wire.SubtitleURL("", path.Track, pictures) + "/" + strconv.Itoa(path.Part), true
+		return string(path.Kind) + "/" + path.Track + "/" + n, true
+	case MediaFont:
+		return "fonts/" + strconv.Itoa(path.Font), path.Font >= 0 && path.Font < v.Fonts && path.Entry == 0
 	case MediaSheet:
-		if v.Trickplay == nil || path.Sheet < 0 || path.Sheet >= v.Trickplay.Sheets {
+		if v.Trickplay == nil || path.Sheet < 0 || path.Sheet >= v.Trickplay.Sheets || path.Entry != 0 {
 			return "", false
 		}
 		return wire.SheetURL("", path.Sheet), true
@@ -228,9 +258,80 @@ func partialLength(h http.Header, want Range) (int64, string, bool) {
 	return n, ranges[0], true
 }
 
-// relayMedia relays the file or a segment: a 206 only for the range
-// asked, never more than its length, never a playlist under a media name,
-// its type kept only when it is a plain video/ or audio/ one.
+// strongETag is an ETag header's value, when it is a strong entity tag
+// of an etag's form; "" otherwise.
+func strongETag(h string) string {
+	inner, ok := strings.CutPrefix(h, `"`)
+	inner, ok2 := strings.CutSuffix(inner, `"`)
+	if !ok || !ok2 || !wire.ID(inner) {
+		return ""
+	}
+	return inner
+}
+
+// relayFile relays the file of a playback, or of a queue entry (MSFP
+// media section 3.2): its answer checked against the copy's etag and
+// exact size (learnt from the first answer when the catalog didn't give
+// them), a 206 only for the range asked, never more than its length.
+func (e *Engine) relayFile(rm *remote, entry int, res *http.Response, rng string, want Range, out ResponseSink) error {
+	rs := &e.remotes
+	rs.mu.Lock()
+	ent := rm.entries[entry]
+	rs.mu.Unlock()
+	a := wire.MediaAnswer{Status: res.StatusCode, ETag: res.Header.Get("ETag"), ContentRange: res.Header.Get("Content-Range"),
+		ContentLength: res.Header.Get("Content-Length")}
+	if len(res.Header.Values("ETag")) > 1 || len(res.Header.Values("Content-Length")) > 1 || len(res.Header.Values("Content-Range")) > 1 {
+		return ErrNotFound
+	}
+	if ent.etag == "" || ent.size < 0 {
+		// Not known from the catalog: learnt from this first answer, then
+		// held to.
+		if ent.etag == "" {
+			ent.etag = strongETag(a.ETag)
+		}
+		if ent.size < 0 {
+			if res.StatusCode == http.StatusOK {
+				ent.size, _ = strconv.ParseInt(a.ContentLength, 10, 64)
+			} else if m := contentRangeRe.FindStringSubmatch(a.ContentRange); m != nil && m[3] != "*" {
+				ent.size, _ = strconv.ParseInt(m[3], 10, 64)
+			}
+		}
+		if ent.etag == "" || ent.size < 0 {
+			return ErrNotFound
+		}
+	}
+	if err := wire.CheckFileAnswer(rng, ent.size, ent.etag, a); err != nil {
+		e.log.Info("msfp: a peer's file answer was refused", "peer", rm.peer, "error", err)
+		return ErrNotFound
+	}
+	rs.mu.Lock()
+	rm.entries[entry] = ent
+	if entry == 0 {
+		rm.view.Size = ent.size
+	}
+	rs.mu.Unlock()
+	length, contentRange := ent.size, ""
+	if res.StatusCode == http.StatusPartialContent {
+		n, cr, ok := partialLength(res.Header, want)
+		if !ok {
+			return ErrNotFound
+		}
+		length, contentRange = n, cr
+	}
+	if es, ok := out.(ETagSink); ok {
+		es.SetETag(ent.etag)
+	}
+	out.Start(res.StatusCode, wire.RelayedMediaType(res.Header.Get("Content-Type")), length, contentRange)
+	_, err := io.Copy(out, io.LimitReader(res.Body, length))
+	if err != nil && rm.ctx.Err() == nil {
+		return fmt.Errorf("msfp: a relayed file was cut: %w", err)
+	}
+	return nil
+}
+
+// relayMedia relays a segment: a 206 only for the range asked, never
+// more than its length, never a playlist under a media name, its type
+// kept only when it is a plain video/ or audio/ one.
 func (e *Engine) relayMedia(rm *remote, res *http.Response, rng string, want Range, out ResponseSink) error {
 	length, contentRange := res.ContentLength, ""
 	if res.StatusCode == http.StatusPartialContent {
@@ -262,17 +363,17 @@ func (e *Engine) relayMedia(rm *remote, res *http.Response, rng string, want Ran
 }
 
 // relaySmall relays what is read whole: playlists checked and kept to
-// the subset, WebVTT rebuilt, PGS checked, sheets checked and re-encoded
-// (MSFP media section 3.1, video sections 6.2 to 6.4).
+// the subset, complete, their renditions the playback's audio tracks;
+// WebVTT and ASS rebuilt; PGS checked; fonts checked; sheets checked and
+// re-encoded (MSFP media section 3.1, video sections 6.2 to 6.6).
 func (e *Engine) relaySmall(rm *remote, path MediaPath, res *http.Response, out ResponseSink) error {
 	limit := int64(wire.MaxPlaylist)
 	playlist := path.Kind == MediaMaster || path.Kind == MediaPlaylist
-	rs := &e.remotes
+	var rebuild func([]byte) ([]byte, string, bool)
 	switch path.Kind {
-	case MediaSubtitles:
-		limit = wire.MaxWebVTT
-	case MediaPictures:
-		limit = wire.MaxPGS
+	case MediaSubtitles, MediaASS, MediaPictures, MediaFont:
+		most, f := smallRules(path)
+		limit, rebuild = int64(most), f
 	case MediaSheet:
 		limit = wire.MaxSheetBytes
 	}
@@ -283,14 +384,14 @@ func (e *Engine) relaySmall(rm *remote, path MediaPath, res *http.Response, out 
 	if err != nil || int64(len(body)) > limit {
 		return ErrNotFound
 	}
-	contentType := "application/vnd.apple.mpegurl"
+	contentType := wire.HLSType
 	switch {
 	case playlist:
 		subset := wire.MediaSubset
 		if path.Kind == MediaMaster {
 			subset = wire.MasterSubset
 		}
-		kept, err := wire.FilterPlaylist(body, subset, nil) // B2: the playback's audio tracks, for a master's #EXT-X-MEDIA renditions
+		kept, err := wire.FilterPlaylist(body, subset, func(id string) bool { return rm.audio[id] })
 		if err != nil {
 			e.log.Info("msfp: a peer's playlist was refused", "peer", rm.peer, "error", err)
 			return ErrNotFound
@@ -298,27 +399,23 @@ func (e *Engine) relaySmall(rm *remote, path MediaPath, res *http.Response, out 
 		body = kept
 		if path.Kind == MediaMaster {
 			// What it names is fetched as a playlist, whatever its name.
+			rs := &e.remotes
 			rs.mu.Lock()
 			if rm.playlists == nil {
 				rm.playlists = map[string]bool{}
 			}
 			for _, n := range wire.URILines(kept) {
-				rm.playlists[n] = true
+				rm.playlists[strconv.Itoa(path.Entry)+"/"+n] = true
 			}
 			rs.mu.Unlock()
 		}
-	case path.Kind == MediaSubtitles:
-		vtt, ok := wire.RebuildWebVTT(body)
+	case rebuild != nil:
+		// An empty PGS part is a stretch with no subtitles: relayed as such.
+		again, ct, ok := rebuild(body)
 		if !ok {
 			return ErrNotFound
 		}
-		body, contentType = vtt, "text/vtt; charset=utf-8"
-	case path.Kind == MediaPictures:
-		// An empty part is a stretch with no subtitles: relayed as such.
-		if wire.CheckPGS(body) != nil {
-			return ErrNotFound
-		}
-		contentType = "application/octet-stream"
+		body, contentType = again, ct
 	case path.Kind == MediaSheet:
 		tp := rm.view.Trickplay
 		w, h := tp.Columns*tp.TileWidth, tp.Rows*tp.TileHeight
@@ -336,11 +433,11 @@ func (e *Engine) relaySmall(rm *remote, path MediaPath, res *http.Response, out 
 	return err
 }
 
-// isPlaylist says whether a name of a playback was named by its master
-// playlist, or ends in .m3u8: fetched and checked as a playlist.
-func (e *Engine) isPlaylist(rm *remote, name string) bool {
+// isPlaylist says whether a name of a playback's stream was named by its
+// master playlist, or ends in .m3u8: fetched and checked as a playlist.
+func (e *Engine) isPlaylist(rm *remote, entry int, name string) bool {
 	rs := &e.remotes
 	rs.mu.Lock()
 	defer rs.mu.Unlock()
-	return rm.playlists[name] || strings.HasSuffix(name, ".m3u8")
+	return rm.playlists[strconv.Itoa(entry)+"/"+name] || strings.HasSuffix(name, ".m3u8")
 }

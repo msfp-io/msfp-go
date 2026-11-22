@@ -1,57 +1,16 @@
 package msfp
 
-import "testing"
+import (
+	"testing"
 
-// The tables of MSFP playback section 2.6 and video section 5.4, row by
-// row.
+	"github.com/msfp-io/msfp-go/wire"
+)
 
-func TestChooseCopy(t *testing.T) {
-	copies := []Copy{{Handle: "en", Audio: []string{"en"}}, {Handle: "frca", Audio: []string{"fr-CA"}}, {Handle: "fr", Audio: []string{"fr"}}}
-	version := func(c Copy) string { return "v-" + c.Handle }
-	for _, c := range []struct {
-		version, language, want string
-	}{
-		{"v-fr", "en", "fr"},   // a version of the title: that copy, whatever the language
-		{"v-none", "fr", "fr"}, // no copy has it: by language, same tag first
-		{"", "fr-CA", "frca"},  // same tag
-		{"", "fr-FR", "frca"},  // then same base language: the first
-		{"", "de", "en"},       // none matches: the first
-		{"", "", "en"},         // nothing asked: the first
-		{"v-none", "", "en"},   // a version no copy has, no language
-		{"", "FR-ca", "frca"},  // tags compared without case
-		{"v-frca", "", "frca"}, // a version alone
-		{"V-fr", "", "en"},     // version IDs compared exactly
-	} {
-		if got := copies[chooseCopy(copies, version, c.version, c.language)].Handle; got != c.want {
-			t.Errorf("version %q, language %q: %s, want %s", c.version, c.language, got, c.want)
-		}
-	}
-}
-
-func TestChooseAudio(t *testing.T) {
-	tracks := []Track{{ID: "a0", Language: "en"}, {ID: "a1", Language: "fr", Role: "commentary"},
-		{ID: "a2", Language: "fr-CA", Default: true}, {ID: "a3", Language: "fr"}}
-	for _, c := range []struct {
-		track, language, want string
-	}{
-		{"a3", "en", "a3"},  // a track of the copy: that one, the language ignored
-		{"a9", "en", "a0"},  // not a track of the copy: as if absent
-		{"", "fr", "a3"},    // same tag, never a commentary
-		{"", "fr-FR", "a2"}, // same base language: the first of the title's own sound
-		{"", "de", "a2"},    // none matches: the default
-		{"", "", "a2"},
-	} {
-		if got := chooseAudio(tracks, c.track, c.language); got != c.want {
-			t.Errorf("track %q, language %q: %s, want %s", c.track, c.language, got, c.want)
-		}
-	}
-	if got := chooseAudio([]Track{{ID: "a0"}, {ID: "a1"}}, "", "de"); got != "a0" {
-		t.Errorf("no default: %s, want the first", got)
-	}
-}
+// The table of MSFP video section 5.4, row by row (playback section
+// 2.6's, of the copy and the audio, are wire's: ChooseCopy, ChooseAudio).
 
 func TestChooseSubtitles(t *testing.T) {
-	tracks := []Track{{ID: "s0", Language: "en"}, {ID: "s1", Language: "fr", Forced: true}, {ID: "s2", Language: "fr-CA"},
+	tracks := []wire.CopySubtitle{{ID: "s0", Language: "en"}, {ID: "s1", Language: "fr", Forced: true}, {ID: "s2", Language: "fr-CA"},
 		{ID: "s3", Language: "de", Forced: true}}
 	for _, c := range []struct {
 		track, language, want string
@@ -80,7 +39,7 @@ func TestChooseSubtitles(t *testing.T) {
 func TestCoarsen(t *testing.T) {
 	c := coarsen(Capabilities{Containers: []string{"MP4", "mkv", "mp4", "avi"}, VideoCodecs: []string{"h264", "H265"},
 		MaxAudioChannels: 7, MaxHeight: 1079, MaxBitrateKbps: 8999}, true)
-	if len(c.Containers) != 2 || c.Containers[0] != "mkv" || c.Containers[1] != "mp4" || len(c.VideoCodecs) != 1 ||
+	if len(c.Containers) != 3 || c.Containers[0] != "avi" || c.Containers[2] != "mp4" || len(c.VideoCodecs) != 1 ||
 		c.MaxAudioChannels != 6 || c.MaxHeight != 720 || c.MaxBitrateKbps != 8000 {
 		t.Errorf("coarsened: %+v", c)
 	}
@@ -91,8 +50,8 @@ func TestCoarsen(t *testing.T) {
 	if c := coarsen(Capabilities{}, true); c != nil {
 		t.Errorf("nothing said: %+v", c)
 	}
-	if roundKbps(1999) != 1000 || roundKbps(999) != 999 || roundKbps(0) != 0 {
-		t.Error("the request's bitrate")
+	if c := coarsen(Capabilities{VideoCodecs: []string{"h264"}, MaxHeight: 1080}, false); c != nil {
+		t.Errorf("a track's, with video's members only: %+v", c)
 	}
 }
 

@@ -109,19 +109,10 @@ func language(path string) string {
 	return strings.TrimPrefix(filepath.Ext(strings.TrimSuffix(path, ".vtt")), ".")
 }
 
-func (f folder) Copies(_ context.Context, key string, _ []string) ([]msfp.Copy, error) {
-	if _, ok := f.scan()[key]; !ok {
-		return nil, nil
-	}
-	return []msfp.Copy{{Handle: key, Name: "File", Library: "films"}}, nil
-}
-
-func (f folder) Describe(_ context.Context, key string) (msfp.CopyInfo, error) {
-	info := msfp.CopyInfo{AudioTracks: []msfp.Track{{ID: "a0", Label: "Original", Default: true}}}
-	for i, s := range f.scan()[key].subs {
-		info.SubtitleTracks = append(info.SubtitleTracks, msfp.Track{ID: "s" + strconv.Itoa(i), Label: language(s), Language: language(s)})
-	}
-	return info, nil
+// Describe tells what the catalog doesn't: no previews, no fonts; its
+// .vtt files are served apart.
+func (f folder) Describe(context.Context, string) (msfp.CopyInfo, error) {
+	return msfp.CopyInfo{}, nil
 }
 
 // Start serves the file when the viewer plays its container, the HLS
@@ -130,7 +121,17 @@ func (f folder) Start(_ context.Context, req msfp.StartRequest) (msfp.Started, e
 	fl := f.scan()[req.Copy]
 	ext := strings.TrimPrefix(filepath.Ext(fl.file), ".")
 	method, protocol := "direct", "file"
-	if !slices.Contains(req.Capabilities.Containers, ext) {
+	switch req.Delivery {
+	case msfp.DeliveryFile:
+	case msfp.DeliveryTranscode:
+		return msfp.Started{}, msfp.ErrDeliveryRefused
+	case msfp.DeliveryRemux:
+		if fl.hls == "" {
+			return msfp.Started{}, msfp.ErrDeliveryRefused
+		}
+		method, protocol = "remux", "hls"
+	}
+	if req.Delivery == "" && !slices.Contains(req.Capabilities.Containers, ext) {
 		if fl.hls == "" {
 			return msfp.Started{}, msfp.ErrNotPlayable
 		}
@@ -143,8 +144,8 @@ func (f folder) Start(_ context.Context, req msfp.StartRequest) (msfp.Started, e
 		MimeType: "video/" + strings.Replace(ext, "mkv", "x-matroska", 1), PositionMs: req.StartMs}, nil
 }
 
-func (folder) Progress(context.Context, string, int64, bool) error { return nil }
-func (folder) Stop(context.Context, string, msfp.EndReason) error  { return nil }
+func (folder) Progress(context.Context, msfp.Report) error        { return nil }
+func (folder) Stop(context.Context, string, msfp.EndReason) error { return nil }
 
 func (f folder) Serve(_ context.Context, handle string, p msfp.MediaPath, rng *msfp.Range, out msfp.ResponseSink) error {
 	_, key, _ := strings.Cut(handle, " ")

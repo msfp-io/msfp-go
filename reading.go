@@ -249,19 +249,14 @@ func readLimits(raw json.RawMessage, music bool) *Limits {
 	if raw == nil {
 		return nil
 	}
-	var w struct {
-		Streams         *int `json:"streams"`
-		Transcodes      *int `json:"transcodes"`
-		BitrateKbps     int  `json:"bitrateKbps"`
-		AudioStreams    *int `json:"audioStreams"`
-		AudioTranscodes *int `json:"audioTranscodes"`
-	}
-	if wire.DecodeEntry(raw, &w) != nil || w.Streams == nil || w.Transcodes == nil {
+	k, ok := wire.ReadLimits(raw)
+	if !ok || !k.HasStreams || !k.HasTranscodes {
 		return nil
 	}
-	l := Limits{Streams: *w.Streams, Transcodes: *w.Transcodes, BitrateKbps: w.BitrateKbps}
-	if music && w.AudioStreams != nil && w.AudioTranscodes != nil {
-		l.Audio, l.AudioStreams, l.AudioTranscodes = true, *w.AudioStreams, *w.AudioTranscodes
+	l := Limits{Streams: k.Streams, Transcodes: k.Transcodes, BitrateKbps: k.BitrateKbps, Downloads: k.Downloads,
+		DownloadsPerDay: k.DownloadsPerDay, DownloadKbps: k.DownloadKbps, ScansPerDay: k.ScansPerDay}
+	if music && k.HasAudioStreams && k.HasAudioTranscodes {
+		l.Audio, l.AudioStreams, l.AudioTranscodes = true, k.AudioStreams, k.AudioTranscodes
 	}
 	if l.Check() != nil {
 		return nil

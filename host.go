@@ -5,6 +5,8 @@ import (
 	"io"
 	"net"
 	"time"
+
+	"github.com/msfp-io/msfp-go/wire"
 )
 
 // What the host implements for the engine: its storage, its catalog, its
@@ -150,7 +152,9 @@ type OwnChange struct {
 // tracks carry their copies, described as their files are (MSFP video
 // section 3.2, music section 3.3), so that a viewer's server lists them
 // as files of its own before anyone plays; each copy's ID is the host's
-// handle of it, the one Copies gives. Extras are titles of their own,
+// handle of it, the one Playback and Media are given. play takes the
+// title's copies as the catalog sends them (best first, the version IDs
+// made of these handles): a copy is played only as it is described. Extras are titles of their own,
 // keyed under their film, series or season ("movie/tmdb/348/x/<opaque>",
 // kind "extra"), listed in its libraries. Titles no public database names
 // are keyed under the local scheme ("movie/local/<opaque>"), with a name
@@ -165,13 +169,6 @@ type Catalog interface {
 	// included (a copy added, gone, or its ETag changed), is a change of
 	// the title: a ChangeLog lists it again.
 	Titles(ctx context.Context, libraries []string, after string, limit int) (TitlePage, error)
-	// Copies lists the copies of exactly this film, episode, extra or
-	// track in these libraries (for an episode inside a copy holding
-	// several, the copy that holds it), in the order of the title's
-	// Copies; none: the engine answers 404.
-	//
-	// B2: play may take its copies from the title's Copies instead.
-	Copies(ctx context.Context, key string, libraries []string) ([]Copy, error)
 }
 
 // Images is what a Catalog implements, besides Catalog, when it shares
@@ -213,27 +210,52 @@ type SeqBumper interface {
 // keeps: the engine then sends the whole list.
 var ErrTooOld = &Error{Code: "TooOld"}
 
+// Lyrics is what a Catalog implements, besides Catalog, when it shares
+// the lyrics of its tracks (MSFP music section 6): the copies whose
+// Lyrics says "plain" or "synced".
+type Lyrics interface {
+	// Lyrics gives a copy's lyrics (its handle), at most 8 sets, times in
+	// milliseconds (MSFP music section 6). The engine cleans them as a
+	// viewer's server keeps them (wire.ReadLyrics) before they leave.
+	// ErrNotFound for none.
+	Lyrics(ctx context.Context, copy string) ([]wire.Lyrics, error)
+}
+
 // Playback is the owning side of a peer's playback here. The engine has
-// checked the request, found the copies, picked the copy and refused what
-// the pairing's limits refuse early; then it asks the host to describe
-// the copy, chooses the tracks, and asks it to start.
+// checked the request (wire.ReadPlay), found the title's copies as the
+// catalog sends them, picked the copy and the tracks, refused what MSFP
+// refuses of the delivery asked and what the pool's limits refuse early;
+// then it asks the host how to serve the copy apart (Describe), and to
+// start.
 type Playback interface {
-	// Describe gives the copy's tracks, for the engine to choose from.
+	// Describe gives what the catalog doesn't say of a copy: its previews'
+	// layout, its fonts, the subtitle tracks it can't serve apart.
 	Describe(ctx context.Context, copy string) (CopyInfo, error)
-	// Start starts serving the copy. The host chooses how (direct, remux,
-	// transcode), then calls req.Admit before starting any work.
-	// Errors: ErrNotPlayable, ErrServerBusy, ErrStreamLimitReached.
+	// Start starts serving the copy for its purpose and delivery. The host
+	// chooses how when no delivery is asked (direct, remux, transcode),
+	// and serves exactly the delivery asked otherwise; then it calls
+	// req.Admit before starting any work. Errors: ErrNotPlayable,
+	// ErrDeliveryRefused, ErrServerBusy, ErrStreamLimitReached.
 	Start(ctx context.Context, req StartRequest) (Started, error)
-	// Progress passes on a peer's progress, for the host's live view.
-	Progress(ctx context.Context, handle string, positionMs int64, paused bool) error
+	// Progress passes on a peer's progress or stop, for the host's live
+	// view and its viewers' progress; a Late one is of a download's
+	// playback ended already (the viewer watched offline).
+	Progress(ctx context.Context, r Report) error
 	// Stop ends a playback: once for each Start that succeeded.
 	Stop(ctx context.Context, handle string, reason EndReason) error
 }
 
 // Media serves the bytes of a live playback. The engine has checked the
-// ticket, the request and the Range header's form, and cuts the response
-// when the playback ends. Errors: ErrNotFound, ErrRangeNotSatisfiable,
-// ErrServerBusy.
+// ticket, the request and its Range header, and cuts the response when
+// the playback ends. For MediaFile it has resolved the range against
+// the copy's exact size (rng nil for the whole file, else First to Last,
+// both within it), writes the status and headers itself (206 or 200,
+// Content-Range, ETag, Accept-Ranges) and sends only those bytes: the
+// host writes the copy's bytes from First, as they are, and its Start's
+// content type alone is kept. Subtitles, ASS, pictures and fonts are
+// read whole and rebuilt or checked (wire) before they leave; playlists
+// are checked against MSFP's subset. Errors: ErrNotFound,
+// ErrRangeNotSatisfiable, ErrServerBusy.
 type Media interface {
 	Serve(ctx context.Context, handle string, path MediaPath, rng *Range, out ResponseSink) error
 }

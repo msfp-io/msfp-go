@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/msfp-io/msfp-go"
+	"github.com/msfp-io/msfp-go/wire"
 )
 
 // Playback both ways: play, the choice of the copy and the tracks, the
@@ -20,13 +21,13 @@ import (
 // stop, the limits counted in one step, and every way a playback ends.
 
 const master = "#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-STREAM-INF:BANDWIDTH=5000000\nv0.m3u8\n"
-const media = "#EXTM3U\n#EXT-X-TARGETDURATION:6\n#EXT-X-MAP:URI=\"init.mp4\"\n#EXTINF:6.0,\nseg0.m4s\n#EXT-X-ENDLIST\n"
+const media = "#EXTM3U\n#EXT-X-TARGETDURATION:6\n#EXT-X-PLAYLIST-TYPE:VOD\n#EXT-X-MAP:URI=\"init.mp4\"\n#EXTINF:6.0,\nseg0.m4s\n#EXT-X-ENDLIST\n"
 
 func filmHost() *fakeHost {
 	h := newFakeHost()
 	h.film("films", "movie/tmdb/949", "en", "fr")
 	h.files = map[string][]byte{"master.m3u8": []byte(master), "v0.m3u8": []byte(media), "init.mp4": []byte("init"),
-		"seg0.m4s": []byte("0123456789abcdefghij"), "subtitles/s0/0": []byte("WEBVTT\n\n00:00:01.000 --> 00:00:02.000\n<i>Bonjour</i>\n")}
+		"seg0.m4s": []byte("0123456789abcdefghij"), "file": []byte("0123456789abcdefghij"), "subtitles/s0/0": []byte("WEBVTT\n\n00:00:01.000 --> 00:00:02.000\n<i>Bonjour</i>\n")}
 	return h
 }
 
@@ -77,7 +78,7 @@ func TestPlayAndRelay(t *testing.T) {
 	}
 	out = sink{}
 	if err := s.b.eng.Fetch(ctx, pb.ID, msfp.MediaPath{Kind: msfp.MediaSubtitles, Track: "s0", Part: 0}, "", &out); err != nil ||
-		string(out.body) != "WEBVTT\n\n00:00:01.000 --> 00:00:02.000\nBonjour\n" || out.contentType != "text/vtt; charset=utf-8" {
+		string(out.body) != "WEBVTT\n\n00:00:01.000 --> 00:00:02.000\n<i>Bonjour</i>\n" || out.contentType != "text/vtt; charset=utf-8" {
 		t.Errorf("subtitles: %v %q", err, out.body)
 	}
 	if err := s.b.eng.Fetch(ctx, pb.ID, msfp.MediaPath{Kind: msfp.MediaSubtitles, Track: "s1", Part: 0}, "", &sink{}); !errors.Is(err, msfp.ErrNotFound) {
@@ -171,7 +172,9 @@ func TestPlayRefusalsAndTickets(t *testing.T) {
 	}{
 		{ans.Stream.URL + "?x=1", nil, 404}, {ans.Stream.URL, []string{"Origin", "https://example.org"}, 404},
 		{ans.Stream.URL, []string{"Sec-Fetch-Mode", "cors"}, 404}, {ans.Stream.URL, []string{"Sec-Fetch-Site", "same-origin"}, 404},
-		{ans.Stream.URL, []string{"POST"}, 404}, {ans.Stream.URL, []string{"HEAD"}, 404}, {base + "file", nil, 404},
+		{ans.Stream.URL, []string{"POST"}, 405}, {ans.Stream.URL, []string{"HEAD"}, 405}, {base + "file", nil, 404},
+		{base + "subtitles/s0/whole", []string{"HEAD"}, 405}, {base + "fonts/0", nil, 404}, {base + "ass/s0/0", nil, 404},
+		{base + "queue/0/master.m3u8", nil, 404},
 		{base + "%2e%2e/x", nil, 404}, {base + "seg0.m4s", []string{"Range", "bytes=-"}, 416},
 		{base + "seg0.m4s", []string{"Range", "bytes=0-1,3-4"}, 416}, {base + "seg0.m4s", []string{"Range", "bytes=0-3"}, 206},
 		{base + "seg0.m4s", []string{"Range", "bytes=40-"}, 416}, {base + "v0.m3u8", []string{"Range", "bytes=0-3"}, 200},
@@ -420,10 +423,8 @@ func TestMusicPlay(t *testing.T) {
 	h := newFakeHost()
 	h.libs = []msfp.Library{{ID: "music", Name: "Music", Kind: "music"}}
 	track := "track/mb/0c000000-0000-4000-8000-000000000003"
-	h.titles[track] = &msfp.MusicTitle{TitleCommon: msfp.TitleCommon{Key: track, Kind: "track", Libraries: []string{"music"}}, Name: "x"}
-	h.copies[track] = []msfp.Copy{{Handle: "t", Name: "FLAC", Library: "music"}}
-	h.info["t"] = msfp.CopyInfo{AudioTracks: []msfp.Track{{ID: "a0", Label: "Audio"}},
-		SubtitleTracks: []msfp.Track{{ID: "s0", Label: "x"}}, Trickplay: &msfp.Trickplay{TileWidth: 10, TileHeight: 10, Columns: 1, Rows: 1, IntervalMs: 1000, TileCount: 1}}
+	h.titles[track] = musicTrack(track, "t")
+	h.info["t"] = msfp.CopyInfo{Fonts: 2, Trickplay: &msfp.Trickplay{TileWidth: 10, TileHeight: 10, Columns: 1, Rows: 1, IntervalMs: 1000, TileCount: 1}}
 	h.protocol = "file"
 	s := newSharing(t, h, msfp.Config{NewPairing: &msfp.Limits{Streams: 0, Audio: true, AudioStreams: 1}}, msfp.Config{})
 	pb, err := s.b.eng.Play(ctx, s.onB.ID, msfp.PlayRequest{Title: track, SubtitleTrack: "s0"})
@@ -514,9 +515,12 @@ func TestStatesAndCuts(t *testing.T) {
 		t.Error("a stopped playback's calls")
 	}
 	s.b.eng.Stop(ctx, pb.ID, -1)
-	// A response held open: cut when the playback ends.
+	// A response held open: cut when the playback ends (the copy long
+	// enough that its bytes don't end first).
 	h.protocol = "file"
 	h.mu.Lock()
+	h.copyOf("movie/tmdb/949", 0).Size = 1 << 40
+	h.copyOf("movie/tmdb/949", 1).Size = 1 << 40
 	cut := make(chan struct{})
 	h.serve = func(ctx context.Context, _ msfp.MediaPath, _ *msfp.Range, out msfp.ResponseSink) error {
 		out.Start(200, "video/mp4", -1, "")
@@ -695,4 +699,12 @@ func TestPairingEndsWhilePlayStarts(t *testing.T) {
 	if got := h.stopped["h1"]; got != msfp.EndPairingEnded {
 		t.Errorf("the host's playback ended as %q", got)
 	}
+}
+
+// musicTrack is a track of the album 0c…0002, with one FLAC copy of
+// handle copy, 20 bytes long.
+func musicTrack(key, copy string) *msfp.MusicTitle {
+	return &msfp.MusicTitle{TitleCommon: msfp.TitleCommon{Key: key, Kind: "track", Libraries: []string{"music"}}, Name: "x",
+		Album: "album/mb/0b000000-0000-4000-8000-000000000002", Disc: 1, Number: 1,
+		Copies: []wire.MusicCopy{{ID: copy, Name: "FLAC", DurationMs: 200_000, Container: "flac", Codec: "flac", Size: 20, Etag: "m-" + copy}}}
 }

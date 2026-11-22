@@ -167,7 +167,7 @@ func (e *Engine) SetOffers(ctx context.Context, peer string, libraries []string)
 		return err
 	}
 	e.bumpLog(ctx)
-	e.endPlaybacks(func(pb *playback) bool { return pb.peer == peer && !slices.Contains(keep, pb.library) }, EndNotOffered)
+	e.endPlaybacks(func(pb *playback) bool { return pb.peer == peer && !offeredIn(pb.libraries, keep) }, EndNotOffered)
 	return nil
 }
 
@@ -250,7 +250,9 @@ func (e *Engine) LibraryRemoved(ctx context.Context, id string) error {
 	if err == nil && removed {
 		e.bumpLog(ctx)
 	}
-	e.endPlaybacks(func(pb *playback) bool { return pb.library == id }, EndNotOffered)
+	e.endPlaybacks(func(pb *playback) bool {
+		return len(pb.libraries) > 0 && !slices.ContainsFunc(pb.libraries, func(l string) bool { return l != id })
+	}, EndNotOffered)
 	return err
 }
 
@@ -505,12 +507,20 @@ type limitsWire struct {
 	Streams         int  `json:"streams"`
 	Transcodes      int  `json:"transcodes"`
 	BitrateKbps     int  `json:"bitrateKbps"`
+	Downloads       int  `json:"downloads,omitempty"`
+	DownloadsPerDay int  `json:"downloadsPerDay,omitempty"`
+	DownloadKbps    int  `json:"downloadKbps,omitempty"`
+	ScansPerDay     int  `json:"scansPerDay,omitempty"`
 	AudioStreams    *int `json:"audioStreams,omitempty"`
 	AudioTranscodes *int `json:"audioTranscodes,omitempty"`
 }
 
 func limitsOut(l Limits, music bool) *limitsWire {
-	w := &limitsWire{Streams: l.Streams, Transcodes: l.Transcodes, BitrateKbps: l.BitrateKbps}
+	w := &limitsWire{Streams: l.Streams, Transcodes: l.Transcodes, BitrateKbps: l.BitrateKbps, Downloads: l.Downloads,
+		DownloadsPerDay: l.DownloadsPerDay, DownloadKbps: l.DownloadKbps, ScansPerDay: l.ScansPerDay}
+	if l.Downloads == 0 {
+		w.DownloadsPerDay, w.DownloadKbps = 0, 0
+	}
 	if music && l.Audio {
 		w.AudioStreams, w.AudioTranscodes = &l.AudioStreams, &l.AudioTranscodes
 	}

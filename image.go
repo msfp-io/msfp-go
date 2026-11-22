@@ -24,9 +24,8 @@ import (
 // that image only for 10 minutes, and asked for as a viewer, the image
 // checked and re-encoded before the host gets it.
 //
-// B2: image tickets are kept here, apart from playbacks' tickets; the
-// ticket kinds of media section 4 (playback, download, scan, previews,
-// image) may move to one store of tickets with the previews call.
+// The short tickets of media section 4, of an image call and of a
+// previews call (previews.go), are kept here, apart from playbacks'.
 
 const callImage = "image"
 
@@ -34,12 +33,23 @@ const callImage = "image"
 // 4).
 const imageTicketTime = 10 * time.Minute
 
-// imageTicket is what an image ticket opens: one title's image, for one
-// peer, while the library it was sent in is still shared with it.
+// imageTicket is what a short ticket opens, for one peer, for 10
+// minutes: of kind image, one title's image, while the library it was
+// sent in is still shared with it; of kind previews, one copy's sheets
+// (its handle, their count), while the title is still sent to it.
 type imageTicket struct {
+	kind      string
 	peer, key string
+	handle    string
+	sheets    int
 	expires   time.Time
 }
+
+// The kinds of short tickets.
+const (
+	ticketImage    = "image"
+	ticketPreviews = "previews"
+)
 
 // imageTickets are the live image tickets, by the SHA-256 of each, and
 // the locks of the image calls made, by peer.
@@ -91,19 +101,10 @@ func (e *Engine) sharedImage(ctx context.Context, p *PeerRecord, key string) (Ti
 	if err != nil || t == nil {
 		return nil, err
 	}
-	var ids map[string]string
-	if err := e.cfg.Store.Read(ctx, func(tx Tx) error {
-		var err error
-		ids, err = tx.LibraryIDs()
-		return err
-	}); err != nil {
+	s, err := e.senderFor(ctx, p, libs)
+	if err != nil {
 		return nil, err
 	}
-	pub := map[string]string{}
-	for _, l := range libs {
-		pub[l] = ids[l]
-	}
-	s := &sender{e: e, ctx: ctx, p: p, libs: libs, local: localOffered(p), pub: pub, parents: map[string]string{}}
 	raw, ok, err := s.title(t)
 	if err != nil || !ok {
 		return nil, err
@@ -146,7 +147,7 @@ func (e *Engine) image(req *request) response {
 		return refuse(probInternal)
 	}
 	ticket := wire.Encode64(b)
-	e.images.add(ticket, imageTicket{peer: p.ID, key: title, expires: e.now().Add(imageTicketTime)}, e.now())
+	e.images.add(ticket, imageTicket{kind: ticketImage, peer: p.ID, key: title, expires: e.now().Add(imageTicketTime)}, e.now())
 	return answer(struct {
 		URL string `json:"url"`
 	}{wire.ImageURL(e.streamBase(req), ticket)})
@@ -162,8 +163,14 @@ func (e *Engine) serveImage(w http.ResponseWriter, r *http.Request, ticket, name
 		return false
 	}
 	notFound := func() { e.cfg.NotFound.ServeHTTP(w, r) }
-	if name != "image" || r.Method != http.MethodGet || strings.Contains(r.RequestURI, "?") || r.URL.RawQuery != "" ||
-		r.Header.Get("Origin") != "" || r.Header.Get("Sec-Fetch-Site") != "" || r.Header.Get("Sec-Fetch-Mode") != "" {
+	if !mediaMethod(w, r) {
+		return true
+	}
+	if it.kind == ticketPreviews {
+		e.servePreviewSheet(w, r, it, name)
+		return true
+	}
+	if name != "image" || !plainMediaRequest(r) {
 		notFound()
 		return true
 	}
