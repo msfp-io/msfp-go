@@ -35,26 +35,32 @@
 // # Sharing and playing
 //
 // To share, the host gives Config a Catalog (its libraries and titles,
-// each film, episode, extra and track with its copies described, in its
-// order of preference, with ffmpeg's names and exact values), a Playback
+// each film, episode, extra and track with its copies described as
+// facts, in its order of preference: the file's media type, the MSFP
+// registry's codec and subtitle tokens, RFC 6381 codecs strings, H.273
+// colour, exact values, the layout of its previews), a Playback
 // (starting and stopping a stream) and a Media (serving it): see host.go.
-// The engine maps no names: a value MSFP doesn't list is sent and kept as
-// it is, any token (MSFP core section 8.5). What the owning side chooses
-// when a peer's play names nothing, and what names and track titles say,
-// are hooks with the recommended defaults (Config.ChooseCopy,
-// ChooseTracks, CopyName, TrackTitle); Config.Encoders lists the codecs
-// its transcodes make. The host's operator chooses what each peer is
-// offered (SetOffers), whether local titles go too (SetLocal,
-// SetGroupLocal), what it may use (SetLimits: streams, downloads, scans
-// and the bytes a scan reads), and which of a peer's libraries
-// this server reads (SetWants); the engine keeps peers' titles in the
-// Store, where the host reads them as it likes. Its viewers play,
-// download or scan a peer's title through Play, Progress, Stop and Fetch
-// (the host names the copy and the delivery, from the copy's facts and
-// its device; without a delivery, the baseline: H.264 and AAC in HLS),
-// at a route of the host's own; ReportOffline sends a download's late
-// reports. Events (Config.Notifier) tell the host what happened, for its
-// panel and its logs.
+// The engine maps no names: a value it doesn't know is sent and kept as
+// it is (MSFP core section 8.5). The owning side chooses nothing: a
+// peer's play plays the copy and the audio it names, else the first copy
+// and the file's default audio, and wire.Serve says what is served for
+// the delivery asked (without one, the defined baseline, each stream
+// within it left unchanged); Config.Encoders says what its transcoder
+// makes. The host's operator chooses what each peer is offered
+// (SetOffers), whether local titles go too (SetLocal, SetGroupLocal),
+// what it may use (SetLimits: streams, downloads, scans and a pool's
+// scan cap), and which of a peer's libraries this server reads
+// (SetWants); the engine keeps peers' titles in the Store, where the
+// host reads them as it likes. Its viewers play, download or scan a
+// peer's title through Play, Progress, Stop and Fetch (the host names
+// the copy, the audio and the delivery, from the copy's facts and its
+// device; without a delivery, the baseline: H.264 and AAC in HLS), at a
+// route of the host's own; PreviewSheet fetches a copy's seek-bar
+// previews on demand; ReportOffline sends a download's late reports.
+// Every media URL is built from the peer's stream root and a ticket its
+// answer gave: no address a peer wrote is ever fetched. Events
+// (Config.Notifier) tell the host what happened, for its panel and its
+// logs.
 //
 // The engine checks what leaves before it leaves: titles and copies
 // cleaned as a receiver keeps them, the file served by byte ranges

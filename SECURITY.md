@@ -50,12 +50,25 @@ version 0 as revised (proposal 16):
   reports are kept in the store for 30 days, with the peer and the
   title.
 - **Scan access.** A scan lets a peer's media server read up to the
-  pairing's `Limits.ScanBytes` (4 MiB unless the operator sets more, at
-  most 1 GiB) of a copy by ranges, to list it, for 10 minutes. It is off
+  pool's `Limits.ScanBytes` (4 MiB unless the operator sets more, at
+  most 1 GiB), which the scan's answer states, of a copy by ranges, to list it, for 10 minutes. It is off
   until the operator allows it (`Limits.ScansPerDay`). The engine counts the bytes
   sent under each scan ticket and never passes the cap; scans count
   against no stream, so a host that meters its bandwidth counts them
   too.
+- **URLs built, never followed.** Answers carry no URL: the viewer's
+  side builds every media URL from the peer's stream root, the answer's
+  ticket and a fixed name, so a peer can't point it anywhere else. The
+  owning side serves exactly those names, and a playlist's names only
+  once a playlist it served gave them.
+- **Nothing that needs guidance to be safe.** A copy carries no name,
+  its tracks no title, an extra no name, a copy no date: what a media
+  server fills from file names never leaves. A local title's `name`
+  stays (nothing else names it), behind the local-titles switch.
+- **Previews on demand.** A viewer's side fetches a copy's sheets only
+  when someone opens it (`PreviewSheet`), never for a whole library: a
+  previews call outside a playback tells the owner that someone on that
+  server opened that copy, and the sheets fetched roughly where.
 - **HEAD on media URLs.** Every media URL answers `HEAD` and other
   methods with `405`, whatever its ticket: a host's own tickets on the
   same route included. A host that answers its own clients' `HEAD`

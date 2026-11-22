@@ -6,8 +6,8 @@ import (
 )
 
 // Seek-bar previews (MSFP video sections 5.5 and 5.6): the previews
-// call's request, and the trickplay object of its answer and of play's,
-// as the viewer's server checks them.
+// call's request and its answer, a ticket and the copy's etag, as each
+// side checks them. The layout is the catalog's (PreviewLayout).
 
 // PreviewsRequest is the body of a previews call (video section 5.6):
 // the key of a film, an episode or an extra, and its copy's ID.

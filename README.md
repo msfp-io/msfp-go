@@ -105,35 +105,40 @@ _, err = eng.Accept(ctx, id)                    // once both compared fingerprin
 ```
 
 To share titles, give `Config` a `Catalog` (your libraries and titles,
-each film, episode and extra with its copies described as MSFP lists
-them: exact values, ffmpeg's names for containers, codecs and subtitle
-formats, your copies in your order of preference), a `Playback`
+each film, episode and extra with its copies described as facts: the
+file's media type, the MSFP registry's codec and subtitle tokens,
+RFC 6381 codecs strings, H.273 colour, exact values, the layout of its
+previews; your copies in your order of preference), a `Playback`
 (starting and stopping a stream) and a `Media` (serving it). The engine
 serves a copy's file by byte ranges itself, against the size and etag
-the catalog gave, and checks or rebuilds what leaves (playlists,
-subtitles, fonts, preview sheets re-encoded). It maps no names: a
-media server that names things otherwise maps them to ffmpeg's, and a
-value MSFP doesn't list is sent and kept as it is (any token). What
-the engine chooses for a peer when its play names nothing (the copy,
-the tracks) and what a copy's name and a track's title may say are
-hooks with the recommended defaults (`Config.ChooseCopy`,
-`ChooseTracks`, `CopyName`, `TrackTitle`); `Config.Encoders` lists the
-codecs your transcodes make.
+the catalog gave, serves exactly the names a playback's answer opened,
+and checks or rebuilds what leaves (playlists, subtitles, fonts, preview
+sheets re-encoded). It maps no names: a media server that names things
+otherwise maps them, and a value MSFP doesn't know is sent and kept as
+it is. Your server chooses nothing for a peer: its play names the copy
+and the audio, else the first copy and the file's default audio, and
+`wire.Serve` says what is served; `Config.Encoders` says what your
+transcoder makes (codecs, ranges, what each segment format carries).
 
 To play a peer's titles, call `Play`, `Progress`, `Stop` and `Fetch`
 from a route of your own. Your server has every copy's facts in the
-catalog and knows its device: a play names the copy and asks a
-delivery (the file as it is, a remux into `mpegts` or `mp4`, a
-transcode to ffmpeg's codecs), or none for the baseline every server
-plays, H.264 and AAC in HLS; and a purpose (a play, a download, a
-scan). Nothing of the device is sent.
+catalog and knows its device: it chooses the copy, its audio and its
+subtitles, and asks a delivery (the file as it is, a remux to
+`video/mp2t` or `video/mp4` segments, a transcode, a stream of which
+may be `copy`, to SDR or keeping the range), or none for the baseline
+every server plays, H.264 and AAC in HLS; and a purpose (a play, a
+download, a scan). Nothing of the device is sent, and every media URL
+is built from the peer's ticket: none a peer wrote is fetched.
+`wire.ReadCodecs` and `wire.PlayableAsIs` read a copy's codecs strings;
+`PreviewSheet` fetches a copy's seek-bar previews when someone opens
+it, never ahead.
 
 Two things are off until the operator turns them on: **local titles**
 (those no public database knows, `SetLocal` per pairing and
 `SetGroupLocal` per group) and **downloads and scans** (`Limits`:
 `Downloads`, `DownloadsPerDay`, `DownloadKbps`, `ScansPerDay`, and
-`ScanBytes`, what one scan may read: 4 MiB unless you say more, 32 MiB
-recommended). Theme songs and theme videos are extras like the others:
+`ScanBytes`, a pool's scan cap, stated in each scan's answer: 4 MiB
+unless you say more, 32 MiB suggested). Theme songs and theme videos are extras like the others:
 whether you offer them is your operator's choice. A
 download's late reports count for 30 days, across restarts: the shipped
 stores keep downloads (`DownloadsTx`). `Config.Notifier` tells your server what happened, for

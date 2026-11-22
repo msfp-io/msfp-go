@@ -237,19 +237,21 @@ type Lyrics interface {
 
 // Playback is the owning side of a peer's playback here. The engine has
 // checked the request (wire.ReadPlay), found the title's copies as the
-// catalog sends them, picked the copy and the tracks (those the request
-// names, else Config.ChooseCopy's and Config.ChooseTracks'), refused what MSFP
+// catalog sends them, picked the copy and the audio (those the request
+// names, else the first copy and the file's default audio), decided what
+// is served (wire.Serve, StartRequest.Served), refused what MSFP
 // refuses of the delivery asked and what the pool's limits refuse early;
 // then it asks the host how to serve the copy apart (Describe), and to
 // start.
 type Playback interface {
-	// Describe gives what the catalog doesn't say of a copy: its previews'
-	// layout, its fonts, the subtitle tracks it can't serve apart.
+	// Describe gives what the catalog doesn't say of a copy: its fonts,
+	// the subtitle tracks it can't serve apart, the forms of those of
+	// formats video section 5.4 doesn't list.
 	Describe(ctx context.Context, copy string) (CopyInfo, error)
 	// Start starts serving the copy for its purpose and delivery. Without
-	// a delivery it serves the baseline, H.264 and AAC in complete HLS
-	// (method direct or remux when the copy's streams already are those,
-	// transcode otherwise; never the file); it serves exactly the
+	// a delivery it serves the baseline in complete HLS, as req.Served
+	// says (method remux when each stream is within the baseline and left
+	// unchanged, transcode otherwise; never the file); it serves exactly the
 	// delivery asked otherwise; then it calls
 	// req.Admit before starting any work. Errors: ErrNotPlayable,
 	// ErrDeliveryRefused, ErrServerBusy, ErrStreamLimitReached.
