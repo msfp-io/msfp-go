@@ -285,7 +285,9 @@ func newServerWith(t *testing.T, cfg msfp.Config, opts serverOpts) *server {
 			length := rec.Header().Get("Content-Length")
 			rec.Header().Del("Content-Length")
 			if b, ok := rewrite(r.URL.Path, rec.Header(), rec.Body.Bytes()); !ok {
-				rec.Header().Set("Content-Length", length)
+				if length != "" {
+					rec.Header().Set("Content-Length", length)
+				}
 			} else {
 				rec.Body = bytes.NewBuffer(b)
 				if rec.Header().Get(wire.HeaderSignature) != "" {

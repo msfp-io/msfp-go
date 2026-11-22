@@ -12,6 +12,24 @@
   the copies. `MusicTitle` has music's new description (`SortName`,
   `ReleaseType`, `Compilation`, `Date`, `OriginalDate`, `Genres`,
   `Image`), no `Year` or `DurationMs`.
+- Playback and media (step B2): `play` takes the title's copies as the
+  catalog sends them; `Catalog.Copies` and `msfp.Copy` are gone, and
+  `Playback.Describe` gives only what the catalog doesn't say
+  (`CopyInfo`: previews' layout, fonts, tracks not served apart).
+  `StartRequest` carries `Purpose`, `Delivery`, `Container`, `Transcode`,
+  `AudioRenditions` and a music `Queue`; `Started` its `Queue`;
+  `Playback.Progress` takes a `Report` (with `At`, `Title`, `Stop`,
+  `Late`). `MediaPath` has `MediaASS`, `MediaFont`, `Whole`, `Entry` (a
+  queue entry's stream) and `OfCopy`; for `MediaFile` the engine resolves
+  the range against the copy's size and writes the headers itself.
+  `Limits` gains `Downloads`, `DownloadsPerDay`, `DownloadKbps`,
+  `ScansPerDay`. `Capabilities` is `wire.Capabilities`. The remote
+  `Track` has no `Label`; `RemotePlayback` has no `Segments` (copies
+  carry them) and gains `Purpose`, `Delivery`, `Etag`, `Size`,
+  `CopyChanged`, `BurnedTrack`, `Fonts`, `Queue`.
+- Media answers `HEAD` and other methods with `405` and `Allow: GET`;
+  the file by byte ranges with its exact size and `ETag`; playlists only
+  complete, their renditions the copy's audio tracks.
 - `titles` pages are bounded by size too (5,000 titles, 3 MiB), `next`
   set whenever titles remain; copies are cleaned before they leave (names
   and track titles only when they are labels).
@@ -23,6 +41,14 @@
   description (`Name`, `Year`, `Image`).
 - `SetLocal` and `SetGroupLocal` (`PeerView.Local`, `GroupView.Local`):
   local titles shared, per pairing and per group, off by default.
+- Downloads and scans (`PurposeDownload`, `PurposeScan`): a download's
+  ticket of 24 hours without the idle rule, its reads paced at
+  `downloadKbps`; a scan's of 10 minutes, its reads within 32 MiB.
+  `ReportOffline` sends a download's late reports; `Restart` reads a file
+  on under a new playback of the same etag (`ErrCopyChanged` otherwise);
+  `PlayingTrack` names the queued track playing. `ErrDeliveryRefused`.
+- The `previews` call (`Previews`, sheets fetched before a first play)
+  and the `lyrics` call (`TrackLyrics`; a host's `Lyrics` gives them).
 - The `image` call: a host's `Images` gives a local title's image,
   served under a ticket of its own; `TitleImage` asks a peer for one,
   checked and re-encoded. `OpaqueKeyPart` makes opaque parts of keys.

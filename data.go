@@ -62,8 +62,9 @@ type VideoTitle struct {
 	// cleaned isn't sent; series and seasons carry none.
 	//
 	// Of the host's own titles, each copy's ID is the host's handle of it,
-	// the one Catalog.Copies gives (Copy.Handle): it never leaves; the
-	// engine sends instead the version ID play gives for it. The engine
+	// the one Playback and Media are given: it never leaves; the engine
+	// sends instead the version ID play gives for it, and plays a copy
+	// only as it is described here. The engine
 	// sends the copies in the order of video section 3.7 (wire.SortCopies,
 	// keeping the host's order between equal ones), language tags as
 	// wire.SentTag gives them, names and track titles only when they are
