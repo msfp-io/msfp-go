@@ -23,7 +23,9 @@ func TestLibrariesAndPaging(t *testing.T) {
 	h := newFakeHost()
 	h.libs = []msfp.Library{{ID: "films", Name: " Films\u200b "}, {ID: "other", Name: "Other"}}
 	for i := 1; i <= 12_001; i++ {
-		h.film("films", fmt.Sprintf("movie/tmdb/%d", i), "en")
+		key := fmt.Sprintf("movie/tmdb/%d", i)
+		h.film("films", key, "en")
+		h.copyOf(key, 0).Video = nil // small titles: three pages of them, read within the time of a reading
 	}
 	s := newSharing(t, h, msfp.Config{}, msfp.Config{})
 	libs, err := s.b.eng.Wants(ctx, s.onB.ID)
