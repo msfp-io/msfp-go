@@ -1,9 +1,12 @@
 package main
 
 import (
+	"cmp"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
+	"io/fs"
 	"maps"
 	"net/http"
 	"os"
@@ -17,55 +20,187 @@ import (
 	"github.com/msfp-io/msfp-go/wire"
 )
 
-// folder is a folder of films, shared: the engine's Catalog, Playback and
-// Media. A film is a file named with its TMDB ID, "Title (Year)
-// [tmdbid-949].mp4"; beside it, optionally, "<same name>.hls/" holding an
-// HLS copy made beforehand (master.m3u8 and what it names, as ffmpeg
-// writes them), and "<same name>.<language>.vtt" subtitles. Files are
-// served as they are: direct when the viewer plays their container, the
-// HLS copy otherwise. Nothing is transcoded.
-type folder struct{ dir string }
-
-// film is what the folder holds of one title.
-type film struct {
-	file, hls string
-	subs      []string // .vtt files, s<n> by position
+// folder is a folder of films and series, shared as one library: the
+// engine's Catalog (with Images), Playback and Media. What it reads:
+//
+//	Heat (1995) [tmdbid-949].mkv             a film, by its TMDB ID
+//	Heat (1995) [tmdbid-949].fr.vtt          its subtitles, a file per language
+//	Heat (1995) [tmdbid-949].hls/            an HLS copy made beforehand (master.m3u8 and what it names)
+//	Heat (1995) [tmdbid-949].trickplay/      seek-bar previews: layout.json, 0.jpg, 1.jpg…
+//	Alien (1979) [tmdbid-348]/               a film in a folder of its own (its largest video file)
+//	    Trailers/  Extras/                   with its extras: trailers, featurettes
+//	Severance (2022) [tmdbid-95396]/         a series: its episodes S<n>E<n> anywhere inside
+//	    Season 1/S01E01 [tmdbid-1949537].mkv an episode by its TMDB episode ID, placed at S01E01
+//	    Season 1/S01E02.mkv                  one by its numbers (TMDB doesn't list it yet)
+//	    Trailers/  Extras/                   the series' extras
+//	Lain [tvdbid-78914]/                     a series by its TheTVDB ID: episodes by their numbers
+//	Holidays (2019).mp4                      a local film: no public database knows it
+//	Holidays (2019).jpg                      its image (.jpg or .png, beside it), optional
+//	Home videos (2020)/                      a local series (poster.jpg inside, its image)
+//
+// Local titles are shared only with the peers and groups the operator
+// allows them (local, group-local). Their keys and the extras' are made
+// with the engine's OpaqueKeyPart from their paths, so a peer can't tell
+// a path from them; moving a file gives it a new key.
+//
+// Files are served as they are: by byte ranges (delivery file), or as
+// their HLS copy (a remux made beforehand) when the viewer doesn't play
+// their container. Nothing is transcoded. A copy is described from its
+// file (probe.go).
+type folder struct {
+	dir string
+	// opaque is the engine's OpaqueKeyPart, set once it is open.
+	opaque func(string) string
+	probes probes
 }
 
-var tmdbID = regexp.MustCompile(`\[tmdbid-([1-9][0-9]{0,9})\]\.(mp4|m4v|mkv|webm|mov|ts)$`)
+// item is a title the folder holds: its title; for a film, an episode
+// or an extra, its video file (its copy's handle, a path in the
+// folder); for a local film or series, its image file.
+type item struct {
+	title *msfp.VideoTitle
+	video string
+	image string
+}
 
-// scan reads the folder: its films by title key.
-func (f folder) scan() map[string]film {
-	names, _ := os.ReadDir(f.dir)
-	out := map[string]film{}
-	for _, n := range names {
-		m := tmdbID.FindStringSubmatch(n.Name())
-		if m == nil {
-			continue
-		}
-		base := strings.TrimSuffix(n.Name(), "."+m[2])
-		fl := film{file: filepath.Join(f.dir, n.Name())}
-		if _, err := os.Stat(filepath.Join(f.dir, base+".hls", "master.m3u8")); err == nil {
-			fl.hls = filepath.Join(f.dir, base+".hls")
-		}
-		for _, s := range names {
-			if strings.HasPrefix(s.Name(), base+".") && strings.HasSuffix(s.Name(), ".vtt") {
-				fl.subs = append(fl.subs, filepath.Join(f.dir, s.Name()))
+var (
+	videoExt = regexp.MustCompile(`\.(mp4|m4v|mkv|webm|mov|ts)$`)
+	// named reads "Name (Year) [tmdbid-N]", the year and the ID optional.
+	named   = regexp.MustCompile(`^(.*?)\s*(?:\((\d{4})\))?\s*(?:\[(tmdbid|tvdbid)-([1-9][0-9]{0,9})\])?$`)
+	episode = regexp.MustCompile(`(?i)\bS(\d{1,4})E(\d{1,5})\b`)
+	epID    = regexp.MustCompile(`\[tmdbid-([1-9][0-9]{0,9})\]`)
+	extras  = map[string]string{"Trailers": "trailer", "Extras": "featurette"}
+)
+
+// sideDir says whether a folder is a video file's own (its HLS copy, its
+// previews), not a title's.
+func sideDir(name string) bool {
+	return strings.HasSuffix(name, ".hls") || strings.HasSuffix(name, ".trickplay")
+}
+
+// scan reads the folder: every title it holds, by key.
+func (f *folder) scan() map[string]item {
+	out := map[string]item{}
+	entries, _ := os.ReadDir(f.dir)
+	for _, en := range entries {
+		switch name := en.Name(); {
+		case en.IsDir() && !sideDir(name):
+			f.scanDir(out, name)
+		case !en.IsDir() && videoExt.MatchString(name):
+			base := videoExt.ReplaceAllString(name, "")
+			if t := f.film(base, name); t != nil {
+				out[t.Key] = item{title: t, video: name, image: localImage(t, f.dir, base)}
 			}
 		}
-		out["movie/tmdb/"+m[1]] = fl
 	}
 	return out
 }
 
-func (f folder) Libraries(context.Context) ([]msfp.Library, error) {
-	return []msfp.Library{{ID: "films", Name: filepath.Base(f.dir), Kind: "movies"}}, nil
+// film is the title of a film named base: by its TMDB ID, or local
+// (its key made from where it lies: rel); nil for one named by TheTVDB,
+// which keys no films.
+func (f *folder) film(base, rel string) *msfp.VideoTitle {
+	m := named.FindStringSubmatch(base)
+	t := &msfp.VideoTitle{TitleCommon: msfp.TitleCommon{Kind: "movie", Libraries: []string{"folder"}}}
+	switch m[3] {
+	case "tmdbid":
+		t.Key = "movie/tmdb/" + m[4]
+	case "tvdbid":
+		return nil
+	default:
+		t.Key, t.Name, t.Year = "movie/local/"+f.opaque(rel), m[1], year(m[2])
+	}
+	return t
 }
 
-func (f folder) Titles(_ context.Context, _ []string, after string, limit int) (msfp.TitlePage, error) {
-	films := f.scan()
+// scanDir reads a title's folder: a series when it holds episodes, a
+// film otherwise (its largest video file); and their extras.
+func (f *folder) scanDir(out map[string]item, dir string) {
+	top := filepath.Join(f.dir, dir)
+	var episodes, videos []string
+	filepath.WalkDir(top, func(path string, d fs.DirEntry, err error) error {
+		rel, _ := filepath.Rel(f.dir, path)
+		switch {
+		case err != nil:
+			return nil
+		case d.IsDir() && path != top && (sideDir(d.Name()) || extras[d.Name()] != ""):
+			return filepath.SkipDir
+		case d.IsDir() || !videoExt.MatchString(d.Name()):
+		case episode.MatchString(d.Name()):
+			episodes = append(episodes, rel)
+		case filepath.Dir(rel) == dir:
+			videos = append(videos, rel)
+		}
+		return nil
+	})
+	var t *msfp.VideoTitle
+	switch {
+	case len(episodes) > 0:
+		t = f.series(out, dir, episodes)
+	case len(videos) > 0:
+		slices.SortFunc(videos, func(a, b string) int { return cmp.Compare(size(f.dir, b), size(f.dir, a)) })
+		if t = f.film(dir, dir); t != nil {
+			out[t.Key] = item{title: t, video: videos[0]}
+		}
+	}
+	if t == nil {
+		return
+	}
+	it := out[t.Key]
+	it.image = localImage(t, top, "poster")
+	out[t.Key] = it
+	for folderName, kind := range extras {
+		files, _ := os.ReadDir(filepath.Join(top, folderName))
+		for _, x := range files {
+			if x.IsDir() || !videoExt.MatchString(x.Name()) {
+				continue
+			}
+			rel := filepath.Join(dir, folderName, x.Name())
+			key := t.Key + "/x/" + f.opaque(rel)
+			out[key] = item{video: rel, title: &msfp.VideoTitle{TitleCommon: msfp.TitleCommon{Key: key, Kind: "extra",
+				Libraries: []string{"folder"}}, ExtraType: kind, Name: cut(videoExt.ReplaceAllString(x.Name(), ""), 64)}}
+		}
+	}
+}
+
+// series adds a series, its seasons and its episodes, and gives the
+// series.
+func (f *folder) series(out map[string]item, dir string, episodes []string) *msfp.VideoTitle {
+	m := named.FindStringSubmatch(dir)
+	lib := []string{"folder"}
+	s := &msfp.VideoTitle{TitleCommon: msfp.TitleCommon{Kind: "series", Libraries: lib}}
+	switch m[3] {
+	case "tmdbid":
+		s.Key = "series/tmdb/" + m[4]
+	case "tvdbid":
+		s.Key = "series/tvdb/" + m[4]
+	default:
+		s.Key, s.Name, s.Year = "series/local/"+f.opaque(dir), m[1], year(m[2])
+	}
+	out[s.Key] = item{title: s}
+	for _, rel := range episodes {
+		n := episode.FindStringSubmatch(filepath.Base(rel))
+		season, number := atoi(n[1]), atoi(n[2])
+		seasonKey := s.Key + "/s" + strconv.Itoa(season)
+		out[seasonKey] = item{title: &msfp.VideoTitle{TitleCommon: msfp.TitleCommon{Key: seasonKey, Kind: "season", Libraries: lib}}}
+		e := &msfp.VideoTitle{TitleCommon: msfp.TitleCommon{Key: seasonKey + "/e" + strconv.Itoa(number), Kind: "episode", Libraries: lib}}
+		if id := epID.FindStringSubmatch(filepath.Base(rel)); id != nil && m[3] == "tmdbid" {
+			// Listed by TMDB: keyed by its episode ID, placed by its numbers.
+			e.Key, e.Place = s.Key+"/e"+id[1], &msfp.Place{Season: season, Episode: number}
+		}
+		out[e.Key] = item{title: e, video: rel}
+	}
+	return s
+}
+
+func (f *folder) Libraries(context.Context) ([]msfp.Library, error) {
+	return []msfp.Library{{ID: "folder", Name: filepath.Base(f.dir), Kind: "mixed"}}, nil
+}
+
+func (f *folder) Titles(_ context.Context, _ []string, after string, limit int) (msfp.TitlePage, error) {
+	items := f.scan()
 	var page msfp.TitlePage
-	for _, key := range slices.Sorted(maps.Keys(films)) {
+	for _, key := range slices.Sorted(maps.Keys(items)) {
 		if key <= after {
 			continue
 		}
@@ -73,69 +208,114 @@ func (f folder) Titles(_ context.Context, _ []string, after string, limit int) (
 			page.More = true
 			break
 		}
-		c, ok := films[key].copy(key)
-		if !ok {
-			continue
+		it := items[key]
+		t := *it.title
+		t.Image = it.image != ""
+		if it.video != "" {
+			c, ok := f.copy(it.video)
+			if !ok {
+				continue
+			}
+			t.Copies = []wire.Copy{c}
 		}
-		page.Titles = append(page.Titles, &msfp.VideoTitle{
-			TitleCommon: msfp.TitleCommon{Key: key, Kind: "movie", Libraries: []string{"films"}},
-			Copies:      []wire.Copy{c}})
+		page.Titles = append(page.Titles, &t)
 	}
 	return page, nil
 }
 
-// copy describes the film's one copy, its file, as the catalog lists it
-// (MSFP video section 3.2): its size, an etag from its size and its
-// time, its container from its extension; its length and streams are
-// left unknown (the example reads no file), its subtitles from the .vtt
-// files beside it. Its ID is the handle Copies gives.
-func (fl film) copy(handle string) (wire.Copy, bool) {
-	st, err := os.Stat(fl.file)
+// Image gives a local film's or series' image (MSFP catalog section 4.4).
+func (f *folder) Image(_ context.Context, key string) ([]byte, error) {
+	it, ok := f.scan()[key]
+	if !ok || it.image == "" {
+		return nil, msfp.ErrNotFound
+	}
+	return os.ReadFile(it.image)
+}
+
+// copy describes a video file as the catalog lists a copy (MSFP video
+// section 3.2): its exact size, an etag from its size and its time, its
+// container from its extension, what ffprobe says of it (probe.go), its
+// .vtt subtitles, its previews. Its ID is its handle: its path in the
+// folder.
+func (f *folder) copy(rel string) (wire.Copy, bool) {
+	path := filepath.Join(f.dir, rel)
+	st, err := os.Stat(path)
 	if err != nil || st.Size() < 1 {
 		return wire.Copy{}, false
 	}
-	c := wire.Copy{ID: handle, Container: wire.NameOrOther(wire.Containers, strings.TrimPrefix(filepath.Ext(fl.file), ".")),
-		Size: st.Size(), ETag: strconv.FormatInt(st.Size(), 36) + "-" + strconv.FormatInt(st.ModTime().UnixNano(), 36),
-		AudioTracks: []wire.CopyAudio{{ID: "a0", Codec: wire.Other, Default: true}}}
-	for i, s := range fl.subs {
+	c := f.probes.describe(path, st)
+	c.ID, c.Size = rel, st.Size()
+	c.Container = wire.NameOrOther(wire.Containers, strings.TrimPrefix(filepath.Ext(rel), "."))
+	c.ETag = strconv.FormatInt(st.Size(), 36) + "-" + strconv.FormatInt(st.ModTime().UnixNano(), 36)
+	for i, s := range subtitles(path) {
 		c.SubtitleTracks = append(c.SubtitleTracks, wire.CopySubtitle{ID: "s" + strconv.Itoa(i), Language: language(s),
 			Format: "webvtt", External: true})
 	}
+	_, c.Previews = previews(path)
 	return c, true
 }
 
-// language is a subtitles file's language, from its name.
+// subtitles are the .vtt files beside a video file, s<n> by position.
+func subtitles(path string) []string {
+	found, _ := filepath.Glob(escapeGlob(videoExt.ReplaceAllString(path, "")) + ".*.vtt")
+	return found
+}
+
+// language is a subtitles file's language, from its name ("fr").
 func language(path string) string {
-	return strings.TrimPrefix(filepath.Ext(strings.TrimSuffix(path, ".vtt")), ".")
+	tag, _ := wire.SentTag(strings.TrimPrefix(filepath.Ext(strings.TrimSuffix(path, ".vtt")), "."))
+	return tag
 }
 
-// Describe tells what the catalog doesn't: no previews, no fonts; its
-// .vtt files are served apart.
-func (f folder) Describe(context.Context, string) (msfp.CopyInfo, error) {
-	return msfp.CopyInfo{}, nil
+// previews reads a video file's previews' layout, layout.json in its
+// .trickplay folder: {"tileWidth":320,"tileHeight":180,"columns":10,
+// "rows":10,"intervalMs":10000,"tileCount":540}, its sheets beside it
+// named 0.jpg, 1.jpg… (the engine re-encodes each before it leaves).
+func previews(path string) (*msfp.Trickplay, bool) {
+	b, err := os.ReadFile(videoExt.ReplaceAllString(path, "") + ".trickplay/layout.json")
+	var t struct{ TileWidth, TileHeight, Columns, Rows, IntervalMs, TileCount int }
+	if err != nil || json.Unmarshal(b, &t) != nil {
+		return nil, false
+	}
+	return &msfp.Trickplay{TileWidth: t.TileWidth, TileHeight: t.TileHeight, Columns: t.Columns, Rows: t.Rows,
+		IntervalMs: t.IntervalMs, TileCount: t.TileCount}, true
 }
 
-// Start serves the file when the viewer plays its container, the HLS
-// copy otherwise; the handle is the protocol and the key.
-func (f folder) Start(_ context.Context, req msfp.StartRequest) (msfp.Started, error) {
-	fl := f.scan()[req.Copy]
-	ext := strings.TrimPrefix(filepath.Ext(fl.file), ".")
+// Describe tells what the catalog doesn't: the previews' layout; no
+// fonts; every .vtt file served apart.
+func (f *folder) Describe(_ context.Context, handle string) (msfp.CopyInfo, error) {
+	t, _ := previews(filepath.Join(f.dir, handle))
+	return msfp.CopyInfo{Trickplay: t}, nil
+}
+
+// Start serves the file (delivery file, always that of a download or a
+// scan) when the viewer's server asks it or plays its container, the HLS
+// copy otherwise. The handle is the protocol and the file's path.
+func (f *folder) Start(_ context.Context, req msfp.StartRequest) (msfp.Started, error) {
+	if !filepath.IsLocal(req.Copy) {
+		return msfp.Started{}, msfp.ErrNotFound
+	}
+	path := filepath.Join(f.dir, req.Copy)
+	ext := strings.TrimPrefix(filepath.Ext(path), ".")
+	_, err := os.Stat(videoExt.ReplaceAllString(path, "") + ".hls/master.m3u8")
+	hls := err == nil
 	method, protocol := "direct", "file"
 	switch req.Delivery {
 	case msfp.DeliveryFile:
 	case msfp.DeliveryTranscode:
 		return msfp.Started{}, msfp.ErrDeliveryRefused
 	case msfp.DeliveryRemux:
-		if fl.hls == "" {
+		if !hls {
 			return msfp.Started{}, msfp.ErrDeliveryRefused
 		}
 		method, protocol = "remux", "hls"
-	}
-	if req.Delivery == "" && !slices.Contains(req.Capabilities.Containers, ext) {
-		if fl.hls == "" {
-			return msfp.Started{}, msfp.ErrNotPlayable
+	default:
+		if !slices.Contains(req.Capabilities.Containers, ext) {
+			if !hls {
+				return msfp.Started{}, msfp.ErrNotPlayable
+			}
+			method, protocol = "remux", "hls"
 		}
-		method, protocol = "remux", "hls"
 	}
 	if _, err := req.Admit(method); err != nil {
 		return msfp.Started{}, err
@@ -144,40 +324,55 @@ func (f folder) Start(_ context.Context, req msfp.StartRequest) (msfp.Started, e
 		MimeType: "video/" + strings.Replace(ext, "mkv", "x-matroska", 1), PositionMs: req.StartMs}, nil
 }
 
-func (folder) Progress(context.Context, msfp.Report) error        { return nil }
-func (folder) Stop(context.Context, string, msfp.EndReason) error { return nil }
+func (*folder) Progress(context.Context, msfp.Report) error        { return nil }
+func (*folder) Stop(context.Context, string, msfp.EndReason) error { return nil }
 
-func (f folder) Serve(_ context.Context, handle string, p msfp.MediaPath, rng *msfp.Range, out msfp.ResponseSink) error {
-	_, key, _ := strings.Cut(handle, " ")
-	fl, ok := f.scan()[key]
-	if !ok {
+// Serve answers what a playback's ticket opens (or, for a sheet under a
+// previews ticket, OfCopy, a copy's: its handle is then the file's path).
+func (f *folder) Serve(_ context.Context, handle string, p msfp.MediaPath, rng *msfp.Range, out msfp.ResponseSink) error {
+	rel := handle
+	if !p.OfCopy {
+		_, rel, _ = strings.Cut(handle, " ")
+	}
+	if !filepath.IsLocal(rel) || p.Entry != 0 {
 		return msfp.ErrNotFound
 	}
+	path := filepath.Join(f.dir, rel)
+	base := videoExt.ReplaceAllString(path, "")
 	switch p.Kind {
 	case msfp.MediaFile:
-		return serveFile(fl.file, rng, out)
+		return serveFile(path, rng, out)
 	case msfp.MediaMaster:
-		return serveFile(filepath.Join(fl.hls, "master.m3u8"), nil, out)
+		return serveFile(filepath.Join(base+".hls", "master.m3u8"), nil, out)
 	case msfp.MediaPlaylist, msfp.MediaSegment:
-		return serveFile(filepath.Join(fl.hls, p.Name), rng, out)
+		return serveFile(filepath.Join(base+".hls", p.Name), rng, out)
+	case msfp.MediaSheet:
+		return serveFile(filepath.Join(base+".trickplay", strconv.Itoa(p.Sheet)+".jpg"), nil, out)
 	case msfp.MediaSubtitles:
+		subs := subtitles(path)
 		n, _ := strconv.Atoi(strings.TrimPrefix(p.Track, "s"))
-		if n >= len(fl.subs) {
+		if n >= len(subs) {
 			return msfp.ErrNotFound
 		}
-		vtt, err := os.ReadFile(fl.subs[n])
-		part, ok := wire.WebVTTPart(vtt, p.Part)
-		if err != nil || !ok {
+		vtt, err := os.ReadFile(subs[n])
+		if err != nil {
 			return msfp.ErrNotFound
 		}
-		out.Start(http.StatusOK, "text/vtt; charset=utf-8", int64(len(part)), "")
-		_, err = out.Write(part)
+		if !p.Whole {
+			var ok bool
+			if vtt, ok = wire.WebVTTPart(vtt, p.Part); !ok {
+				return msfp.ErrNotFound
+			}
+		}
+		out.Start(http.StatusOK, "text/vtt; charset=utf-8", int64(len(vtt)), "")
+		_, err = out.Write(vtt)
 		return err
 	}
 	return msfp.ErrNotFound
 }
 
-// serveFile answers a file, or the range of it asked.
+// serveFile answers a file, or the range of it asked. For the copy's
+// file the engine gives an exact range, and writes the headers itself.
 func serveFile(path string, rng *msfp.Range, out msfp.ResponseSink) error {
 	file, err := os.Open(path)
 	if err != nil {
@@ -189,11 +384,9 @@ func serveFile(path string, rng *msfp.Range, out msfp.ResponseSink) error {
 		return err
 	}
 	size, first, last := st.Size(), int64(0), st.Size()-1
-	types := map[string]string{".m3u8": "application/vnd.apple.mpegurl", ".ts": "video/mp2t", ".m4s": "video/iso.segment"}
-	status, contentType, contentRange := http.StatusOK, types[filepath.Ext(path)], ""
-	if contentType == "" {
-		contentType = "video/" + strings.TrimPrefix(filepath.Ext(path), ".")
-	}
+	types := map[string]string{".m3u8": "application/vnd.apple.mpegurl", ".ts": "video/mp2t", ".m4s": "video/iso.segment",
+		".jpg": "image/jpeg", ".mp4": "video/mp4"}
+	status, contentType, contentRange := http.StatusOK, cmp.Or(types[filepath.Ext(path)], "application/octet-stream"), ""
 	if rng != nil {
 		first, last = rng.First, min(rng.Last, size-1)
 		if rng.Suffix > 0 {
@@ -209,4 +402,48 @@ func serveFile(path string, rng *msfp.Range, out msfp.ResponseSink) error {
 	out.Start(status, contentType, last-first+1, contentRange)
 	_, err = io.Copy(out, io.NewSectionReader(file, first, last-first+1))
 	return err
+}
+
+// localImage is a local film's or series' image: base.jpg or base.png
+// in dir; "" for none, and for every other title.
+func localImage(t *msfp.VideoTitle, dir, base string) string {
+	if !strings.Contains(t.Key, "/local/") {
+		return ""
+	}
+	for _, ext := range []string{".jpg", ".png"} {
+		if p := filepath.Join(dir, base+ext); size("", p) > 0 {
+			return p
+		}
+	}
+	return ""
+}
+
+func size(dir, rel string) int64 {
+	st, err := os.Stat(filepath.Join(dir, rel))
+	if err != nil {
+		return 0
+	}
+	return st.Size()
+}
+
+func year(s string) int {
+	if y := atoi(s); y >= 1800 && y <= 9999 {
+		return y
+	}
+	return 0
+}
+
+func atoi(s string) int { n, _ := strconv.Atoi(s); return n }
+
+func cut(s string, n int) string {
+	if r := []rune(s); len(r) > n {
+		return string(r[:n])
+	}
+	return s
+}
+
+// escapeGlob escapes what filepath.Glob reads as a pattern, so that a
+// name like "Heat [tmdbid-949]" matches only itself.
+func escapeGlob(s string) string {
+	return strings.NewReplacer(`[`, `\[`, `]`, `\]`, `*`, `\*`, `?`, `\?`).Replace(s)
 }

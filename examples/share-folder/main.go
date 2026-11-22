@@ -1,15 +1,15 @@
 // Command share-folder is a small MSFP host: one server, its records in
-// JSON files, sharing a folder of films (folder.go) with the servers it
-// pairs with by hand, and playing theirs.
+// JSON files, sharing a folder of films and series (folder.go) with the
+// servers it pairs with by hand, and playing theirs.
 //
 // Two of them on one machine:
 //
-//	go run . -address https://127.0.0.1:8441 -listen :8441 -data a -films ~/films -loopback
+//	go run . -address https://127.0.0.1:8441 -listen :8441 -data a -folder ~/videos -loopback
 //	go run . -address https://127.0.0.1:8442 -listen :8442 -data b -loopback
 //
 // Then type "code" in the first, "redeem <code>" in the second, and
 // "accept <id>" in the first. "peers" lists them, "end <id>" ends one.
-// "offer <id>" shares the films with a peer; on the other side, "want
+// "offer <id>" shares the folder with a peer; on the other side, "want
 // <id>" reads them, "titles <id>" lists them, "play <id> <key>" prints a
 // URL that curl -k or ffplay -tls_verify 0 plays through this server
 // (anyone who has it may, for as long as the playback lasts: an example,
@@ -17,6 +17,15 @@
 // the viewer paused or resumed, "stop <playback>" ends it. Until then the
 // playback is reported to the peer every minute, which ends one it hears
 // nothing of for 2 minutes. "rescan" tells the engine the folder changed.
+//
+// What a peer may do here: "local <id> on|off" shares the folder's local
+// titles with it too (off by default); "limits <id> <streams>
+// <transcodes> [<downloads> <downloads a day> <download kbps> <scans a
+// day>]" sets its streams, and allows downloads and scans (none by
+// default). On the other side, "download <id> <key>" prints the URL of
+// the file to save (a download lives 24 hours, its late reports 30
+// days: "late <download> <position ms>" sends one), and "previews <id>
+// <key>" fetches a film's previews before it plays.
 // "rotate" moves this server to its next key; "stolen" revokes its key
 // and rotates ("stolen none": without the next key, every pairing ends);
 // "confirm <id>" accepts a peer's new key after comparing fingerprints.
@@ -31,8 +40,9 @@
 // "admin <group> <member>" names a member admin (the owner only), "ban
 // <group> <member>" bans one; "dissolve <group>" ends the group and the
 // pairings only it made;
-// "group-offer <group>" shares the films with the group; "auto <group>
-// on|off" accepts its members by itself; "leave <group>" leaves it.
+// "group-offer <group>" shares the folder with the group; "group-local
+// <group> on|off" its local titles too; "auto <group> on|off" accepts its
+// members by itself; "leave <group>" leaves it.
 //
 // Relations (core section 7.7): "individual <id>" asks a peer linked
 // through a group for the individual relation, or accepts its ask;
@@ -50,6 +60,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"math/big"
 	"net"
@@ -70,7 +81,7 @@ func main() {
 	listen := flag.String("listen", ":8443", "where to listen")
 	data := flag.String("data", "msfp-data", "the directory of its records")
 	loopback := flag.Bool("loopback", false, "allow peers on this machine")
-	films := flag.String("films", "", "the folder of films to share")
+	shared := flag.String("folder", "", "the folder of films and series to share")
 	flag.Parse()
 	ctx := context.Background()
 
@@ -81,13 +92,17 @@ func main() {
 	cert := selfSigned(*address)
 	cfg := msfp.Config{Address: *address, Store: store, AllowLoopback: *loopback,
 		Pins: []string{wire.Pin(cert.Leaf)}, Notifier: printer{}, Parts: []string{"catalog", "playback", "media", "video", "groups"}}
-	if *films != "" {
-		f := folder{*films}
+	var f *folder
+	if *shared != "" {
+		f = &folder{dir: *shared}
 		cfg.Catalog, cfg.Playback, cfg.Media = f, f, f
 	}
 	eng, err := msfp.Open(ctx, cfg)
 	if err != nil {
 		log.Fatal(err)
+	}
+	if f != nil {
+		f.opaque = eng.OpaqueKeyPart
 	}
 	mux := http.NewServeMux()
 	mux.Handle("/api/v1/federation/", eng.FederationHandler())
@@ -149,7 +164,31 @@ func main() {
 		case "uncallable":
 			show("can't be called: "+arg, eng.SetUncallable(ctx, arg == "on"))
 		case "offer":
-			show("offered", eng.SetOffers(ctx, arg, []string{"films"}))
+			show("offered", eng.SetOffers(ctx, arg, []string{"folder"}))
+		case "local":
+			peer, on, _ := strings.Cut(arg, " ")
+			show("local titles shared: "+on, eng.SetLocal(ctx, peer, on == "on"))
+		case "limits":
+			peer, rest, _ := strings.Cut(arg, " ")
+			var l msfp.Limits
+			_, err := fmt.Sscan(rest, &l.Streams, &l.Transcodes, &l.Downloads, &l.DownloadsPerDay, &l.DownloadKbps, &l.ScansPerDay)
+			if err == nil || errors.Is(err, io.EOF) {
+				err = eng.SetLimits(ctx, peer, l)
+			}
+			show(fmt.Sprintf("limits: %+v", l), err)
+		case "download":
+			peer, key, _ := strings.Cut(arg, " ")
+			pb, err := eng.Play(ctx, peer, msfp.PlayRequest{Title: key, Purpose: msfp.PurposeDownload, Delivery: msfp.DeliveryFile})
+			show(fmt.Sprintf("%s/watch/%s/file  (%d bytes; stop %s)", *address, pb.ID, pb.Size, pb.ID), err)
+		case "late":
+			id, pos, _ := strings.Cut(arg, " ")
+			var ms int64
+			fmt.Sscan(pos, &ms)
+			show("sent", eng.ReportOffline(ctx, id, msfp.OfflineReport{PositionMs: ms, At: time.Now()}))
+		case "previews":
+			peer, key, _ := strings.Cut(arg, " ")
+			pv, err := previewsOf(ctx, eng, store, peer, key)
+			show(fmt.Sprintf("%d sheets of %d tiles", len(pv.Sheets), pv.Trickplay.TileCount), err)
 		case "want":
 			libs, err := eng.TheirLibraries(ctx, arg)
 			var ids []string
@@ -230,7 +269,10 @@ func main() {
 			}
 			show("done", err)
 		case "group-offer":
-			show("offered", eng.SetGroupOffers(ctx, arg, []string{"films"}))
+			show("offered", eng.SetGroupOffers(ctx, arg, []string{"folder"}))
+		case "group-local":
+			group, on, _ := strings.Cut(arg, " ")
+			show("local titles shared: "+on, eng.SetGroupLocal(ctx, group, on == "on"))
 		case "leave":
 			show("left", eng.LeaveGroup(ctx, arg, nil))
 		case "dissolve":
@@ -259,10 +301,33 @@ func main() {
 			show("", err)
 		default:
 			fmt.Println("code [note] | redeem <code> | accept <id> | end <id> | peers | rotate [key] | stolen [key|none] | " +
-				"confirm <id> | address <url> | uncallable on|off | offer <id> | want <id> | titles <id> | play <id> <key> | stop <playback> | rescan | " +
-				"group-create <name> | groups | invite <group> | pair <group> <mail> | refuse <group> <mail> | join-accept <group> <peer> | admin <group> <member> | ban <group> <member> | group-offer <group> | auto <group> on|off | leave <group> | dissolve <group>")
+				"confirm <id> | address <url> | uncallable on|off | offer <id> | local <id> on|off | limits <id> <n>... | want <id> | titles <id> | " +
+				"play <id> <key> | download <id> <key> | late <download> <ms> | previews <id> <key> | stop <playback> | rescan | " +
+				"group-create <name> | groups | invite <group> | pair <group> <mail> | refuse <group> <mail> | join-accept <group> <peer> | admin <group> <member> | ban <group> <member> | group-offer <group> | group-local <group> on|off | auto <group> on|off | leave <group> | dissolve <group>")
 		}
 	}
+}
+
+// previewsOf fetches the previews of a peer's title's best copy.
+func previewsOf(ctx context.Context, eng *msfp.Engine, store *jsonfile.Store, peer, key string) (msfp.PreviewSheets, error) {
+	var t msfp.Title
+	err := store.Read(ctx, func(tx msfp.Tx) error {
+		var err error
+		t, err = tx.PeerTitle(peer, key)
+		return err
+	})
+	if err != nil {
+		return msfp.PreviewSheets{}, err
+	}
+	v, ok := t.(*msfp.VideoTitle)
+	if !ok {
+		return msfp.PreviewSheets{}, msfp.ErrNotFound
+	}
+	c, ok := v.BestCopy()
+	if !ok || !c.Previews {
+		return msfp.PreviewSheets{}, msfp.ErrNotFound
+	}
+	return eng.Previews(ctx, peer, key, c.ID)
 }
 
 // readNow reads a peer's titles, unless err.
