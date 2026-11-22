@@ -35,7 +35,7 @@ none of the protocol itself.
 | `github.com/msfp-io/msfp-go/wire` | the protocol's pieces: keys, pairing codes, signatures, strict JSON, statements, the media checks |
 | `github.com/msfp-io/msfp-go/store/jsonfile` | a ready store: the engine's records in JSON files, sealed with a key file |
 | `github.com/msfp-io/msfp-go/store/memory` | a ready store in memory, for tests |
-| `examples/share-folder` | a whole host in about 400 lines |
+| `examples/share-folder` | a whole host in about 600 lines |
 
 The only dependency beyond the standard library is
 [filippo.io/edwards25519](https://pkg.go.dev/filippo.io/edwards25519).
@@ -104,7 +104,8 @@ To share titles, give `Config` a `Catalog` (your libraries and titles), a
 `Playback` (starting and stopping a stream) and a `Media` (serving it). To
 play a peer's titles, call `Play`, `Progress`, `Stop` and `Fetch` from a
 route of your own. `Config.Notifier` tells your server what happened, for
-its panel and logs. The package documentation and
+its panel and logs. `CodeText` gives a live code's text again, to send
+once more. The package documentation and
 [host.md](https://github.com/msfp-io/msfp-spec/blob/main/api/host.md) have
 the details.
 
@@ -143,14 +144,26 @@ others redeem, `groups` to see the members and the requests waiting, and
 `pair <group> <mail>` to accept one. The comment at the top of
 [main.go](examples/share-folder/main.go) lists every command (key
 rotation, a stolen key, moving address, a server that can't be called,
-groups).
+groups, relations).
+
+## Groups and relations
+
+A link between two servers lasts while one relation holds it (MSFP core
+section 7.7): the individual one, made by hand with a code, or a group
+they are both in. `AskIndividual` asks a peer linked through a group for
+the individual relation (or accepts its ask), `EndIndividual` ends it
+(the link stays while a group holds it), and `BlockPeer` ends the link
+and keeps the peer away from every group. What this server shows from a
+group is one choice for the whole group: `GroupShows` lists each
+member's libraries and `SetGroupShows` hides some. In the example:
+`individual <id>`, `end-individual <id>` and `block <id>`.
 
 ## Versions
 
 The module follows [semantic versioning](https://semver.org). Its
-major.minor version is shared with the other MSFP engines (msfp-dotnet, to
-come): msfp-go 0.2.x and msfp-dotnet 0.2.x follow the same API design
-(the spec's api/). Patch versions are each library's own.
+major.minor version is shared with the other MSFP engine,
+[msfp-dotnet](https://github.com/msfp-io/msfp-dotnet): msfp-go 0.7.x and
+msfp-dotnet 0.7.x-preview follow the same API design (the spec's api/). Patch versions are each library's own.
 
 The module's version is separate from the protocol's: from v0.4.0 it
 speaks MSFP version 0, groups included; v0.3.0 and before speak the
