@@ -11,10 +11,10 @@ import (
 
 // The bounds of a lyrics answer (music section 6).
 const (
-	MaxLyricsBytes  = 1 << 20 // an answer of exactly this size is read
-	MaxLyricsSets   = 8
-	MaxLyricsLines  = 2000 // per set
-	MaxLyricsLine   = 512  // a line's value, in code points
+	MaxLyricsBytes = 1 << 20 // an answer of exactly this size is read
+	MaxLyricsSets  = 8
+	MaxLyricsLines = 2000 // per set
+	MaxLyricsLine  = 512  // a line's value, in code points
 )
 
 // LyricsKinds are OpenSubsonic's kinds of a lyrics set (music section

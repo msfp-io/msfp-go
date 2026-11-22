@@ -236,14 +236,6 @@ func TestVideoVectors(t *testing.T) {
 	}
 	for _, c := range v.Copies {
 		got, err := ReadCopy(json.RawMessage(c.Text))
-		if err != nil && c.Valid {
-			// Six cases of msfp-spec 2f3f5aa name the video's codecs twice,
-			// which core section 2.3 refuses: a slip of the generator, which
-			// meant the second. They are read as it meant them.
-			if again := lastMember(t, c.Text); again != c.Text {
-				got, err = ReadCopy(json.RawMessage(again))
-			}
-		}
 		check("copies", c, got, err == nil)
 	}
 	for list, cases := range map[string][]valued{"localKeys": v.LocalKeys, "tvdbKeys": v.TvdbKeys} {
@@ -356,20 +348,4 @@ func videoNoFalse(v any) any {
 		}
 	}
 	return v
-}
-
-// lastMember is text with each member named twice in an object kept
-// once, its last value.
-func lastMember(t *testing.T, text string) string {
-	d := json.NewDecoder(strings.NewReader(text))
-	d.UseNumber()
-	var v any
-	if err := d.Decode(&v); err != nil {
-		t.Fatal(err)
-	}
-	b, _ := Marshal(v)
-	if len(b) == len(text) {
-		return text
-	}
-	return string(b)
 }
