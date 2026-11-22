@@ -996,12 +996,13 @@ func (s *sender) videoOut(k wire.VideoKey, t *VideoTitle, library string) (video
 // sendCopy is one of the host's copies as it leaves toward a peer: its
 // ID the version ID play gives for it, never the host's handle; its
 // language tags as wire.SentTag gives them; its name and its tracks'
-// titles as Config.CopyName and Config.TrackTitle keep them (MSFP video
+// titles as Config.CopyName and Config.TrackTitle keep them, cleaned to plain
+// text within MSFP's bound whatever a hook returns (MSFP video
 // section 3.6). What remains out of MSFP's bounds is dropped when it is
 // read back.
 func (e *Engine) sendCopy(peer string, c wire.Copy) wire.Copy {
 	c.ID = e.versionID(peer, c.ID)
-	c.Name = e.cfg.CopyName(c.Name)
+	c.Name = wire.CleanText(e.cfg.CopyName(c.Name), wire.MaxCopyName)
 	c.Parts = slices.Clone(c.Parts)
 	c.Chapters = slices.Clone(c.Chapters)
 	c.Segments = slices.Clone(c.Segments)
@@ -1013,14 +1014,14 @@ func (e *Engine) sendCopy(peer string, c wire.Copy) wire.Copy {
 	audio := make([]wire.CopyAudio, 0, len(c.AudioTracks))
 	for _, a := range c.AudioTracks {
 		a.Language, _ = wire.SentTag(a.Language)
-		a.Title = e.cfg.TrackTitle(a.Title)
+		a.Title = wire.CleanText(e.cfg.TrackTitle(a.Title), wire.MaxCopyName)
 		audio = append(audio, a)
 	}
 	c.AudioTracks = audio
 	var subs []wire.CopySubtitle
 	for _, t := range c.SubtitleTracks {
 		t.Language, _ = wire.SentTag(t.Language)
-		t.Title = e.cfg.TrackTitle(t.Title)
+		t.Title = wire.CleanText(e.cfg.TrackTitle(t.Title), wire.MaxCopyName)
 		subs = append(subs, t)
 	}
 	c.SubtitleTracks = subs
@@ -1030,7 +1031,7 @@ func (e *Engine) sendCopy(peer string, c wire.Copy) wire.Copy {
 // sendMusicCopy is sendCopy for a track's copy (MSFP music section 3.3).
 func (e *Engine) sendMusicCopy(peer string, c wire.MusicCopy) wire.MusicCopy {
 	c.ID = e.versionID(peer, c.ID)
-	c.Name = e.cfg.CopyName(c.Name)
+	c.Name = wire.CleanText(e.cfg.CopyName(c.Name), wire.MaxCopyName)
 	if c.ReplayGain != nil {
 		g := *c.ReplayGain
 		c.ReplayGain = &g
