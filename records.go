@@ -157,8 +157,11 @@ type PeerRecord struct {
 	// Offers are the host libraries offered to it, OffersSeq the change
 	// number they were set at; Wants are its libraries we want; Limits
 	// ours to it, TheirLimits its to us (nil until it said); CatalogRead
-	// where our reading of its titles stands.
+	// where our reading of its titles stands. Local says the individual
+	// relation shares the host's local titles too, in the libraries it
+	// offers (MSFP catalog section 5: off by default).
 	Offers      []string        `json:"offers,omitempty"`
+	Local       bool            `json:"local,omitempty"`
 	OffersSeq   int64           `json:"offersSeq,omitempty"`
 	Wants       []WantedLibrary `json:"wants,omitempty"`
 	Limits      Limits          `json:"limits"`
@@ -175,7 +178,9 @@ type PeerRecord struct {
 	// keepPairings). IndividualRefused: our operator refused the peer's
 	// ask, privately. GroupOffers and Pools are what its
 	// groups give it, copied from them whenever they change: the host
-	// libraries each offers, and each group's pool. JoiningGroup is the
+	// libraries each offers, and each group's pool; GroupLocal, the host
+	// libraries whose local titles they share (those of the groups that
+	// share local titles, among the libraries each offers). JoiningGroup is the
 	// group a code of ours invited it to, until our operator accepts it.
 	Groups            []string    `json:"groups,omitempty"`
 	NotByHand         bool        `json:"notByHand,omitempty"`
@@ -183,6 +188,7 @@ type PeerRecord struct {
 	KeepChoice        bool        `json:"keepChoice,omitempty"`
 	IndividualRefused bool        `json:"individualRefused,omitempty"`
 	GroupOffers       []string    `json:"groupOffers,omitempty"`
+	GroupLocal        []string    `json:"groupLocal,omitempty"`
 	Pools             []GroupPool `json:"pools,omitempty"`
 	JoiningGroup      string      `json:"joiningGroup,omitempty"`
 }
@@ -220,7 +226,10 @@ type GroupRecord struct {
 	// false: each request waits for its operator (groups section 4.1).
 	Accept bool     `json:"accept,omitempty"`
 	Offers []string `json:"offers,omitempty"`
-	Pool   Limits   `json:"pool"`
+	// Local: this server shares its local titles with the group, in the
+	// libraries it offers it (MSFP groups section 9: off by default).
+	Local bool   `json:"local,omitempty"`
+	Pool  Limits `json:"pool"`
 	// Hidden are the members' libraries this server doesn't show from the
 	// group: it shows everything else they offer it (SetGroupShows).
 	Hidden []HiddenLibrary `json:"hidden,omitempty"`

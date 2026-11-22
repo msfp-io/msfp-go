@@ -539,12 +539,12 @@ func (e *Engine) readTitle(p *PeerRecord, raw json.RawMessage, libs []string) (T
 			return nil, false
 		}
 		t := &VideoTitle{TitleCommon: TitleCommon{Key: v.Key, Kind: v.Kind, Libraries: []string{v.Library}},
-			Audio: v.Audio, Subtitles: v.Subtitles, With: v.With, IDs: v.IDs}
-		if v.Video != nil {
-			t.Video = &Picture{Height: v.Video.Height, HDR: v.Video.HDR}
-		}
+			Copies: v.Copies, With: v.With, IDs: v.IDs, ExtraType: v.ExtraType, Name: v.Name}
 		if v.Place != nil {
 			t.Place = &Place{Season: v.Place.Season, Episode: v.Place.Episode}
+		}
+		if d := v.Description; d != nil {
+			t.Name, t.Year, t.Image = d.Name, d.Year, d.Image
 		}
 		return t, true
 	case wire.PartMusic:
@@ -553,8 +553,10 @@ func (e *Engine) readTitle(p *PeerRecord, raw json.RawMessage, libs []string) (T
 			return nil, false
 		}
 		return &MusicTitle{TitleCommon: TitleCommon{Key: m.Key, Kind: m.Kind, Libraries: []string{m.Library}},
-			Name: m.Name, Artists: m.Artists, ArtistNames: m.ArtistNames, Album: m.Album, Disc: m.Disc,
-			Number: m.Number, Year: m.Year, DurationMs: m.DurationMs, IDs: m.IDs}, true
+			Name: m.Name, SortName: m.SortName, Artists: m.Artists, ArtistNames: m.ArtistNames,
+			ReleaseType: m.ReleaseType, Compilation: m.Compilation, Date: m.Date, OriginalDate: m.OriginalDate,
+			Genres: m.Genres, Album: m.Album, Disc: m.Disc, Number: m.Number, Copies: m.Copies,
+			Image: m.Image != nil && *m.Image, IDs: m.IDs}, true
 	}
 	return nil, false
 }

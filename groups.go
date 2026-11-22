@@ -61,6 +61,7 @@ type GroupView struct {
 	Requests  []GroupRequestView
 	Accept    bool
 	Offers    []string
+	Local     bool // its local titles shared with the group (SetGroupLocal)
 	Pool      Limits
 	Dissolved bool
 	// Joining: the list hasn't arrived from the inviter yet.
@@ -157,7 +158,7 @@ func envelopes(lists ...[]StoredEvent) []wire.Envelope {
 func (e *Engine) groupView(g *GroupRecord, peers []PeerRecord) GroupView {
 	s := e.stateOf(g)
 	v := GroupView{ID: g.ID, Name: s.Name, Settings: s.Settings, Me: g.Me, Owner: s.Owner, Heir: s.Heir,
-		Role: role(s, g.Me), Accept: g.Accept, Offers: slices.Clone(g.Offers), Pool: g.Pool, Dissolved: s.Dissolved,
+		Role: role(s, g.Me), Accept: g.Accept, Offers: slices.Clone(g.Offers), Local: g.Local, Pool: g.Pool, Dissolved: s.Dissolved,
 		Joining: s.Members[g.Me] == nil && len(g.Events) == 0}
 	for _, m := range s.Members {
 		key, _ := wire.Decode64(m.Key, 32)
@@ -586,6 +587,40 @@ func (e *Engine) SetGroupOffers(ctx context.Context, id string, libraries []stri
 	return nil
 }
 
+// SetGroupLocal chooses whether this server shares its local titles
+// (MSFP catalog section 4.3) with a group, in the libraries it offers it:
+// off by default. A change forces a whole reading on every link through
+// it. Errors: ErrNotFound, ErrNoGroups.
+func (e *Engine) SetGroupLocal(ctx context.Context, id string, on bool) error {
+	mark, err := e.seqMark(ctx)
+	if err != nil {
+		return err
+	}
+	changed := false
+	err = e.cfg.Store.Update(ctx, func(tx Tx) error {
+		gt, err := groupsTx(tx)
+		if err != nil {
+			return err
+		}
+		g, err := gt.Group(id)
+		if err != nil || g == nil {
+			return cmpErr(err, ErrNotFound)
+		}
+		if changed = g.Local != on; !changed {
+			return nil
+		}
+		g.Local = on
+		if err := gt.PutGroup(*g); err != nil {
+			return err
+		}
+		return e.refreshLinksAt(tx, mark)
+	})
+	if err == nil && changed {
+		e.bumpLog(ctx)
+	}
+	return err
+}
+
 // endPlaybacksNotOffered ends the playbacks from libraries their link is no
 // longer offered (playback section 6.3).
 func (e *Engine) endPlaybacksNotOffered(ctx context.Context) {
@@ -804,7 +839,7 @@ func (e *Engine) dropGroup(ctx context.Context, id string, keep bool, why, reaso
 				// kept, are the group's until changed.
 				p.KeepChoice = true
 				if g != nil {
-					p.Offers, p.Limits = slices.Clone(g.Offers), g.Pool
+					p.Offers, p.Local, p.Limits = slices.Clone(g.Offers), g.Local, g.Pool
 				}
 			}
 			if err := tx.PutPeer(p); err != nil {
@@ -1390,7 +1425,7 @@ func (e *Engine) refreshLinksAt(tx Tx, mark int64) error {
 		return err
 	}
 	for _, p := range peers {
-		var offers []string
+		var offers, local []string
 		var pools []GroupPool
 		for _, id := range p.Groups {
 			g, ok := byID[id]
@@ -1401,15 +1436,21 @@ func (e *Engine) refreshLinksAt(tx Tx, mark int64) error {
 				if !slices.Contains(offers, l) {
 					offers = append(offers, l)
 				}
+				if g.Local && !slices.Contains(local, l) {
+					local = append(local, l)
+				}
 			}
 			pools = append(pools, GroupPool{Group: id, Limits: g.Pool})
 		}
 		slices.Sort(offers)
-		if slices.Equal(offers, p.GroupOffers) && slices.Equal(pools, p.Pools) {
+		slices.Sort(local)
+		if slices.Equal(offers, p.GroupOffers) && slices.Equal(local, p.GroupLocal) && slices.Equal(pools, p.Pools) {
 			continue
 		}
-		changed := !slices.Equal(offers, p.GroupOffers)
-		p.GroupOffers, p.Pools = offers, pools
+		// What it is offered, local titles included: a whole reading
+		// follows (MSFP catalog section 5).
+		changed := !slices.Equal(offers, p.GroupOffers) || !slices.Equal(local, p.GroupLocal)
+		p.GroupOffers, p.GroupLocal, p.Pools = offers, local, pools
 		if changed {
 			if p.OffersSeq, err = e.offersSeq(tx, mark); err != nil {
 				return err
@@ -1420,6 +1461,22 @@ func (e *Engine) refreshLinksAt(tx Tx, mark int64) error {
 		}
 	}
 	return nil
+}
+
+// localOffered are the host libraries whose local titles a link is
+// shared: those its individual relation offers when it shares local
+// titles, and those of its groups that do (MSFP catalog section 5, groups
+// section 9: a relation that allows it, and offers the library).
+func localOffered(p *PeerRecord) []string {
+	out := slices.Clone(p.GroupLocal)
+	if p.individual() && p.Local {
+		for _, l := range p.Offers {
+			if !slices.Contains(out, l) {
+				out = append(out, l)
+			}
+		}
+	}
+	return out
 }
 
 // offered are the host libraries a link is offered: by hand, and through

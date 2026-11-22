@@ -80,7 +80,7 @@ func TestPeerTitles(t *testing.T) {
 	ctx := context.Background()
 	st := memory.New()
 	title := func(key string) msfp.Title {
-		return &msfp.VideoTitle{TitleCommon: msfp.TitleCommon{Key: key, Kind: "movie", Libraries: []string{"L"}}, Audio: []string{"fr"}}
+		return &msfp.VideoTitle{TitleCommon: msfp.TitleCommon{Key: key, Kind: "movie", Libraries: []string{"L"}}, Name: "fr"}
 	}
 	st.Update(ctx, func(tx msfp.Tx) error {
 		tx.PutPeer(msfp.PeerRecord{ID: "p1", Key: []byte("k")})
@@ -90,7 +90,7 @@ func TestPeerTitles(t *testing.T) {
 	})
 	st.Read(ctx, func(tx msfp.Tx) error {
 		page, _ := tx.PeerTitles("p1", "movie/tmdb/1", 1)
-		if len(page) != 1 || page[0].Common().Key != "movie/tmdb/2" || page[0].(*msfp.VideoTitle).Audio[0] != "fr" {
+		if len(page) != 1 || page[0].Common().Key != "movie/tmdb/2" || page[0].(*msfp.VideoTitle).Name != "fr" {
 			t.Errorf("page: %+v", page)
 		}
 		if sent, _ := tx.Sent("p1", []string{"movie/tmdb/9", "movie/tmdb/8"}); len(sent) != 1 {

@@ -3,12 +3,18 @@ package msfp
 import (
 	"bytes"
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode"
 
 	"github.com/msfp-io/msfp-go/wire"
 )
@@ -163,6 +169,53 @@ func (e *Engine) SetOffers(ctx context.Context, peer string, libraries []string)
 	e.bumpLog(ctx)
 	e.endPlaybacks(func(pb *playback) bool { return pb.peer == peer && !slices.Contains(keep, pb.library) }, EndNotOffered)
 	return nil
+}
+
+// SetLocal chooses whether the individual relation with a paired peer
+// shares the host's local titles too (MSFP catalog section 5), in the
+// libraries offered to it: off by default. A change forces the peer's
+// next reading to be a whole one. Errors: ErrNotFound, ErrNotPaired.
+func (e *Engine) SetLocal(ctx context.Context, peer string, on bool) error {
+	mark, err := e.seqMark(ctx)
+	if err != nil {
+		return err
+	}
+	changed := false
+	err = e.cfg.Store.Update(ctx, func(tx Tx) error {
+		p, err := tx.Peer(peer)
+		switch {
+		case err != nil:
+			return err
+		case p == nil:
+			return ErrNotFound
+		case p.State != Paired:
+			return ErrNotPaired
+		}
+		if changed = p.Local != on; !changed {
+			return nil
+		}
+		if p.OffersSeq, err = e.offersSeq(tx, mark); err != nil {
+			return err
+		}
+		p.Local = on
+		return tx.PutPeer(*p)
+	})
+	if err == nil && changed {
+		e.bumpLog(ctx)
+	}
+	return err
+}
+
+// OpaqueKeyPart is an opaque part of a title key the host may use for
+// one of its titles (MSFP catalog section 4.2): the identifier of a local
+// title, or an extra's part after x/, made from the host's own
+// identifier of it (its media server's item ID, say) as a keyed MAC
+// under this server's IDs secret: 22 characters of base64url, stable as
+// long as id is, and never computable by a peer from it.
+func (e *Engine) OpaqueKeyPart(id string) string {
+	m := hmac.New(sha256.New, e.ourKeys().ids)
+	m.Write([]byte("key part\n" + id))
+	return wire.Encode64(m.Sum(nil)[:16])
 }
 
 // LibraryRemoved is the host saying one of its libraries is gone: it is
@@ -471,13 +524,14 @@ type titlesRequest struct {
 	Since     int64     `json:"since"`
 }
 
-// titlesAnswer is a page of titles. Titles is never null.
+// titlesAnswer is a page of titles, each title as JSON already. Titles
+// is never null.
 type titlesAnswer struct {
-	Titles  []any    `json:"titles"`
-	Next    string   `json:"next,omitempty"`
-	Changes bool     `json:"changes,omitempty"`
-	Gone    []string `json:"gone,omitempty"`
-	Seq     int64    `json:"seq,omitempty"`
+	Titles  []json.RawMessage `json:"titles"`
+	Next    string            `json:"next,omitempty"`
+	Changes bool              `json:"changes,omitempty"`
+	Gone    []string          `json:"gone,omitempty"`
+	Seq     int64             `json:"seq,omitempty"`
 }
 
 // titles answers a paired peer with a page of the titles in the
@@ -487,13 +541,13 @@ type titlesAnswer struct {
 func (e *Engine) titles(req *request) response {
 	p := req.peer
 	var in titlesRequest
-	if p == nil || p.State != Paired || wire.DecodeJSON(req.body, &in) != nil || in.Libraries == nil || len(in.After) > 512 {
+	if p == nil || p.State != Paired || wire.DecodeJSON(req.body, &in) != nil || in.Libraries == nil || len(in.After) > wire.MaxAfter {
 		return refuse(probNotFound)
 	}
 	if !e.on(p, wire.PartCatalog) {
 		return refuse(probNotSupported)
 	}
-	out := titlesAnswer{Titles: []any{}}
+	out := titlesAnswer{Titles: []json.RawMessage{}}
 	if e.cfg.Catalog == nil {
 		return answer(out)
 	}
@@ -532,20 +586,21 @@ func (e *Engine) titles(req *request) response {
 	if len(libs) == 0 {
 		return answer(out)
 	}
+	s := &sender{e: e, ctx: ctx, p: p, libs: libs, local: localOffered(p), pub: byPublic, parents: map[string]string{}}
 	var sent []string
 	if in.Since > 0 && in.Since >= floor && in.Since <= seq && in.Since >= p.OffersSeq {
-		ok, err := e.changesPage(ctx, p, libs, byPublic, in, &out, &sent)
+		ok, err := s.changesPage(in, &out, &sent)
 		if err != nil {
 			e.log.Warn("msfp: the catalog's changes couldn't be read", "error", err)
 			return refuse(probInternal)
 		}
 		if !ok {
-			out = titlesAnswer{Titles: []any{}, Seq: seq}
+			out = titlesAnswer{Titles: []json.RawMessage{}, Seq: seq}
 			sent = nil
 		}
 	}
 	if !out.Changes {
-		if err := e.wholePage(ctx, p, libs, byPublic, in.After, &out, &sent); err != nil {
+		if err := s.wholePage(in.After, &out, &sent); err != nil {
 			e.log.Warn("msfp: the catalog's titles couldn't be read", "error", err)
 			return refuse(probInternal)
 		}
@@ -558,13 +613,29 @@ func (e *Engine) titles(req *request) response {
 	return answer(out)
 }
 
-// wholePage fills a whole-list page: up to 5,000 titles after after,
-// with next set only on a full page (MSFP catalog section 3.1). Titles
-// the peer can't be sent are skipped, and the host asked for more.
-func (e *Engine) wholePage(ctx context.Context, p *PeerRecord, libs []string, pub map[string]string, after string,
-	out *titlesAnswer, sent *[]string) error {
-	for len(out.Titles) < titlesPage {
-		page, err := e.cfg.Catalog.Titles(ctx, libs, after, titlesPage-len(out.Titles))
+// sender writes the host's titles for one titles answer to a peer: the
+// host libraries asked (offered to it), those of them whose local titles
+// it is shared, their public IDs, and the extras' titles looked at, by
+// key, with the library each was sent in ("" for not sent).
+type sender struct {
+	e       *Engine
+	ctx     context.Context
+	p       *PeerRecord
+	libs    []string
+	local   []string
+	pub     map[string]string
+	parents map[string]string
+}
+
+// wholePage fills a whole-list page: the titles after after, up to 5,000
+// and 3 MiB of answer (MSFP catalog section 3.1), next set whenever a
+// title remains after the page. Titles the peer can't be sent are
+// skipped, and the host asked for more.
+func (s *sender) wholePage(after string, out *titlesAnswer, sent *[]string) error {
+	budget := wire.NewPageBudget(wire.PageReserve)
+	last := ""
+	for {
+		page, err := s.e.cfg.Catalog.Titles(s.ctx, s.libs, after, titlesPage)
 		if err != nil {
 			return err
 		}
@@ -574,30 +645,43 @@ func (e *Engine) wholePage(ctx context.Context, p *PeerRecord, libs []string, pu
 				return ErrInternal.with(errors.New("the host's titles aren't in key order"))
 			}
 			after = key
-			if w, ok := e.titleOut(p, t, libs, pub); ok {
-				out.Titles = append(out.Titles, w)
-				*sent = append(*sent, key)
+			raw, ok, err := s.title(t)
+			if err != nil {
+				return err
 			}
+			if !ok {
+				continue
+			}
+			if !budget.Add(len(raw)) {
+				if budget.Keys() == 0 {
+					s.e.log.Warn("msfp: a title of the host's catalog passes 3 MiB alone; it isn't sent", "key", key)
+					continue
+				}
+				out.Next = last
+				return nil
+			}
+			out.Titles = append(out.Titles, raw)
+			*sent = append(*sent, key)
+			last = key
 		}
 		if !page.More || len(page.Titles) == 0 {
 			return nil
 		}
 	}
-	out.Next = after
-	return nil
 }
 
 // changesPage fills a changes page: what changed after in.Since, titles
-// new or changed and keys gone (of those the peer was ever sent), 5,000
-// keys looked at at most; false when the log doesn't reach back that far.
-func (e *Engine) changesPage(ctx context.Context, p *PeerRecord, libs []string, pub map[string]string, in titlesRequest,
-	out *titlesAnswer, sent *[]string) (bool, error) {
+// new or changed and keys gone (of those the peer was ever sent), in one
+// byte order, 5,000 keys looked at at most, and within 5,000 keys and 3
+// MiB of answer; false when the log doesn't reach back that far.
+func (s *sender) changesPage(in titlesRequest, out *titlesAnswer, sent *[]string) (bool, error) {
+	e := s.e
 	var present []Title
 	var gone []string
 	var last string
 	more := false
 	if cl := e.changeLog(); cl != nil {
-		page, err := cl.Changes(ctx, libs, in.Since, in.After, titlesPage)
+		page, err := cl.Changes(s.ctx, s.libs, in.Since, in.After, titlesPage)
 		if errors.Is(err, ErrTooOld) {
 			return false, nil
 		}
@@ -610,7 +694,7 @@ func (e *Engine) changesPage(ctx context.Context, p *PeerRecord, libs []string, 
 		present, gone, last, more = page.Present, page.Gone, page.Last, page.More
 	} else {
 		var changes []OwnChange
-		err := e.cfg.Store.Read(ctx, func(tx Tx) error {
+		err := e.cfg.Store.Read(s.ctx, func(tx Tx) error {
 			var err error
 			changes, err = tx.(OwnLogTx).OwnChanges(in.Since, in.After, titlesPage)
 			return err
@@ -620,7 +704,7 @@ func (e *Engine) changesPage(ctx context.Context, p *PeerRecord, libs []string, 
 		}
 		for _, c := range changes {
 			last = c.Key
-			if c.Title != nil && overlaps(c.Title.Common().Libraries, libs) {
+			if c.Title != nil && overlaps(c.Title.Common().Libraries, s.libs) {
 				present = append(present, c.Title)
 			} else {
 				gone = append(gone, c.Key)
@@ -629,27 +713,77 @@ func (e *Engine) changesPage(ctx context.Context, p *PeerRecord, libs []string, 
 		more = len(changes) == titlesPage
 	}
 	out.Changes = true
+	type entry struct {
+		key string
+		raw json.RawMessage // nil: gone
+	}
+	var entries []entry
 	for _, t := range present {
-		if w, ok := e.titleOut(p, t, libs, pub); ok {
-			out.Titles = append(out.Titles, w)
-			*sent = append(*sent, t.Common().Key)
+		key := t.Common().Key
+		raw, ok, err := s.title(t)
+		if err != nil {
+			return false, err
+		}
+		if ok {
+			entries = append(entries, entry{key: key, raw: raw})
 		} else {
-			gone = append(gone, t.Common().Key)
+			gone = append(gone, key)
 		}
 	}
+	// A title's extras go with it (MSFP catalog section 3.5), whether the
+	// host still lists them or not.
+	for _, k := range slices.Clone(gone) {
+		extras, err := s.extrasOf(k)
+		if err != nil {
+			return false, err
+		}
+		for _, x := range extras {
+			if !slices.Contains(gone, x) {
+				gone = append(gone, x)
+			}
+		}
+	}
+	entries = slices.DeleteFunc(entries, func(en entry) bool { return slices.Contains(gone, en.key) })
 	// gone names only titles the peer was told of (MSFP catalog section
 	// 3.2), else it would learn of titles it never could see.
 	if len(gone) > 0 {
-		err := e.cfg.Store.Read(ctx, func(tx Tx) error {
+		err := e.cfg.Store.Read(s.ctx, func(tx Tx) error {
 			var err error
-			gone, err = tx.Sent(p.ID, gone)
+			gone, err = tx.Sent(s.p.ID, gone)
 			return err
 		})
 		if err != nil {
 			return false, err
 		}
-		slices.Sort(gone)
-		out.Gone = gone
+		for _, k := range gone {
+			entries = append(entries, entry{key: k})
+		}
+	}
+	slices.SortFunc(entries, func(a, b entry) int { return strings.Compare(a.key, b.key) })
+	budget := wire.NewPageBudget(wire.PageReserve)
+	included := ""
+	for _, en := range entries {
+		size := len(en.raw)
+		if en.raw == nil {
+			size = len(en.key) + 2 // its quotes; keys need no escaping
+		}
+		if !budget.Add(size) {
+			if budget.Keys() == 0 {
+				e.log.Warn("msfp: a title of the host's catalog passes 3 MiB alone; it isn't sent", "key", en.key)
+				continue
+			}
+			// The page ends before it: the next asks on from the last key
+			// of this one.
+			out.Next = included
+			return true, nil
+		}
+		included = en.key
+		if en.raw == nil {
+			out.Gone = append(out.Gone, en.key)
+		} else {
+			out.Titles = append(out.Titles, en.raw)
+			*sent = append(*sent, en.key)
+		}
 	}
 	if more && last > in.After {
 		out.Next = last
@@ -666,131 +800,321 @@ func overlaps(a, b []string) bool {
 	return false
 }
 
-// titleOut is a title of the host as sent to p: false when its key isn't
-// canonical (with a warning: the host's bug), of a content part off with
-// p, or in none of the libraries asked. Its library is the one asked
-// whose public ID comes first in byte order (MSFP catalog section 3).
-func (e *Engine) titleOut(p *PeerRecord, t Title, libs []string, pub map[string]string) (any, bool) {
-	c := t.Common()
+// title is a title of the host as sent to the peer, as JSON: false when
+// its key isn't canonical or isn't of its kind (with a warning: the
+// host's bug), of a content part off with the peer, in none of the
+// libraries asked, local while its libraries share no local titles with
+// the peer (MSFP catalog section 5), an extra whose title isn't sent in
+// the same library (catalog section 3.5), or left with nothing a
+// receiver would keep. Its library is the one asked whose public ID
+// comes first in byte order (MSFP catalog section 3).
+func (s *sender) title(t Title) (json.RawMessage, bool, error) {
+	e, c := s.e, t.Common()
 	k, ok := wire.ParseKey(c.Key)
 	if !ok || k.Kind != c.Kind {
 		e.log.Warn("msfp: a title of the host's catalog has a key MSFP doesn't take; it isn't sent", "key", c.Key)
-		return nil, false
+		return nil, false, nil
 	}
-	if !e.on(p, k.Part) {
-		return nil, false
+	if !e.on(s.p, k.Part) {
+		return nil, false, nil
+	}
+	libs := s.libs
+	if localKey(c.Key) {
+		libs = slices.DeleteFunc(slices.Clone(libs), func(l string) bool { return !slices.Contains(s.local, l) })
 	}
 	library := ""
 	for _, l := range c.Libraries {
-		if slices.Contains(libs, l) && (library == "" || pub[l] < library) {
-			library = pub[l]
+		if slices.Contains(libs, l) && (library == "" || s.pub[l] < library) {
+			library = s.pub[l]
 		}
 	}
+	defer func() {
+		if k.Kind != "extra" {
+			s.parents[c.Key] = library
+		}
+	}()
 	if library == "" {
-		return nil, false
+		return nil, false, nil
 	}
+	var w any
 	switch t := t.(type) {
 	case *VideoTitle:
-		if w, ok := videoOut(k, t, library); ok {
-			return w, true
+		vk, _ := wire.ParseVideoKey(c.Key)
+		if parent, ok := vk.Parent(); ok {
+			in, err := s.parentLibrary(parent.String())
+			if err != nil || in != library {
+				return nil, false, err
+			}
 		}
-		// MSFP video section 4.1: an episode the owner can't place in
-		// TMDB's numbering is left out.
-		e.log.Debug("msfp: an episode of the host's catalog keyed by its TMDB ID has no valid place; it isn't sent", "key", c.Key)
+		w, ok = s.videoOut(vk, t, library)
 	case *MusicTitle:
-		if w, ok := musicOut(k, t, library); ok {
-			return w, true
-		}
-		e.log.Warn("msfp: a music title of the host's catalog has no name; it isn't sent", "key", c.Key)
+		w, ok = s.musicOut(t, library)
 	}
-	return nil, false
+	if !ok {
+		library = ""
+		e.log.Debug("msfp: a title of the host's catalog has nothing MSFP takes; it isn't sent", "key", c.Key)
+		return nil, false, nil
+	}
+	raw, err := marshal(w)
+	if err != nil {
+		library = ""
+		e.log.Warn("msfp: a title of the host's catalog couldn't be written; it isn't sent", "key", c.Key, "error", err)
+		return nil, false, nil
+	}
+	return raw, true, nil
 }
 
-// videoTitleWire is a video title as sent (MSFP video section 3).
+// localKey says whether a title key is of the local scheme, of either
+// content part.
+func localKey(key string) bool {
+	if k, ok := wire.ParseVideoKey(key); ok {
+		return k.Scheme == wire.SchemeLocal
+	}
+	k, ok := wire.ParseMusicKey(key)
+	return ok && k.Local()
+}
+
+// parentLibrary is the library an extra's title is sent in to the peer,
+// "" when it isn't sent: noted when the title came before in this
+// answer, else looked up in the host's catalog.
+func (s *sender) parentLibrary(key string) (string, error) {
+	if l, ok := s.parents[key]; ok {
+		return l, nil
+	}
+	t, err := s.e.hostTitle(s.ctx, key, s.libs)
+	if err != nil || t == nil {
+		s.parents[key] = ""
+		return "", err
+	}
+	if _, _, err := s.title(t); err != nil {
+		return "", err
+	}
+	return s.parents[key], nil
+}
+
+// extrasOf are the keys of the extras the host lists under a film, a
+// series or a season (MSFP video section 4.6); none for another key.
+func (s *sender) extrasOf(key string) ([]string, error) {
+	k, ok := wire.ParseVideoKey(key)
+	if !ok || k.Kind != "movie" && k.Kind != "series" && k.Kind != "season" {
+		return nil, nil
+	}
+	var out []string
+	prefix := key + "/x/"
+	for after := prefix; ; {
+		page, err := s.e.cfg.Catalog.Titles(s.ctx, s.libs, after, 64)
+		if err != nil {
+			return nil, err
+		}
+		for _, t := range page.Titles {
+			k := t.Common().Key
+			if !strings.HasPrefix(k, prefix) || k <= after {
+				return out, nil
+			}
+			out, after = append(out, k), k
+		}
+		if !page.More || len(page.Titles) == 0 {
+			return out, nil
+		}
+	}
+}
+
+// hostTitle is the host's title of that key in one of these libraries;
+// nil for none. The host's catalog gives titles after a key: it is asked
+// for the first after the greatest string below key that no key can be
+// (keys are of A–Z a–z 0–9 _ - /, all below ~).
+func (e *Engine) hostTitle(ctx context.Context, key string, libs []string) (Title, error) {
+	if e.cfg.Catalog == nil || key == "" || len(libs) == 0 {
+		return nil, nil
+	}
+	before := key[:len(key)-1] + string(key[len(key)-1]-1) + "~"
+	page, err := e.cfg.Catalog.Titles(ctx, libs, before, 1)
+	if err != nil || len(page.Titles) == 0 || page.Titles[0].Common().Key != key {
+		return nil, err
+	}
+	return page.Titles[0], nil
+}
+
+// videoTitleWire is a video title as sent (MSFP video section 3), its
+// members in the order of the specification's table.
 type videoTitleWire struct {
 	Key       string            `json:"key"`
 	Kind      string            `json:"kind"`
 	Library   string            `json:"library"`
-	Audio     []string          `json:"audio,omitempty"`
-	Subtitles []string          `json:"subtitles,omitempty"`
-	Video     *wire.Picture     `json:"video,omitempty"`
+	Copies    []wire.Copy       `json:"copies,omitempty"`
 	Place     *wire.Place       `json:"place,omitempty"`
 	With      []string          `json:"with,omitempty"`
 	IDs       map[string]string `json:"ids,omitempty"`
+	ExtraType string            `json:"extraType,omitempty"`
+	Name      string            `json:"name,omitempty"`
+	Year      int               `json:"year,omitempty"`
+	Image     bool              `json:"image,omitempty"`
 }
 
-// videoOut is the host's video title as sent: its members cleaned as a
-// receiver would keep them, so nothing leaves that MSFP doesn't take.
-// False for an episode keyed by its TMDB episode ID without a valid
-// place, which a receiver would skip (MSFP video sections 3.1 and 4.1);
-// place on any other title isn't sent.
-func videoOut(k wire.TitleKey, t *VideoTitle, library string) (videoTitleWire, bool) {
-	w := videoTitleWire{Key: t.Key, Kind: t.Kind, Library: library}
-	if k.Playable {
-		w.Audio, w.Subtitles = wire.SentTags(t.Audio), wire.SentTags(t.Subtitles)
-		if p, ok := BestPicture(t.Pictures); ok {
-			w.Video = &wire.Picture{Height: p.Height, HDR: p.HDR}
-		}
+// videoOut is the host's video title as sent: its copies made ready to
+// leave (sendCopy), then the whole read back as a receiver reads it
+// (wire.ReadVideoTitle), so that nothing leaves that a receiver would
+// skip or drop, and nothing MSFP doesn't take. False when a receiver
+// would skip it: a film, an episode or an extra with no copy left, an
+// episode keyed by its TMDB episode ID without a valid place (MSFP video
+// sections 3.1 and 4.1), a local film or series without a name, or an
+// extra of no type MSFP lists (theme songs and videos are never sent).
+func (s *sender) videoOut(k wire.VideoKey, t *VideoTitle, library string) (videoTitleWire, bool) {
+	if k.Kind == "extra" && !slices.Contains(wire.ExtraTypes, t.ExtraType) {
+		return videoTitleWire{}, false
 	}
-	if k.Kind == "episode" {
-		vk, _ := wire.ParseVideoKey(t.Key)
-		w.With = wire.CleanWith(vk, t.With)
-		slices.Sort(w.With)
-		if vk.EpisodeID > 0 {
-			if t.Place == nil {
-				return videoTitleWire{}, false
-			}
-			p := wire.Place{Season: t.Place.Season, Episode: t.Place.Episode}
-			if !p.Valid() {
-				return videoTitleWire{}, false
-			}
-			w.Place = &p
-		}
+	in := videoTitleWire{Key: t.Key, Kind: t.Kind, Library: library, With: t.With, IDs: t.IDs,
+		ExtraType: t.ExtraType, Name: t.Name, Year: t.Year, Image: t.Image}
+	for _, c := range t.Copies {
+		in.Copies = append(in.Copies, s.e.sendCopy(s.p.ID, c))
 	}
-	if k.Kind != "season" {
-		for scheme, v := range t.IDs {
-			if wire.OtherID(scheme, v) {
-				if w.IDs == nil {
-					w.IDs = map[string]string{}
-				}
-				w.IDs[scheme] = v
-			}
-		}
+	if t.Place != nil {
+		in.Place = &wire.Place{Season: t.Place.Season, Episode: t.Place.Episode}
+	}
+	raw, err := json.Marshal(in)
+	if err != nil {
+		return videoTitleWire{}, false
+	}
+	v, ok := wire.ReadVideoTitle(raw)
+	if !ok {
+		return videoTitleWire{}, false
+	}
+	w := videoTitleWire{Key: v.Key, Kind: v.Kind, Library: library, Copies: v.Copies, Place: v.Place,
+		With: v.With, IDs: v.IDs, ExtraType: v.ExtraType, Name: v.Name}
+	wire.SortCopies(w.Copies)
+	slices.Sort(w.With)
+	if d := v.Description; d != nil {
+		w.Name, w.Year, w.Image = d.Name, d.Year, d.Image
 	}
 	return w, true
 }
 
-// musicTitleWire is a music title as sent (MSFP music section 3).
-type musicTitleWire struct {
-	Key         string            `json:"key"`
-	Kind        string            `json:"kind"`
-	Library     string            `json:"library"`
-	Name        string            `json:"name"`
-	Artists     []string          `json:"artists,omitempty"`
-	ArtistNames string            `json:"artistNames,omitempty"`
-	Album       string            `json:"album,omitempty"`
-	Disc        int               `json:"disc,omitempty"`
-	Number      int               `json:"number,omitempty"`
-	Year        int               `json:"year,omitempty"`
-	DurationMs  int64             `json:"durationMs,omitempty"`
-	IDs         map[string]string `json:"ids,omitempty"`
+// sendCopy is one of the host's copies as it leaves toward a peer: its
+// ID the version ID play gives for it, never the host's handle; its
+// language tags as wire.SentTag gives them; its name only when it is an
+// edition or quality label, and a track's title only when it describes
+// the track (MSFP video section 3.6). What remains out of MSFP's bounds
+// is dropped when it is read back.
+func (e *Engine) sendCopy(peer string, c wire.Copy) wire.Copy {
+	c.ID = e.versionID(peer, c.ID)
+	c.Name = copyLabel(c.Name)
+	c.Parts = slices.Clone(c.Parts)
+	c.Chapters = slices.Clone(c.Chapters)
+	c.Segments = slices.Clone(c.Segments)
+	if c.Video != nil {
+		v := *c.Video
+		v.HDR = slices.Clone(v.HDR)
+		c.Video = &v
+	}
+	audio := make([]wire.CopyAudio, 0, len(c.AudioTracks))
+	for _, a := range c.AudioTracks {
+		a.Language, _ = wire.SentTag(a.Language)
+		a.Title = trackTitle(a.Title)
+		audio = append(audio, a)
+	}
+	c.AudioTracks = audio
+	var subs []wire.CopySubtitle
+	for _, t := range c.SubtitleTracks {
+		t.Language, _ = wire.SentTag(t.Language)
+		t.Title = trackTitle(t.Title)
+		subs = append(subs, t)
+	}
+	c.SubtitleTracks = subs
+	return c
 }
 
-// musicOut is the host's music title as sent, read back as a receiver
-// reads it: what a receiver would skip or drop isn't sent.
-func musicOut(_ wire.TitleKey, t *MusicTitle, library string) (musicTitleWire, bool) {
-	w := musicTitleWire{Key: t.Key, Kind: t.Kind, Library: library, Name: t.Name, Artists: t.Artists,
-		ArtistNames: t.ArtistNames, Album: t.Album, Disc: t.Disc, Number: t.Number, Year: t.Year,
-		DurationMs: t.DurationMs, IDs: t.IDs}
-	raw, err := marshal(w)
+// sendMusicCopy is sendCopy for a track's copy (MSFP music section 3.3).
+func (e *Engine) sendMusicCopy(peer string, c wire.MusicCopy) wire.MusicCopy {
+	c.ID = e.versionID(peer, c.ID)
+	c.Name = copyLabel(c.Name)
+	if c.ReplayGain != nil {
+		g := *c.ReplayGain
+		c.ReplayGain = &g
+	}
+	return c
+}
+
+// fileLike are the signs of a file name or a release's name in a label:
+// a path, an extension, words joined by dots or underscores, brackets, a
+// release group after a dash, a release's source or encoder.
+var fileLike = regexp.MustCompile(`[/\\_\[\]{}]|\.[A-Za-z0-9]{2,4}$|\w\.\w+\.\w|\S-[A-Za-z0-9]+$|(?i)\b(x26[45]|h\.?26[45]|web-?dl|web-?rip|blu-?ray|bdrip|brrip|hdtv|dvdrip)\b`)
+
+// copyLabel is a copy's name as sent (MSFP video section 3.6): an edition
+// or quality label of at most 32 characters, plain text; "" for one that
+// looks like a file name or a release's name, which is never sent.
+func copyLabel(name string) string {
+	name = wire.CleanText(name, len(name))
+	if fileLike.MatchString(name) {
+		return ""
+	}
+	return wire.CleanText(name, wire.MaxCopyName)
+}
+
+// trackWords are the words a track's title may hold (MSFP video section
+// 3.6: a description of the track, such as "Commentary", "SDH", "Signs &
+// Songs" or "Forced"), lowercase. A title with any other word (a
+// language's name, a release group's) is dropped: the engine can't tell
+// a description from the rest otherwise.
+var trackWords = map[string]bool{}
+
+func init() {
+	for _, w := range strings.Fields(`
+		commentary commentaries director director's directors cast crew writer writers producer producers composer
+		actor actors and & + with by of the track tracks
+		sdh cc hi hoh hearing impaired deaf captions closed
+		forced full complete signs songs sign song dialogue dialog dialogues lyrics karaoke
+		audio description descriptive described narration narrated visually
+		original dub dubbed dubbing stereo mono surround atmos lossless
+		music score isolated effects only simplified traditional
+		commentaire commentaires forcé forcés forcée forcées complets sourds malentendants audiodescription
+		kommentar erzwungen comentario comentarios forzados audiodescripción`) {
+		trackWords[w] = true
+	}
+}
+
+var trackNumber = regexp.MustCompile(`^[0-9]{1,2}(\.[0-9])?$`)
+
+// trackTitle is a track's title as sent (MSFP video section 3.6): plain
+// text of at most 32 characters, made only of trackWords and channel
+// counts ("5.1"); "" for any other.
+func trackTitle(title string) string {
+	title = wire.CleanText(title, wire.MaxCopyName)
+	words := strings.FieldsFunc(strings.ToLower(title), func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsDigit(r) && r != '\'' && r != '.' && r != '&' && r != '+'
+	})
+	if len(words) == 0 {
+		return ""
+	}
+	for _, w := range words {
+		if !trackWords[w] && !trackNumber.MatchString(w) {
+			return ""
+		}
+	}
+	return title
+}
+
+// musicOut is the host's music title as sent, its copies made ready to
+// leave, read back as a receiver reads it: what a receiver would skip or
+// drop isn't sent.
+func (s *sender) musicOut(t *MusicTitle, library string) (wire.MusicTitle, bool) {
+	w := wire.MusicTitle{Key: t.Key, Kind: t.Kind, Library: library, Name: t.Name, SortName: t.SortName,
+		Artists: t.Artists, ArtistNames: t.ArtistNames, ReleaseType: t.ReleaseType, Compilation: t.Compilation,
+		Date: t.Date, OriginalDate: t.OriginalDate, Genres: t.Genres, Album: t.Album, Disc: t.Disc,
+		Number: t.Number, IDs: t.IDs}
+	if t.Image {
+		w.Image = &t.Image
+	}
+	for _, c := range t.Copies {
+		w.Copies = append(w.Copies, s.e.sendMusicCopy(s.p.ID, c))
+	}
+	raw, err := json.Marshal(w)
 	if err != nil {
-		return musicTitleWire{}, false
+		return wire.MusicTitle{}, false
 	}
 	m, ok := wire.ReadMusicTitle(raw)
 	if !ok {
-		return musicTitleWire{}, false
+		return wire.MusicTitle{}, false
 	}
-	return musicTitleWire{Key: m.Key, Kind: m.Kind, Library: library, Name: m.Name, Artists: m.Artists,
-		ArtistNames: m.ArtistNames, Album: m.Album, Disc: m.Disc, Number: m.Number, Year: m.Year,
-		DurationMs: m.DurationMs, IDs: m.IDs}, true
+	m.Library = library
+	return m, true
 }

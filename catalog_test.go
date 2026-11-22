@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/msfp-io/msfp-go"
+	"github.com/msfp-io/msfp-go/wire"
 )
 
 // The catalog both ways: libraries offered by public IDs, titles paged,
@@ -221,7 +222,7 @@ func TestHostChangeLog(t *testing.T) {
 	}
 	// movie/tmdb/77 was never sent: not in gone.
 	x := a.exchanges("titles")
-	if last := x[len(x)-1]; !strings.Contains(last.resBody, `"changes":true`) || strings.Contains(last.resBody, "77") {
+	if last := x[len(x)-1]; !strings.Contains(last.resBody, `"changes":true`) || strings.Contains(last.resBody, "movie/tmdb/77") {
 		t.Errorf("changes: %s", last.resBody)
 	}
 	l.old = true
@@ -299,15 +300,17 @@ func TestOwnTitlesChecked(t *testing.T) {
 	h.titles["series/tmdb/1399"] = &msfp.VideoTitle{TitleCommon: msfp.TitleCommon{Key: "series/tmdb/1399", Kind: "movie",
 		Libraries: []string{"films"}}}
 	h.titles["series/tmdb/1399/e1"] = &msfp.VideoTitle{TitleCommon: msfp.TitleCommon{Key: "series/tmdb/1399/e1", Kind: "episode",
-		Libraries: []string{"films"}}, Audio: []string{"en", "EN", "x"}, With: []string{"series/tmdb/1399/e3", "series/tmdb/2/e1", "series/tmdb/1399/e2"},
-		IDs: map[string]string{"imdb": "tt01", "tvdb": "81189", "other": "1"}, Place: &msfp.Place{Season: 1, Episode: 1}}
+		Libraries: []string{"films"}}, Copies: []wire.Copy{{ID: "ep1", Container: "mkv", Size: 1, ETag: "x",
+		AudioTracks: []wire.CopyAudio{{ID: "a0", Language: "eng", Codec: "aac"}, {ID: "a1", Language: "x", Codec: "aac"}}}},
+		With: []string{"series/tmdb/1399/e3", "series/tmdb/2/e1", "series/tmdb/1399/e2"},
+		IDs:  map[string]string{"imdb": "tt01", "tvdb": "81189", "other": "1"}, Place: &msfp.Place{Season: 1, Episode: 1}}
 	s := newSharing(t, h, msfp.Config{}, msfp.Config{})
 	got := s.peerTitles(t)
 	if !slices.Equal(keysOf(got), []string{"movie/tmdb/1", "series/tmdb/1399/e1"}) {
 		t.Fatalf("B keeps %v", keysOf(got))
 	}
 	ep := got["series/tmdb/1399/e1"].(*msfp.VideoTitle)
-	if !slices.Equal(ep.Audio, []string{"en"}) || !slices.Equal(ep.With, []string{"series/tmdb/1399/e2", "series/tmdb/1399/e3"}) ||
+	if !slices.Equal(ep.AudioLanguages(), []string{"en"}) || ep.Copies[0].ID == "ep1" || !slices.Equal(ep.With, []string{"series/tmdb/1399/e2", "series/tmdb/1399/e3"}) ||
 		len(ep.IDs) != 1 || ep.IDs["tvdb"] != "81189" {
 		t.Errorf("an episode as sent: %+v", ep)
 	}
@@ -323,11 +326,12 @@ func TestHostileTitles(t *testing.T) {
 	s := newSharing(t, h, msfp.Config{}, msfp.Config{})
 	lib := s.libraryPub
 	page := `{"titles":[` +
-		`{"key":"movie/tmdb/2","kind":"movie","library":"` + lib + `","audio":["fr","fr","toolongtoolongtag"],"ids":{"imdb":"tt0133093","x":1}},` +
+		`{"key":"movie/tmdb/2","kind":"movie","library":"` + lib + `","copies":[{"id":"v1","durationMs":1000,"container":"matroska","size":5,"etag":"t1","audioTracks":[{"id":"a0","codec":"aac","language":"fre"},{"id":"a1","codec":"aac","language":"fr"}]},{"id":"v1","durationMs":1,"container":"mkv","size":1,"etag":"t","audioTracks":[]}],"ids":{"imdb":"tt0133093","x":1}},` +
+		`{"key":"movie/tmdb/7","kind":"movie","library":"` + lib + `"},` +
 		`{"key":"movie/tmdb/03","kind":"movie","library":"` + lib + `"},` +
 		`{"key":"movie/tmdb/4","kind":"series","library":"` + lib + `"},` +
 		`{"key":"movie/tmdb/5","kind":"movie","library":"elsewhere"},` +
-		`{"key":"track/mb/0c000000-0000-4000-8000-000000000003","kind":"track","library":"` + lib + `","name":"<b>x</b>"},` +
+		`{"key":"track/mb/0c000000-0000-4000-8000-000000000003","kind":"track","library":"` + lib + `","name":"<b>x</b>","album":"album/mb/0b000000-0000-4000-8000-000000000002","copies":[{"id":"t1","durationMs":1000,"container":"flac","codec":"flac","size":9,"etag":"e"}]},` +
 		`7,{"key":6}],"seq":3}`
 	s.a.setRewrite(func(path string, _ http.Header, body []byte) ([]byte, bool) {
 		return []byte(page), strings.HasSuffix(path, "/titles")
@@ -340,7 +344,8 @@ func TestHostileTitles(t *testing.T) {
 	if !slices.Equal(keys, []string{"movie/tmdb/2", "track/mb/0c000000-0000-4000-8000-000000000003"}) {
 		t.Fatalf("B keeps %v", keys)
 	}
-	if v := got["movie/tmdb/2"].(*msfp.VideoTitle); !slices.Equal(v.Audio, []string{"fr"}) || len(v.IDs) != 1 {
+	if v := got["movie/tmdb/2"].(*msfp.VideoTitle); !slices.Equal(v.AudioLanguages(), []string{"fr"}) || len(v.IDs) != 1 ||
+		len(v.Copies) != 1 || v.Copies[0].Container != "other" {
 		t.Errorf("a title kept: %+v", v)
 	}
 	if m := got["track/mb/0c000000-0000-4000-8000-000000000003"].(*msfp.MusicTitle); m.Name != "<b>x</b>" {
@@ -399,19 +404,35 @@ func TestMusicTitles(t *testing.T) {
 	h.titles[track] = &msfp.MusicTitle{TitleCommon: msfp.TitleCommon{Key: track, Kind: "track", Libraries: []string{"music"}},
 		Name: "The\tBoxer", Artists: []string{"artist/mb/0a000000-0000-4000-8000-000000000001", "nope"},
 		ArtistNames: "Simon & Garfunkel", Album: "album/mb/0b000000-0000-4000-8000-000000000002", Disc: 1, Number: 2,
-		Year: 1970, DurationMs: 308000, IDs: map[string]string{"isrc": "USSM17000123", "imdb": "tt0133093"}}
+		Date: "1970", Genres: []string{"Folk"}, Copies: []wire.MusicCopy{{ID: "boxer.flac", Name: "The Boxer.flac", DurationMs: 308000,
+			Container: "flac", Codec: "flac", Size: 36214455, Etag: "7f3a9c21", SampleRate: 44100, BitDepth: 16, Channels: 2}},
+		IDs: map[string]string{"isrc": "USSM17000123", "imdb": "tt0133093"}}
+	album := "album/mb/0b000000-0000-4000-8000-000000000002"
+	h.titles[album] = &msfp.MusicTitle{TitleCommon: msfp.TitleCommon{Key: album, Kind: "album", Libraries: []string{"music"}},
+		Name: "Bridge over Troubled Water", ReleaseType: "album", Date: "2011-03-08", OriginalDate: "1970-01-26",
+		Genres: []string{"Folk rock", "folk ROCK"}, Image: true, IDs: map[string]string{"mbreleasegroup": "0d000000-0000-4000-8000-000000000005"}}
 	nameless := "track/mb/0c000000-0000-4000-8000-000000000004"
 	h.titles[nameless] = &msfp.MusicTitle{TitleCommon: msfp.TitleCommon{Key: nameless, Kind: "track", Libraries: []string{"music"}}}
 	s := newSharing(t, h, msfp.Config{}, msfp.Config{})
 	got := s.peerTitles(t)
 	m, ok := got[track].(*msfp.MusicTitle)
-	if !ok || len(got) != 1 {
+	if !ok || len(got) != 2 {
 		t.Fatalf("B keeps %v", keysOf(got))
 	}
 	if m.Name != "The Boxer" || !slices.Equal(m.Artists, []string{"artist/mb/0a000000-0000-4000-8000-000000000001"}) ||
-		m.ArtistNames != "Simon & Garfunkel" || m.Disc != 1 || m.Number != 2 || m.Year != 1970 || m.DurationMs != 308000 ||
+		m.ArtistNames != "Simon & Garfunkel" || m.Disc != 1 || m.Number != 2 || m.Date != "" || m.Genres != nil ||
+		len(m.Copies) != 1 || m.Copies[0].DurationMs != 308000 || m.Copies[0].Name != "" || !strings.HasPrefix(m.Copies[0].ID, "ver_") ||
 		len(m.IDs) != 1 || m.Libraries[0] != s.libraryPub {
 		t.Errorf("a track kept: %+v", m)
+	}
+	// An album's description; an image only for a local one.
+	if a := got[album].(*msfp.MusicTitle); a.ReleaseType != "album" || a.OriginalDate != "1970-01-26" ||
+		!slices.Equal(a.Genres, []string{"Folk rock"}) || a.Image || a.IDs["mbreleasegroup"] == "" {
+		t.Errorf("an album kept: %+v", a)
+	}
+	last := s.a.exchanges("titles")
+	if body := last[len(last)-1].resBody; strings.Contains(body, "boxer.flac") || strings.Contains(body, `"year"`) {
+		t.Errorf("as sent: %s", body)
 	}
 	// A server without music: none of it is sent.
 	h2 := newFakeHost()
@@ -423,49 +444,68 @@ func TestMusicTitles(t *testing.T) {
 	}
 }
 
-// A film's picture (MSFP video section 3.2): the host gives each copy's,
-// the best goes, stepped; a reader keeps it with the title, and another
-// picture is a change of the title.
-func TestTitlePictures(t *testing.T) {
+// A film's copies (MSFP video section 3.2): sent best first, under
+// version IDs, cleaned as a receiver keeps them; the best picture and the
+// languages are worked out from them; a copy's new etag is a change of
+// the title.
+func TestTitleCopies(t *testing.T) {
 	ctx := context.Background()
 	h := newFakeHost()
-	h.film("films", "movie/tmdb/1", "en")
+	h.film("films", "movie/tmdb/1", "en", "fr")
 	h.film("films", "movie/tmdb/2", "en")
-	h.film("films", "movie/tmdb/3", "en")
 	h.mu.Lock()
-	h.titles["movie/tmdb/1"].(*msfp.VideoTitle).Pictures = []msfp.Picture{{Height: 1080}, {Height: 2200, HDR: []string{"dv", "HDR10", "hdr10"}}, {Height: 2160}}
-	h.titles["movie/tmdb/2"].(*msfp.VideoTitle).Pictures = []msfp.Picture{{Height: 360}, {Height: 0, HDR: []string{"hdr10"}}}
+	m1 := h.titles["movie/tmdb/1"].(*msfp.VideoTitle)
+	m1.Copies[0].Video = &wire.VideoStream{Codec: "h264", Width: 1920, Height: 1080}
+	m1.Copies[1].Video = &wire.VideoStream{Codec: "hevc", Width: 3840, Height: 1600, HDR: []string{"dv", "hdr10"}}
+	m1.Copies[1].Name = "Film.2160p.WEB-DL-GRP.mkv"
+	m1.Copies[1].AudioTracks[0].Title = "Commentary"
+	m1.Copies[1].AudioTracks = append(m1.Copies[1].AudioTracks, wire.CopyAudio{ID: "a1", Language: "ger", Codec: "dts", Title: "German DTS-HD by GRP"})
+	m1.Copies[0].Chapters = []wire.CopyChapter{{StartMs: 0, Name: "Start"}, {StartMs: 0}, {StartMs: 60_000}}
+	h.titles["movie/tmdb/2"].(*msfp.VideoTitle).Copies[0].Size = 0 // a receiver would skip it: so is the title
 	h.mu.Unlock()
 	s := newSharing(t, h, msfp.Config{}, msfp.Config{})
 	got := s.peerTitles(t)
-	if v := got["movie/tmdb/1"].(*msfp.VideoTitle).Video; v == nil || v.Height != 2160 || !slices.Equal(v.HDR, []string{"hdr10", "dv"}) {
-		t.Errorf("the best copy's picture: %+v", v)
+	if _, ok := got["movie/tmdb/2"]; ok {
+		t.Error("a film with no copy a receiver keeps was sent")
 	}
-	if v := got["movie/tmdb/2"].(*msfp.VideoTitle).Video; v == nil || v.Height != 480 || v.HDR != nil {
-		t.Errorf("below 480, and a copy of no known size: %+v", v)
+	v := got["movie/tmdb/1"].(*msfp.VideoTitle)
+	best, ok := v.BestCopy()
+	if !ok || len(v.Copies) != 2 || best.Video == nil || best.Video.Height != 1600 || !slices.Equal(best.Video.HDR, []string{"hdr10", "dv"}) {
+		t.Fatalf("the best copy first: %+v", v.Copies)
 	}
-	if v := got["movie/tmdb/3"].(*msfp.VideoTitle).Video; v != nil {
-		t.Errorf("no copy of known size: %+v", v)
+	if best.Name != "" || best.AudioTracks[0].Title != "Commentary" || best.AudioTracks[1].Title != "" || best.AudioTracks[1].Language != "de" {
+		t.Errorf("names and titles as sent: %+v", best)
+	}
+	if !slices.Equal(v.AudioLanguages(), []string{"fr", "de", "en"}) || !slices.Equal(v.SubtitleLanguages(), []string{"fr"}) {
+		t.Errorf("languages: %v %v", v.AudioLanguages(), v.SubtitleLanguages())
+	}
+	if c := v.Copies[1]; len(c.Chapters) != 2 || c.Size != 1000 || c.ETag != "e0" || c.Name != "Copy en" {
+		t.Errorf("the other copy: %+v", c)
+	}
+	for _, c := range v.Copies {
+		if !strings.HasPrefix(c.ID, "ver_") {
+			t.Errorf("a copy's ID as sent: %q", c.ID)
+		}
 	}
 	last := s.a.exchanges("titles")
-	if body := last[len(last)-1].resBody; !strings.Contains(body, `"video":{"height":2160,"hdr":["hdr10","dv"]}`) || strings.Contains(body, "pictures") {
+	if body := last[len(last)-1].resBody; strings.Contains(body, "movie/tmdb/1#") || strings.Contains(body, "GRP") {
 		t.Errorf("as sent: %s", body)
 	}
-	// Another picture: the title is sent again in a changes reading.
+	// A copy replaced (its etag): the title is sent again in a changes
+	// reading, alone.
 	h.mu.Lock()
-	h.titles["movie/tmdb/3"].(*msfp.VideoTitle).Pictures = []msfp.Picture{{Height: 720}}
+	h.titles["movie/tmdb/1"].(*msfp.VideoTitle).Copies[0].ETag = "e9"
 	h.mu.Unlock()
 	s.a.eng.CatalogChanged()
 	if _, err := s.b.eng.ReadNow(ctx, s.onB.ID); err != nil {
 		t.Fatal(err)
 	}
 	last = s.a.exchanges("titles")
-	if x := last[len(last)-1]; !strings.Contains(x.resBody, `"changes":true`) || !strings.Contains(x.resBody, `"key":"movie/tmdb/3"`) ||
-		strings.Contains(x.resBody, `"key":"movie/tmdb/1"`) {
+	if x := last[len(last)-1]; !strings.Contains(x.resBody, `"changes":true`) || !strings.Contains(x.resBody, `"key":"movie/tmdb/1"`) {
 		t.Errorf("a changes reading: %s", x.resBody)
 	}
-	if v := s.peerTitles(t)["movie/tmdb/3"].(*msfp.VideoTitle).Video; v == nil || v.Height != 720 {
-		t.Errorf("the new picture kept: %+v", v)
+	if v := s.peerTitles(t)["movie/tmdb/1"].(*msfp.VideoTitle); v.Copies[1].ETag != "e9" {
+		t.Errorf("the new copy kept: %+v", v.Copies)
 	}
 }
 
@@ -478,7 +518,7 @@ func TestTitlePlaces(t *testing.T) {
 	h := newFakeHost()
 	episode := func(key string, place *msfp.Place) {
 		h.titles[key] = &msfp.VideoTitle{TitleCommon: msfp.TitleCommon{Key: key, Kind: "episode", Libraries: []string{"films"}},
-			Place: place}
+			Place: place, Copies: oneCopy(key)}
 	}
 	h.film("films", "movie/tmdb/1", "en")
 	h.titles["movie/tmdb/1"].(*msfp.VideoTitle).Place = &msfp.Place{Season: 1, Episode: 2}
@@ -539,24 +579,7 @@ func TestTitlePlaces(t *testing.T) {
 	}
 }
 
-func TestBestPicture(t *testing.T) {
-	for _, c := range []struct {
-		in   []msfp.Picture
-		want msfp.Picture
-		ok   bool
-	}{
-		{nil, msfp.Picture{}, false},
-		{[]msfp.Picture{{Height: 0}}, msfp.Picture{}, false},
-		{[]msfp.Picture{{Height: 1600}}, msfp.Picture{Height: 1440}, true},
-		{[]msfp.Picture{{Height: 9000}}, msfp.Picture{Height: 4320}, true},
-		{[]msfp.Picture{{Height: 2160}, {Height: 2160, HDR: []string{"hlg"}}}, msfp.Picture{Height: 2160, HDR: []string{"hlg"}}, true},
-		{[]msfp.Picture{{Height: 2160, HDR: []string{"hlg"}}, {Height: 2160, HDR: []string{"dv", "hdr10"}}}, msfp.Picture{Height: 2160, HDR: []string{"hdr10", "dv"}}, true},
-		{[]msfp.Picture{{Height: 1080, HDR: []string{"hdr10"}}, {Height: 2160}}, msfp.Picture{Height: 2160}, true},
-		{[]msfp.Picture{{Height: 1080, HDR: []string{"hdr10+", "sdr"}}}, msfp.Picture{Height: 1080}, true},
-	} {
-		got, ok := msfp.BestPicture(c.in)
-		if ok != c.ok || got.Height != c.want.Height || !slices.Equal(got.HDR, c.want.HDR) {
-			t.Errorf("%+v: %+v %v, want %+v %v", c.in, got, ok, c.want, c.ok)
-		}
-	}
+// oneCopy is a title's one copy, of the least a copy carries.
+func oneCopy(handle string) []wire.Copy {
+	return []wire.Copy{{ID: handle, DurationMs: 60_000, Container: "mp4", Size: 100, ETag: "e1", AudioTracks: []wire.CopyAudio{}}}
 }

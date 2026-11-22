@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/msfp-io/msfp-go"
+	"github.com/msfp-io/msfp-go/wire"
 )
 
 // fakeHost is a host's catalog, playback and media, in memory, for the
@@ -39,6 +40,8 @@ type fakeHost struct {
 	files  map[string][]byte
 	serve  func(ctx context.Context, path msfp.MediaPath, rng *msfp.Range, out msfp.ResponseSink) error
 	served []msfp.MediaPath
+	// images are what Image gives, by title key.
+	images map[string][]byte
 	// hold makes Start wait until it is closed, so that plays cross;
 	// entered, when set, is told each Start that waits.
 	hold, entered chan struct{}
@@ -55,11 +58,15 @@ func newFakeHost() *fakeHost {
 func (h *fakeHost) film(lib, key string, audio ...string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	h.titles[key] = &msfp.VideoTitle{TitleCommon: msfp.TitleCommon{Key: key, Kind: "movie", Libraries: []string{lib}},
-		Audio: audio, Subtitles: []string{"fr"}}
+	t := &msfp.VideoTitle{TitleCommon: msfp.TitleCommon{Key: key, Kind: "movie", Libraries: []string{lib}}}
+	h.titles[key] = t
 	h.copies[key] = nil
 	for i, a := range audio {
 		handle := key + "#" + strconv.Itoa(i)
+		t.Copies = append(t.Copies, wire.Copy{ID: handle, Name: "Copy " + a, DurationMs: 5_400_000, Container: "mkv",
+			Size: int64(1000 + i), ETag: "e" + strconv.Itoa(i),
+			AudioTracks:    []wire.CopyAudio{{ID: "a0", Language: a, Channels: 2, Default: true, Codec: "aac"}},
+			SubtitleTracks: []wire.CopySubtitle{{ID: "s0", Language: "fr", Format: "subrip"}, {ID: "s1", Language: "fr", Format: "pgs"}}})
 		h.copies[key] = append(h.copies[key], msfp.Copy{Handle: handle, Name: "Copy " + a, Audio: []string{a}, Library: lib})
 		h.info[handle] = msfp.CopyInfo{DurationMs: 5_400_000,
 			AudioTracks:    []msfp.Track{{ID: "a0", Label: "Audio " + a, Language: a, Channels: 2, Default: true}},
@@ -116,6 +123,15 @@ func (h *fakeHost) Copies(_ context.Context, key string, libs []string) ([]msfp.
 		}
 	}
 	return out, nil
+}
+
+func (h *fakeHost) Image(_ context.Context, key string) ([]byte, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if img, ok := h.images[key]; ok {
+		return img, nil
+	}
+	return nil, msfp.ErrNotFound
 }
 
 func (h *fakeHost) Describe(_ context.Context, copy string) (msfp.CopyInfo, error) {

@@ -3,6 +3,7 @@ package msfp
 import (
 	"encoding/json"
 	"errors"
+	"slices"
 	"time"
 
 	"github.com/msfp-io/msfp-go/wire"
@@ -46,24 +47,31 @@ type TitleCommon struct {
 	Libraries []string `json:"libraries"`
 }
 
-// VideoTitle is a film, a series, a season or an episode (MSFP video
-// section 3).
+// VideoTitle is a film, a series, a season, an episode or an extra (MSFP
+// video section 3): the host's own, as its Catalog gives them, or a
+// peer's, as the engine kept it (video section 3.1). The engine cleans
+// the host's before they leave as a receiver would keep them, so that
+// nothing leaves that MSFP doesn't take.
 type VideoTitle struct {
 	TitleCommon
-	// Audio and Subtitles are language tags (the host's may be its media
-	// server's codes: the engine sends them as wire.SentTags gives them).
-	// Subtitles are the languages of the tracks play would list: those
-	// the host can serve (Track).
-	Audio     []string `json:"audio,omitempty"`
-	Subtitles []string `json:"subtitles,omitempty"`
-	// Pictures is the host's, for its own films and episodes: each copy's
-	// picture, as its files say (any height, HDR formats among
-	// "hdr10", "hlg" and "dv"); a copy whose size isn't known is left
-	// out. The engine sends the best, stepped (MSFP video section 3.2).
-	Pictures []Picture `json:"pictures,omitempty"`
-	// Video is a peer's: the picture it sent of its best copy, cleaned
-	// (MSFP video section 3.1); nil when it sent none.
-	Video *Picture `json:"video,omitempty"`
+	// Copies are a film's, an episode's or an extra's copies, best first
+	// (MSFP video sections 3.2 to 3.8): what a viewer's server needs to
+	// list each as a file of its own before anyone plays it (its length,
+	// size, etag, container, streams and tracks, chapters, skip
+	// markers…). Required for those kinds: one without a copy left once
+	// cleaned isn't sent; series and seasons carry none.
+	//
+	// Of the host's own titles, each copy's ID is the host's handle of it,
+	// the one Catalog.Copies gives (Copy.Handle): it never leaves; the
+	// engine sends instead the version ID play gives for it. The engine
+	// sends the copies in the order of video section 3.7 (wire.SortCopies,
+	// keeping the host's order between equal ones), language tags as
+	// wire.SentTag gives them, names and track titles only when they are
+	// labels (never a file name or a release group: video section 3.6).
+	// Its ETag changes whenever the copy's bytes change, and only then: a
+	// change of a copy is a change of the title (a changes reading sends it
+	// again). Of a peer's titles, ID is the peer's version ID.
+	Copies []wire.Copy `json:"copies,omitempty"`
 	// Place is, for an episode keyed by its TMDB episode ID
 	// (series/tmdb/<id>/e<episode id>), its place in TMDB's numbering:
 	// TMDB's current season and episode numbers (MSFP video section 4.1).
@@ -75,6 +83,22 @@ type VideoTitle struct {
 	Place *Place            `json:"place,omitempty"`
 	With  []string          `json:"with,omitempty"`
 	IDs   map[string]string `json:"ids,omitempty"`
+	// ExtraType is an extra's (kind "extra", keyed under its film, series
+	// or season: video section 3.9): one of wire.ExtraTypes, "clip" for
+	// another. Theme songs and theme videos are never extras.
+	ExtraType string `json:"extraType,omitempty"`
+	// Name is an extra's own short name (optional, at most 64
+	// characters), or a local film's or series' name (required, at most
+	// 128: catalog section 4.3, video section 3.10). It is the owner's
+	// words, never a file name, text never markup; on other titles it
+	// isn't sent.
+	Name string `json:"name,omitempty"`
+	// Year and Image are a local film's or series' description: its year
+	// (1800 to 9,999; 0 for none), and whether the owner shares one image
+	// of it (the host's Images gives it; a peer's is fetched with
+	// TitleImage). Ignored on other titles.
+	Year  int  `json:"year,omitempty"`
+	Image bool `json:"image,omitempty"`
 }
 
 // Place is an episode's place in TMDB's numbering (MSFP video section
@@ -86,56 +110,79 @@ type Place struct {
 	Episode int `json:"episode"`
 }
 
-// Picture is what a copy of a film or an episode offers for playing
-// (MSFP video section 3.2): its height in pixels (for a picture wider
-// than 16:9, a 16:9 picture's as wide: 2160 for 3840 × 1600), and its
-// high dynamic range formats, "hdr10", "hlg" or "dv" (none: standard
-// range).
-type Picture struct {
-	Height int      `json:"height"`
-	HDR    []string `json:"hdr,omitempty"`
+// BestCopy is the title's best copy: the first of its copies, which are
+// best first (MSFP video section 3.7); false for a title without one (a
+// series, a season). A viewer's server shows its picture as the title's.
+func (t *VideoTitle) BestCopy() (wire.Copy, bool) {
+	if len(t.Copies) == 0 {
+		return wire.Copy{}, false
+	}
+	return t.Copies[0], true
 }
 
-// Better says whether a copy of picture p is better than one of q, as
-// BestPicture ranks them (both stepped).
-func (p Picture) Better(q Picture) bool {
-	return wire.Picture{Height: p.Height, HDR: p.HDR}.Better(wire.Picture{Height: q.Height, HDR: q.HDR})
-}
-
-// BestPicture is the picture of the best of a title's copies, as MSFP
-// video section 3.2 says, stepped: the greatest height, then HDR before
-// none, then more formats; false when no copy's size is known. A host
-// lists its copies to Copies in that order, best first, so that play
-// without a version plays it.
-func BestPicture(pictures []Picture) (Picture, bool) {
-	var best wire.Picture
-	for _, p := range pictures {
-		w := wire.Picture{Height: wire.StepHeight(p.Height), HDR: wire.CleanHDR(p.HDR)}
-		if w.Height > 0 && (best.Height == 0 || w.Better(best)) {
-			best = w
+// AudioLanguages are the languages of the title's audio tracks, over all
+// its copies, each once, in the order of its copies and their tracks:
+// what a viewer's server shows as the title's audio languages (MSFP
+// video section 3.2: a title carries no summary of them).
+func (t *VideoTitle) AudioLanguages() []string {
+	var out []string
+	for _, c := range t.Copies {
+		for _, a := range c.AudioTracks {
+			if a.Language != "" && !slices.Contains(out, a.Language) {
+				out = append(out, a.Language)
+			}
 		}
 	}
-	return Picture{Height: best.Height, HDR: best.HDR}, best.Height > 0
+	return out
+}
+
+// SubtitleLanguages are the languages of the title's subtitle tracks,
+// over all its copies, each once, in the order of its copies and their
+// tracks.
+func (t *VideoTitle) SubtitleLanguages() []string {
+	var out []string
+	for _, c := range t.Copies {
+		for _, s := range c.SubtitleTracks {
+			if s.Language != "" && !slices.Contains(out, s.Language) {
+				out = append(out, s.Language)
+			}
+		}
+	}
+	return out
 }
 
 // MusicTitle is an artist, an album or a track, with its description
 // (MSFP music section 3): its name; for albums and tracks, the artist
-// keys credited and their names as written, and the year; for tracks,
-// the album key, the disc and number on it, and the length (0: unknown);
-// other identifiers by scheme (mbrelease, mbtrack, isrc). A peer's are
-// cleaned as music section 3.2 says; the host's own are checked the same
-// way before they leave.
+// keys credited and their names as written; for albums, the name to sort
+// by, the release type, whether it is a compilation, the dates of this
+// edition and of the first, and genres; for tracks, the album key, the
+// disc and number on it, and its copies; for local artists and albums,
+// whether the owner shares an image; other identifiers by scheme
+// (mbreleasegroup, mbrecording, isrc, acoustid). A peer's are cleaned as
+// music section 3.2 says; the host's own are cleaned the same way before
+// they leave.
 type MusicTitle struct {
 	TitleCommon
-	Name        string            `json:"name"`
-	Artists     []string          `json:"artists,omitempty"`
-	ArtistNames string            `json:"artistNames,omitempty"`
-	Album       string            `json:"album,omitempty"`
-	Disc        int               `json:"disc,omitempty"`
-	Number      int               `json:"number,omitempty"`
-	Year        int               `json:"year,omitempty"`
-	DurationMs  int64             `json:"durationMs,omitempty"`
-	IDs         map[string]string `json:"ids,omitempty"`
+	Name         string   `json:"name"`
+	SortName     string   `json:"sortName,omitempty"`
+	Artists      []string `json:"artists,omitempty"`
+	ArtistNames  string   `json:"artistNames,omitempty"`
+	ReleaseType  string   `json:"releaseType,omitempty"`
+	Compilation  *bool    `json:"compilation,omitempty"`
+	Date         string   `json:"date,omitempty"`
+	OriginalDate string   `json:"originalDate,omitempty"`
+	Genres       []string `json:"genres,omitempty"`
+	Album        string   `json:"album,omitempty"`
+	Disc         int      `json:"disc,omitempty"`
+	Number       int      `json:"number,omitempty"`
+	// Copies are a track's copies, best first, at least one (music
+	// section 3.3). Of the host's own, each ID is its handle, as for
+	// VideoTitle.Copies: the engine sends the version ID made of it.
+	Copies []wire.MusicCopy `json:"copies,omitempty"`
+	// Image: a local artist or album whose image the owner shares (the
+	// host's Images gives it); ignored on any other title.
+	Image bool              `json:"image,omitempty"`
+	IDs   map[string]string `json:"ids,omitempty"`
 }
 
 // Common gives the members every title has.

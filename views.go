@@ -58,6 +58,9 @@ type PeerView struct {
 	// Wants how many of its libraries this server reads, WantsGone how
 	// many of those it no longer offers.
 	Offers, Wants, WantsGone int
+	// Local says the individual relation shares the host's local titles
+	// too (SetLocal).
+	Local bool
 	// Relations (MSFP core section 7.7). Groups are the group relations;
 	// Individual says the individual relation holds (both sides want it).
 	// IndividualAsked: this side asks for it and the peer hasn't accepted;
@@ -98,7 +101,7 @@ func (e *Engine) view(p *PeerRecord) PeerView {
 		State: p.State, Created: p.Created, Paired: p.Paired, Seen: p.Seen, Suspended: p.Suspended,
 		Core: core, Parts: parts, Inbound: p.Inbound, CommitmentFrom: p.CommitmentFrom,
 		OurKey: p.OurKey, RotationAnswer: p.RotationAnswer, Limits: p.Limits, CallsFailed: p.CallsFailed}
-	v.Offers = len(p.Offers)
+	v.Offers, v.Local = len(p.Offers), p.Local
 	v.Groups = slices.Clone(p.Groups)
 	v.Individual = p.individual()
 	v.IndividualAsked = !p.NotByHand && !p.theirIndividual()

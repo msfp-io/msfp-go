@@ -142,17 +142,35 @@ type OwnChange struct {
 
 // Catalog is the host's own libraries and titles, by the host's
 // library IDs. The engine maps them to public IDs, filters them by
-// offers, pages them, and checks every key before it leaves.
+// offers (and local titles by the local sharing switches: SetLocal,
+// SetGroupLocal), pages them, and checks every key and member before it
+// leaves.
+//
+// A title is a *VideoTitle or a *MusicTitle. Films, episodes, extras and
+// tracks carry their copies, described as their files are (MSFP video
+// section 3.2, music section 3.3), so that a viewer's server lists them
+// as files of its own before anyone plays; each copy's ID is the host's
+// handle of it, the one Copies gives. Extras are titles of their own,
+// keyed under their film, series or season ("movie/tmdb/348/x/<opaque>",
+// kind "extra"), listed in its libraries. Titles no public database names
+// are keyed under the local scheme ("movie/local/<opaque>"), with a name
+// (and a year, an image) of the host's; their opaque parts, and extras',
+// are made with Engine.OpaqueKeyPart or as catalog section 4.2 says.
 type Catalog interface {
 	// Libraries lists the host's libraries; the operator offers some.
 	Libraries(ctx context.Context) ([]Library, error)
 	// Titles lists the titles held in any of these libraries, keys
 	// strictly greater than after, in ascending byte order, at most
-	// limit, each once.
+	// limit, each once. A change of anything a title carries, its copies
+	// included (a copy added, gone, or its ETag changed), is a change of
+	// the title: a ChangeLog lists it again.
 	Titles(ctx context.Context, libraries []string, after string, limit int) (TitlePage, error)
-	// Copies lists the copies of exactly this film, episode or track in
-	// these libraries (for an episode inside a copy holding several, the
-	// copy that holds it); none: the engine answers 404.
+	// Copies lists the copies of exactly this film, episode, extra or
+	// track in these libraries (for an episode inside a copy holding
+	// several, the copy that holds it), in the order of the title's
+	// Copies; none: the engine answers 404.
+	//
+	// B2: play may take its copies from the title's Copies instead.
 	Copies(ctx context.Context, key string, libraries []string) ([]Copy, error)
 }
 

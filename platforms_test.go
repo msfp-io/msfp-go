@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/msfp-io/msfp-go"
+	"github.com/msfp-io/msfp-go/wire"
 )
 
 // What MSFP says for media servers other than Jellyfin (decided on
@@ -53,9 +54,11 @@ func TestMediaServerLanguageCodes(t *testing.T) {
 	ctx := context.Background()
 	h := filmHost()
 	key := "movie/tmdb/949"
-	h.titles[key].(*msfp.VideoTitle).Audio = []string{"eng", "fre", "fra", "und"}
-	h.titles[key].(*msfp.VideoTitle).Subtitles = []string{"ger", "fre-ca"}
 	for i, code := range []string{"eng", "fre"} {
+		c := &h.titles[key].(*msfp.VideoTitle).Copies[i]
+		c.AudioTracks[0].Language = code
+		c.AudioTracks = append(c.AudioTracks, wire.CopyAudio{ID: "a1", Language: []string{"fra", "und"}[i], Codec: "aac"})
+		c.SubtitleTracks = []wire.CopySubtitle{{ID: "s0", Language: "ger", Format: "subrip"}, {ID: "s1", Language: "fre-ca", Format: "subrip"}}
 		h.copies[key][i].Audio = []string{code}
 		handle := h.copies[key][i].Handle
 		info := h.info[handle]
@@ -65,8 +68,8 @@ func TestMediaServerLanguageCodes(t *testing.T) {
 	}
 	s := newSharing(t, h, msfp.Config{}, msfp.Config{})
 	v := s.peerTitles(t)[key].(*msfp.VideoTitle)
-	if !slices.Equal(v.Audio, []string{"en", "fr"}) || !slices.Equal(v.Subtitles, []string{"de", "fr-CA"}) {
-		t.Errorf("the title's languages: %q %q", v.Audio, v.Subtitles)
+	if !slices.Equal(v.AudioLanguages(), []string{"en", "fr"}) || !slices.Equal(v.SubtitleLanguages(), []string{"de", "fr-CA"}) {
+		t.Errorf("the title's languages: %q %q", v.AudioLanguages(), v.SubtitleLanguages())
 	}
 	pb, err := s.b.eng.Play(ctx, s.onB.ID, msfp.PlayRequest{Title: key, AudioLanguage: "fr", SubtitleLanguage: "de"})
 	if err != nil {
