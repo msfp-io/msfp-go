@@ -8,22 +8,24 @@ import (
 	"testing"
 )
 
-// The cases of vectors/v1/music.json: keys, and what a caller keeps of
-// each title.
+// musicCase is a case of vectors/v0/music.json.
+type musicCase struct {
+	Name, Kind, Text, Request, Output string
+	Valid                             bool
+}
+
+// The cases of vectors/v0/music.json: keys, what a caller keeps of each
+// title (local ones included), the queue of a play, and the lyrics call.
 func TestMusicVectors(t *testing.T) {
 	var v struct {
-		Libraries []string
-		Keys      []struct {
-			Name, Text, Kind string
-			Valid            bool
-		}
-		Titles []struct {
-			Name, Text, Output string
-			Valid              bool
-		}
+		Libraries           []string
+		StreamRoot          string
+		Keys                []musicCase
+		Titles, LocalTitles []musicCase
+		Queue, Lyrics       []musicCase
 	}
 	readVectors(t, "music.json", &v)
-	if len(v.Keys) == 0 || len(v.Titles) == 0 {
+	if len(v.Keys) == 0 || len(v.Titles) == 0 || len(v.LocalTitles) == 0 || len(v.Queue) == 0 || len(v.Lyrics) == 0 {
 		t.Fatal("no music cases")
 	}
 	for _, c := range v.Keys {
@@ -35,57 +37,85 @@ func TestMusicVectors(t *testing.T) {
 			t.Errorf("key %s: ParseKey %+v", c.Name, tk)
 		}
 	}
-	for _, c := range v.Titles {
+	for _, c := range append(v.Titles, v.LocalTitles...) {
 		got, ok := ReadMusicTitle(json.RawMessage(c.Text))
 		if ok && !slices.Contains(v.Libraries, got.Library) {
 			ok = false // the caller's check: a library it asked for
 		}
 		if ok != c.Valid {
 			t.Errorf("title %s: kept %v, want %v", c.Name, ok, c.Valid)
+		} else if ok {
+			sameJSON(t, "title "+c.Name, got, c.Output)
+		}
+	}
+	for _, c := range v.Queue {
+		var req struct {
+			Title    string          `json:"title"`
+			Delivery string          `json:"delivery"`
+			Queue    json.RawMessage `json:"queue"`
+		}
+		request := c.Text
+		if c.Kind == "answer" {
+			request = c.Request
+		}
+		var asked []string
+		err := DecodeJSON([]byte(request), &req)
+		if err == nil {
+			asked, err = CheckQueue(req.Title, req.Queue)
+		}
+		if c.Kind == "request" {
+			if (err == nil) != c.Valid {
+				t.Errorf("queue %s: accepted %v, want %v", c.Name, err == nil, c.Valid)
+			}
 			continue
 		}
-		if !ok {
+		if err != nil {
+			t.Fatalf("queue %s: the request refused: %v", c.Name, err)
+		}
+		var answer struct {
+			Stream struct {
+				URL string `json:"url"`
+			} `json:"stream"`
+			Queue json.RawMessage `json:"queue"`
+		}
+		if err := DecodeAnswer([]byte(c.Text), &answer); err != nil {
+			t.Fatalf("queue %s: %v", c.Name, err)
+		}
+		sameJSON(t, "queue "+c.Name, ReadQueue(answer.Queue, asked, req.Delivery, v.StreamRoot, answer.Stream.URL), c.Output)
+	}
+	for _, c := range v.Lyrics {
+		if c.Kind == "request" {
+			if r, ok := ReadLyricsRequest([]byte(c.Text)); ok != c.Valid || ok && (r.Title == "" || r.VersionID == "") {
+				t.Errorf("lyrics %s: read %v %+v, want %v", c.Name, ok, r, c.Valid)
+			}
 			continue
 		}
-		var want map[string]any
-		if err := json.Unmarshal([]byte(c.Output), &want); err != nil {
-			t.Fatal(err)
-		}
-		if have := musicMap(got); !reflect.DeepEqual(have, want) {
-			t.Errorf("title %s:\n got %v\nwant %v", c.Name, have, want)
+		sets, err := ReadLyrics([]byte(c.Text))
+		if (err == nil) != c.Valid {
+			t.Errorf("lyrics %s: kept %v, want %v", c.Name, err == nil, c.Valid)
+		} else if err == nil {
+			sameJSON(t, "lyrics "+c.Name, LyricsAnswer{StructuredLyrics: sets}, c.Output)
 		}
 	}
 }
 
-// musicMap is a kept title as the vectors write it.
-func musicMap(m MusicTitle) map[string]any {
-	out := map[string]any{"key": m.Key, "kind": m.Kind, "library": m.Library, "name": m.Name}
-	if len(m.Artists) > 0 {
-		var a []any
-		for _, s := range m.Artists {
-			a = append(a, s)
-		}
-		out["artists"] = a
+// sameJSON checks that got, written as JSON, is the same value as want.
+func sameJSON(t *testing.T, name string, got any, want string) {
+	t.Helper()
+	raw, err := json.Marshal(got)
+	if err != nil {
+		t.Fatal(err)
 	}
-	set := func(name string, v any, on bool) {
-		if on {
-			out[name] = v
-		}
+	var have, expected any
+	if err := json.Unmarshal(raw, &have); err != nil {
+		t.Fatal(err)
 	}
-	set("artistNames", m.ArtistNames, m.ArtistNames != "")
-	set("album", m.Album, m.Album != "")
-	set("disc", float64(m.Disc), m.Disc != 0)
-	set("number", float64(m.Number), m.Number != 0)
-	set("year", float64(m.Year), m.Year != 0)
-	set("durationMs", float64(m.DurationMs), m.DurationMs != 0)
-	if len(m.IDs) > 0 {
-		ids := map[string]any{}
-		for k, v := range m.IDs {
-			ids[k] = v
-		}
-		out["ids"] = ids
+	if err := json.Unmarshal([]byte(want), &expected); err != nil {
+		t.Fatalf("%s: %v", name, err)
 	}
-	return out
+	if !reflect.DeepEqual(have, expected) {
+		t.Errorf("%s:\n got %s\nwant %s", name, raw, want)
+	}
 }
 
 func TestWebVTTPart(t *testing.T) {
@@ -114,5 +144,57 @@ func TestWebVTTPart(t *testing.T) {
 	}
 	if _, ok := WebVTTPart([]byte("not vtt"), 0); ok {
 		t.Error("a track that isn't WebVTT gave a part")
+	}
+}
+
+func TestMusicDates(t *testing.T) {
+	for s, want := range map[string]int{"1970": 1970, "1970-01": 1970, "2024-02-29": 2024, "0999": 0,
+		"2023-02-29": 0, "1970-13": 0, "1970-1-1": 0, "1970-00": 0, "19700": 0, "": 0} {
+		if y, ok := MusicDate(s); y != want || ok != (want > 0) {
+			t.Errorf("MusicDate(%q) = %d %v, want %d", s, y, ok, want)
+		}
+	}
+	if g := R128Gain(-1280); g != 0 {
+		t.Errorf("R128 gain of -5 dB: %v, want 0", g)
+	}
+}
+
+// An owning server's own title, written with MusicTitle's JSON, reads
+// back as it was.
+func TestMusicTitleRoundTrip(t *testing.T) {
+	yes, gain := true, -4.12
+	sent := MusicTitle{Key: "track/local/T1", Kind: "track", Library: "m1", Name: "x",
+		Artists: []string{"artist/local/A1"}, Album: "album/mb/0b000000-0000-4000-8000-000000000002", Disc: 1, Number: 2,
+		Copies: []MusicCopy{{ID: "c1", DurationMs: 1000, Container: "flac", Codec: "flac", Size: 10, Etag: "e1",
+			BitrateKbps: 936, ReplayGain: &ReplayGain{TrackGain: &gain}, Lyrics: "plain"}},
+		IDs: map[string]string{"isrc": "USSM17000123"}}
+	raw, err := Marshal(sent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, ok := ReadMusicTitle(raw)
+	if !ok || !reflect.DeepEqual(got, sent) {
+		t.Errorf("read back %v %+v", ok, got)
+	}
+	album := MusicTitle{Key: "album/local/A2", Kind: "album", Library: "m1", Name: "y", Compilation: &yes, Image: &yes}
+	raw, _ = Marshal(album)
+	if got, ok := ReadMusicTitle(raw); !ok || !reflect.DeepEqual(got, album) {
+		t.Errorf("album read back %v %+v", ok, got)
+	}
+}
+
+func TestQueueURLs(t *testing.T) {
+	root := "https://a.example.org/api/v1/stream/"
+	if u := QueueURL(root, "Tk1", 3, "hls"); u != root+"Tk1/queue/3/master.m3u8" {
+		t.Error(u)
+	}
+	if u := QueueURL(root, "Tk1", 0, "file"); u != root+"Tk1/queue/0/file" {
+		t.Error(u)
+	}
+	if q, err := CheckQueue("track/local/T1", nil); q != nil || err != nil {
+		t.Errorf("no queue: %v %v", q, err)
+	}
+	if _, err := CheckQueue("album/local/A1", nil); err == nil {
+		t.Error("an album's play took a queue check")
 	}
 }
