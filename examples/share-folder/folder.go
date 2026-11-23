@@ -71,7 +71,7 @@ type item struct {
 }
 
 var (
-	videoExt = regexp.MustCompile(`\.(mp4|m4v|mkv|webm|mov|ts)$`)
+	videoExt = regexp.MustCompile(`\.(mp4|m4v|mkv|webm|mov|ts|avi)$`)
 	// named reads "Name (Year) [tmdbid-N]", the year and the ID optional.
 	named   = regexp.MustCompile(`^(.*?)\s*(?:\((\d{4})\))?\s*(?:\[(tmdbid|tvdbid)-([1-9][0-9]{0,9})\])?$`)
 	episode = regexp.MustCompile(`(?i)\bS(\d{1,4})E(\d{1,5})\b`)

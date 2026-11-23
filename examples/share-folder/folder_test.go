@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"os"
 	"path/filepath"
@@ -99,5 +100,73 @@ func TestFolderTitles(t *testing.T) {
 	again, _ := f.copy(heat.Copies[0].ID)
 	if again.ETag != heat.Copies[0].ETag {
 		t.Error("the etag changed with no change of bytes")
+	}
+}
+
+// sink is a ResponseSink that keeps what it is sent.
+type sink struct{ bytes.Buffer }
+
+func (*sink) Start(int, string, int64, string) {}
+
+// A file's own subtitle tracks listed with the .vtt beside it (MSFP video
+// section 3.3: a copy lists all its subtitle tracks), told not served
+// apart; an AVI read. With ffprobe, on the media in $EXAMPLE_MEDIA:
+// subs.mkv (h264, aac, SubRip fr, ASS en forced) and film.avi (mpeg4,
+// mp3), made with ffmpeg (testsrc and sine, 2 s); skipped otherwise.
+func TestFolderFileTracks(t *testing.T) {
+	media := os.Getenv("EXAMPLE_MEDIA")
+	if media == "" {
+		t.Skip("EXAMPLE_MEDIA not set")
+	}
+	dir := t.TempDir()
+	put := func(from, to string) {
+		t.Helper()
+		b, err := os.ReadFile(filepath.Join(media, from))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, to), b, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	put("subs.mkv", "Heat (1995) [tmdbid-949].mkv")
+	put("film.avi", "Blade Runner (1982) [tmdbid-78].avi")
+	if err := os.WriteFile(filepath.Join(dir, "Heat (1995) [tmdbid-949].de.vtt"),
+		[]byte("WEBVTT\n\n00:00:01.000 --> 00:00:02.000\nHallo\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	f := &folder{dir: dir}
+	page, err := f.Titles(context.Background(), nil, "", 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	byKey := map[string]*msfp.VideoTitle{}
+	for _, tt := range page.Titles {
+		byKey[tt.(*msfp.VideoTitle).Key] = tt.(*msfp.VideoTitle)
+	}
+	heat := byKey["movie/tmdb/949"].Copies[0]
+	want := []wire.CopySubtitle{
+		{ID: "s2", Format: "subrip", Language: "fr"},
+		{ID: "s3", Format: "ass", Language: "en", Forced: true},
+		{ID: "s4", Format: "webvtt", Language: "de", External: true},
+	}
+	if !slices.Equal(heat.SubtitleTracks, want) {
+		t.Errorf("Heat's subtitle tracks: %+v", heat.SubtitleTracks)
+	}
+	if info, _ := f.Describe(context.Background(), heat.ID); !slices.Equal(info.NotApart, []string{"s2", "s3"}) {
+		t.Errorf("not served apart: %v", info.NotApart)
+	}
+	var out sink
+	if err := f.Serve(context.Background(), "file "+heat.ID, msfp.MediaPath{Kind: msfp.MediaSubtitles, Track: "s4", Whole: true}, nil, &out); err != nil ||
+		!strings.Contains(out.String(), "Hallo") {
+		t.Errorf("the .vtt as s4: %q %v", out.String(), err)
+	}
+	avi := byKey["movie/tmdb/78"]
+	if avi == nil {
+		t.Fatal("the AVI isn't read")
+	}
+	if c := avi.Copies[0]; c.MediaType != "video/avi" || c.Video == nil || c.Video.Codec != "mpeg4" || len(c.AudioTracks) != 1 ||
+		c.AudioTracks[0].ID != "a1" || c.DurationMs < 1900 {
+		t.Errorf("the AVI's copy: %+v", c)
 	}
 }
