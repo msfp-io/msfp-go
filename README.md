@@ -37,6 +37,7 @@ none of the protocol itself.
 |---------|------------|
 | `github.com/msfp-io/msfp-go` (package `msfp`) | the engine: `msfp.Open`, its handlers, pairing, catalog, playback |
 | `github.com/msfp-io/msfp-go/wire` | the protocol's pieces: keys, pairing codes, signatures, strict JSON, statements, the media checks |
+| `github.com/msfp-io/msfp-go/describe` | a media file to a copy (`wire.Copy`) with ffprobe: media type sniffed, codec records, codecs strings, colour, tracks, chapters |
 | `github.com/msfp-io/msfp-go/store/jsonfile` | a ready store: the engine's records in JSON files, sealed with a key file |
 | `github.com/msfp-io/msfp-go/store/memory` | a ready store in memory, for tests |
 | `examples/share-folder` | a whole host in about 1,000 lines |
@@ -147,6 +148,31 @@ once more. The package documentation and
 [host.md](https://github.com/msfp-io/msfp-spec/blob/main/api/host.md) have
 the details.
 
+## Describing files
+
+A host lists each file as a copy: facts in outside vocabularies (MSFP
+video sections 3.2 to 3.6). The `describe` package makes one from a
+local file with ffprobe:
+
+```go
+var p describe.Prober // ffprobe from PATH; Frames: true adds the HDR frame read
+c, probe, err := p.Describe(ctx, path, nil) // external subtitles, numbered above the file's streams
+if err != nil {
+	// describe.ErrUnknownType: not a media file it knows (a playlist renamed .mkv…), never probed
+	return err
+}
+c.ID, c.ETag = versionID, etag // the host's: a stable ID, an identity that changes with the bytes
+raw, _ := probe.Raw(folder)    // ffprobe's output without path or attachments, for the host's own uses
+```
+
+The file is sniffed first (only media types the package knows are
+probed), opened read-only as a regular file and handed to ffprobe as it
+was checked, with the sniffed demuxer, the file protocol only, and
+bounds on probing, time and output. Its codec records (avcC, hvcC,
+av1C, Matroska's CodecPrivate, Annex B parameter sets) give the codecs
+strings; attachments and cover art are never read. Which folders a host
+may read is its own policy.
+
 ## The example: two servers that pair
 
 [examples/share-folder](examples/share-folder) is a small host: its records
@@ -156,7 +182,7 @@ certificate at each start and pins it. The folder holds films and series
 named with their TMDB (or TheTVDB) IDs, their extras in `Trailers/` and
 `Extras/`, local titles (no ID, an image beside them), `.vtt` subtitles,
 HLS copies and previews made beforehand; copies are described from the
-files, with `ffprobe` when it is installed. The comment at the top of
+files with the `describe` package, when `ffprobe` is installed. The comment at the top of
 [folder.go](examples/share-folder/folder.go) shows the layout.
 
 Run two of them on one machine, in two terminals:

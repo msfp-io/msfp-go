@@ -112,6 +112,19 @@ member it removed.
   `wire.PreviewsAnswer`; `wire.QueueAsk.Request`, `MusicRemuxTypes`;
   `wire.MusicCopy.AsCopy`; `CopyInfo.Forms` (the form of a track whose
   format video section 5.4 doesn't list); `Engine.PreviewSheet`.
+- Package `describe`: a media file to a `wire.Copy` with ffprobe.
+  `Sniff` (the media type from the first bytes; only those types are
+  probed), `AudioOrVideo`, `CanonicalType`, `ContainerType`, `Demuxer`;
+  `Prober.Probe` (real path, regular file opened read-only and handed to
+  the child, `-f` forced, file protocol only, bounded probe, time and
+  output; a run without data, then the codec records of the video and
+  AAC streams), `NeedsFrames` and `ReadFrames` (HDR10+, the alternative
+  transfer SEI); `ParseAVC`, `ParseHEVC`, `ParseAV1`, `ParseVP9`,
+  `ParseAudioConfig`, `HEVCString`, `VideoCodecs`, `AudioCodecs`;
+  `Shape` and `Prober.Describe`; `Probe.Raw` (ffprobe's output without
+  path or attachments) and `Parse` (kept outputs read again).
+  examples/share-folder uses it, and now lists the subtitle tracks inside
+  its files (not served apart: `CopyInfo.NotApart`).
 
 ### Changed
 
@@ -255,7 +268,7 @@ member it removed.
    is no picture but cover art), the registry's codec and subtitle
    tokens (ffprobe's `codec_name`), `Codecs` for h264, hevc, av1, vp9,
    aac and dts at least (built from your media server's profile and
-   level or the file's records: examples/share-folder/probe.go does it
+   level or the file's records: the `describe` package does it
    from ffprobe), `Colour` as H.273 numbers with `FullRange` (the
    implementers' notes map ffmpeg's names), `DV` whenever there is Dolby
    Vision, `HDR` only `hdr10plus`, `Objects`, `RefFrames`, exact
