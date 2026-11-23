@@ -8,7 +8,8 @@
 //	go run . -address https://127.0.0.1:8442 -listen :8442 -data b -loopback
 //
 // Then type "code" in the first, "redeem <code>" in the second, and
-// "accept <id>" in the first. "peers" lists them, "end <id>" ends one.
+// "accept <id>" in the first. "peers" lists them (and, when the last
+// reading of a peer's titles failed, why), "end <id>" ends one.
 // "offer <id>" shares the folder with a peer; on the other side, "want
 // <id>" reads them, "titles <id>" lists them, "play <id> <key>" prints a
 // URL that curl -k or ffplay -tls_verify 0 plays through this server
@@ -299,6 +300,9 @@ func main() {
 				}
 				if p.Pending != nil {
 					fmt.Print("  new key to confirm: ", p.Pending.Fingerprint)
+				}
+				if r := p.Reading; r != nil && r.Failure != "" {
+					fmt.Print("  titles not read: ", r.Failure, " ", r.Refusal)
 				}
 				fmt.Println()
 			}

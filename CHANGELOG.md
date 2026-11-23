@@ -195,6 +195,19 @@ member it removed.
   stores implement it (a `state.json` from before reads as none kept).
 - `Timers`: what a test's `Clock` implements so that the engine's waits
   follow it.
+- Why a peer's titles weren't read: `PeerView.Reading` (a
+  `LastReading`: when the last reading ended, its `Failure`, and for a
+  signed refusal its problem type), and `CatalogReadEnded.Failure` and
+  `Refusal`. `ReadFailure` is a closed set of codes, the same in
+  msfp-dotnet (`ReadFailures`), never holding an address or anything the
+  peer wrote: `unreachable`, `timeout`, `certificate-refused`,
+  `refused-unsigned`, `refused`, `not-paired`, `suspended`, `uncallable`,
+  `no-common-version`, `catalog-off`, `older-draft`,
+  `answer-not-understood`, `internal`. A peer still on the draft before
+  this revision used to read as an empty catalog: its answers are now
+  recognised (libraries and titles with a `kind`, films, episodes and
+  tracks without `copies`), and the reading fails as `older-draft`
+  (`ErrUnreachable`), keeping what was kept before.
 
 ### Migration guide
 

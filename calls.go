@@ -52,6 +52,15 @@ var errNotHeard = errors.New("an unsigned refusal")
 // ErrUnreachable).
 var errNoConnection = errors.New("couldn't connect")
 
+// errUnsigned is an answer of 200 not signed by the peer's key; and
+// errNotUnderstood an answer that couldn't be read: coded, too large, not
+// JSON, or not of the call's form (both wrapped in ErrUnreachable). They
+// tell the readings' failures apart (ReadFailure).
+var (
+	errUnsigned      = errors.New("an answer not signed by its key")
+	errNotUnderstood = errors.New("an answer not understood")
+)
+
 // restartRetry is how long a call refused with an unsigned 404 waits
 // before its one retry (MSFP core section 6.5).
 const restartRetry = time.Second
@@ -174,14 +183,14 @@ func (e *Engine) exchange(ctx context.Context, p *PeerRecord, call string, in, o
 	// No content coding (MSFP core section 3): refused like a badly
 	// signed answer.
 	if ce := res.Header.Get("Content-Encoding"); res.Uncompressed || ce != "" && !strings.EqualFold(ce, "identity") {
-		return reply{}, ErrUnreachable.with(errors.New("a coded answer"))
+		return reply{}, ErrUnreachable.with(fmt.Errorf("%w: a coded answer", errNotUnderstood))
 	}
 	answer, err := io.ReadAll(io.LimitReader(res.Body, maxAnswer+1))
 	if err != nil {
 		return reply{}, ErrUnreachable.with(err)
 	}
 	if len(answer) > maxAnswer {
-		return reply{}, ErrUnreachable.with(errors.New("an answer over 4 MiB"))
+		return reply{}, ErrUnreachable.with(fmt.Errorf("%w: an answer over 4 MiB", errNotUnderstood))
 	}
 	contentType, ctErr := wire.AnswerMediaType(res.Header)
 	sigText, _ := wire.OneHeader(res.Header, wire.HeaderSignature)
@@ -207,13 +216,13 @@ func (e *Engine) exchange(ctx context.Context, p *PeerRecord, call string, in, o
 		return r, nil
 	}
 	if !signed {
-		return reply{}, ErrUnreachable.with(errors.New("an answer not signed by its key"))
+		return reply{}, ErrUnreachable.with(errUnsigned)
 	}
 	if contentType != "application/json" {
-		return reply{}, ErrUnreachable.with(errors.New("an answer that isn't JSON"))
+		return reply{}, ErrUnreachable.with(fmt.Errorf("%w: an answer that isn't JSON", errNotUnderstood))
 	}
 	if err := wire.DecodeAnswer(answer, out); err != nil {
-		return reply{}, ErrUnreachable.with(err)
+		return reply{}, ErrUnreachable.with(fmt.Errorf("%w: %w", errNotUnderstood, err))
 	}
 	return reply{status: res.StatusCode}, nil
 }

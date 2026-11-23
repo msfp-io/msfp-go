@@ -144,12 +144,16 @@ type CallsFailed struct{ Peer, Name string }
 
 // CatalogReadEnded: a reading of a peer's titles ended: Titles kept (new or
 // changed, for a reading of changes), or Err, why it failed; what was
-// kept before a failed reading stays (MSFP catalog section 3.2).
+// kept before a failed reading stays (MSFP catalog section 3.2). Failure
+// is why, as a closed code ("" when it read, or when the host cancelled
+// it), Refusal the problem type of a signed refusal (LastReading).
 type CatalogReadEnded struct {
 	Peer, Name string
 	Titles     int
 	Changes    bool
 	Err        error
+	Failure    ReadFailure
+	Refusal    string
 }
 
 // WantsGone: libraries this server wants of a peer (their public IDs)

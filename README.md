@@ -148,6 +148,43 @@ once more. The package documentation and
 [host.md](https://github.com/msfp-io/msfp-spec/blob/main/api/host.md) have
 the details.
 
+## When a peer's titles can't be read
+
+A reading of a peer's titles that fails (`ReadNow`, the scheduled
+readings, `TheirLibraries`, `SetWants`) keeps what was read before, and
+says why in `PeerView.Reading`: when it ended, and a `ReadFailure`, one
+of a closed set of codes, the same in msfp-dotnet, for your pages to name
+in your own words. It never holds an address, a URL, a file name or
+anything the peer wrote; the error itself has the detail, for the logs.
+It is kept in memory: nil until a reading ends after the start.
+`CatalogReadEnded` carries the same code.
+
+| Code | The peer's titles weren't read because |
+|------|-----------------------------------------|
+| `unreachable` | it didn't answer (no route, refused, a name that doesn't resolve, TLS failing) |
+| `timeout` | it, or the reading, took too long |
+| `certificate-refused` | its certificate is neither publicly trusted nor one it named |
+| `refused-unsigned` | an answer not signed by its key: it doesn't hear this server's key (it ended the pairing, or lost its records), or something else answers at its address |
+| `refused` | it refused, signed; `Refusal` is the problem type (`not-found`, `rate-limited`, `server-busy`…, MSFP core section 8.2) |
+| `not-paired` | it isn't paired with this server, or must pair again |
+| `suspended` | it revoked its key |
+| `uncallable` | it can't be called |
+| `no-common-version` | the two have no core version in common (`PeerView.Core` is -1) |
+| `catalog-off` | the catalog part isn't on between the two |
+| `older-draft` | it runs an engine of the draft before this revision of version 0 (v0.7.1 and before): it must be updated |
+| `answer-not-understood` | an answer that couldn't be read (coded, too large, not JSON, not of the call's form, or breaking the catalog's rules) |
+| `internal` | this server's own failure (its store, say) |
+
+Both drafts announce core 0 with the same parts, so the hello can't tell
+them apart; the reading does. `older-draft` needs three marks at once:
+every library of the libraries answer carries a `kind`, every title of a
+page carries a `kind` matching its key (the old draft's required
+members, gone from this one), and that page holds a film, an episode or
+a track, none with `copies` (required now, unknown then). A title
+without copies alone is an owner's mistake, skipped as before. While a
+peer's libraries carry kinds, its readings are whole lists, whose titles
+tell; this draft's libraries carry none, so it costs them nothing.
+
 ## Describing files
 
 A host lists each file as a copy: facts in outside vocabularies (MSFP

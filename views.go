@@ -76,6 +76,11 @@ type PeerView struct {
 	// JoiningGroup: it used one of our codes for this group, and waits for
 	// our operator (State Ours): a request to join that group.
 	JoiningGroup string
+	// Reading is how the last reading of its titles went (ReadNow, the
+	// scheduled readings, TheirLibraries, SetWants): when, and why it
+	// failed, as a closed code a page can name (ReadFailure). nil when
+	// none ended since the engine started.
+	Reading *LastReading
 }
 
 // MoveView is a peer's new address, not confirmed yet (MSFP core section
@@ -109,6 +114,9 @@ func (e *Engine) view(p *PeerRecord) PeerView {
 	v.KeepChoice = p.KeepChoice
 	v.ByHand = v.Individual
 	v.JoiningGroup = p.JoiningGroup
+	if last, ok := e.lastReading(p.ID); ok {
+		v.Reading = &last
+	}
 	if p.TheirLimits != nil {
 		l := *p.TheirLimits
 		v.TheirLimits = &l

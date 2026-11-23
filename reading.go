@@ -45,6 +45,8 @@ type readings struct {
 	running map[string]*sync.Mutex
 	next    map[string]time.Time
 	number  int64
+	// last is each peer's last reading, as PeerView.Reading gives it.
+	last map[string]LastReading
 }
 
 // peerLock is the lock of a peer's readings.
@@ -160,14 +162,20 @@ func (e *Engine) TheirLibraries(ctx context.Context, peer string) ([]WantedLibra
 	if err != nil {
 		return nil, err
 	}
-	return e.theirLibraries(ctx, p, false)
+	libs, _, err := e.theirLibraries(ctx, p, false)
+	if err != nil {
+		e.readEnded(p, err)
+	}
+	return libs, err
 }
 
 // theirLibraries calls libraries on p and keeps its answer: the
-// libraries, its name, its limits (MSFP catalog section 2.2).
-func (e *Engine) theirLibraries(ctx context.Context, p *PeerRecord, background bool) ([]WantedLibrary, error) {
+// libraries, its name, its limits (MSFP catalog section 2.2). kinds says
+// each library of the answer carried a kind, as the previous draft's
+// libraries did (olderDraftPage).
+func (e *Engine) theirLibraries(ctx context.Context, p *PeerRecord, background bool) (_ []WantedLibrary, kinds bool, _ error) {
 	if err := e.usablePeer(p, wire.PartCatalog); err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	var ans struct {
 		Name      *string           `json:"name"`
@@ -176,13 +184,20 @@ func (e *Engine) theirLibraries(ctx context.Context, p *PeerRecord, background b
 	}
 	r, err := e.call(ctx, p, callLibraries, struct{}{}, &ans, background)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	if r.status != http.StatusOK {
-		return nil, e.refused(p, r)
+		return nil, false, e.refused(p, r)
 	}
 	var libs []WantedLibrary
+	kinds = len(ans.Libraries) > 0
 	for _, raw := range ans.Libraries {
+		var k struct {
+			Kind *string `json:"kind"`
+		}
+		if json.Unmarshal(raw, &k) != nil || k.Kind == nil {
+			kinds = false
+		}
 		if len(libs) == maxLibraries {
 			break
 		}
@@ -235,10 +250,10 @@ func (e *Engine) theirLibraries(ctx context.Context, p *PeerRecord, background b
 		}
 	})
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	e.notify(events...)
-	return slices.Clone(kept), nil
+	return slices.Clone(kept), kinds, nil
 }
 
 // readLimits reads a peer's limits (MSFP playback section 5, music
@@ -272,7 +287,11 @@ func (e *Engine) refused(p *PeerRecord, r reply) error {
 	if errors.Is(err, ErrNotFound) {
 		e.helloNow(p.ID)
 	}
-	return err
+	var code *Error
+	if !errors.As(err, &code) {
+		return err
+	}
+	return &Error{Code: code.Code, Err: signedRefusal{status: r.status, problem: r.problem}}
 }
 
 // Wants lists the peer's libraries as last read, those wanted marked,
@@ -299,7 +318,8 @@ func (e *Engine) SetWants(ctx context.Context, peer string, libraries []string) 
 	}
 	for _, id := range libraries {
 		if !slices.ContainsFunc(p.Wants, func(w WantedLibrary) bool { return w.ID == id }) {
-			if _, err := e.theirLibraries(ctx, p, false); err != nil {
+			if _, _, err := e.theirLibraries(ctx, p, false); err != nil {
+				e.readEnded(p, err)
 				return err
 			}
 			break
@@ -355,6 +375,7 @@ func (e *Engine) readCatalog(ctx context.Context, id string, background bool) (k
 		return 0, err
 	}
 	if err := e.usablePeer(p, wire.PartCatalog); err != nil {
+		e.readEnded(p, err)
 		return 0, err
 	}
 	changes := false
@@ -362,7 +383,9 @@ func (e *Engine) readCatalog(ctx context.Context, id string, background bool) (k
 		if errors.Is(err, ErrBackingOff) {
 			return
 		}
-		e.notify(CatalogReadEnded{Peer: p.ID, Name: p.Name, Titles: kept, Changes: changes, Err: err})
+		last, _ := e.readEnded(p, err)
+		e.notify(CatalogReadEnded{Peer: p.ID, Name: p.Name, Titles: kept, Changes: changes, Err: err,
+			Failure: last.Failure, Refusal: last.Refusal})
 	}()
 	// What is read: what this server shows of it individually, while the
 	// individual relation holds, and what its groups show of it.
@@ -375,11 +398,13 @@ func (e *Engine) readCatalog(ctx context.Context, id string, background bool) (k
 		}
 	}
 	var libs []string
+	kinds := false // its libraries carried kinds: maybe the previous draft
 	if wanted {
-		theirs, err := e.theirLibraries(ctx, p, background)
+		theirs, k, err := e.theirLibraries(ctx, p, background)
 		if err != nil {
 			return 0, err
 		}
+		kinds = k
 		for _, w := range theirs {
 			if !w.Gone && (w.Wanted && individual || grouped && shows(w.ID)) {
 				libs = append(libs, w.ID)
@@ -404,7 +429,10 @@ func (e *Engine) readCatalog(ctx context.Context, id string, background bool) (k
 		return 0, err
 	}
 	since := int64(0)
-	if slices.Equal(p.CatalogRead.Wants, libs) {
+	if slices.Equal(p.CatalogRead.Wants, libs) && !kinds {
+		// Libraries with kinds may be the previous draft's: the whole
+		// list then, whose titles tell (a reading of changes may carry
+		// none). This draft's libraries carry none: it costs them nothing.
 		since = p.CatalogRead.Seq
 	}
 	var seq int64
@@ -427,10 +455,19 @@ func (e *Engine) readCatalog(ctx context.Context, id string, background bool) (k
 				seq = *ans.Seq
 			}
 		} else if pageChanges != changes {
-			return kept, ErrUnreachable.with(errors.New("a reading mixing changes and the whole list"))
+			return kept, ErrUnreachable.with(fmt.Errorf("%w: a reading mixing changes and the whole list", errNotUnderstood))
 		}
 		if len(ans.Titles)+len(ans.Gone) > titlesPage {
-			return kept, ErrUnreachable.with(fmt.Errorf("a page of more than %d keys", titlesPage))
+			return kept, ErrUnreachable.with(fmt.Errorf("%w: a page of more than %d keys", errNotUnderstood, titlesPage))
+		}
+		if kinds {
+			// Until a page tells: answers in the previous draft's shapes
+			// fail the reading, rather than read as an empty catalog.
+			old, current := olderDraftPage(ans.Titles)
+			if old {
+				return kept, ErrUnreachable.with(errOlderDraft)
+			}
+			kinds = !current
 		}
 		var page []Title
 		for _, raw := range ans.Titles {
@@ -448,7 +485,7 @@ func (e *Engine) readCatalog(ctx context.Context, id string, background bool) (k
 			}
 		}
 		if kept += len(page); kept > maxPeerTitles {
-			return kept, ErrUnreachable.with(fmt.Errorf("more than %d titles", maxPeerTitles))
+			return kept, ErrUnreachable.with(fmt.Errorf("%w: more than %d titles", errNotUnderstood, maxPeerTitles))
 		}
 		if !changes {
 			// A whole list is kept only once read to its end: until then
