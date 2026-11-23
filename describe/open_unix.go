@@ -17,3 +17,6 @@ const openFlags = os.O_RDONLY | syscall.O_NOFOLLOW | syscall.O_NONBLOCK
 // reads the file that was checked and no other, even if the path
 // changed since.
 func childPath(string) string { return "/dev/fd/3" }
+
+// lower sets a child's niceness.
+func lower(pid, nice int) { _ = syscall.Setpriority(syscall.PRIO_PROCESS, pid, nice) }

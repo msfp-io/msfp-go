@@ -46,6 +46,10 @@ type Prober struct {
 	AnalyzeDuration time.Duration
 	// Frames asks for the frame read on an HDR picture (NeedsFrames).
 	Frames bool
+	// Nice, from 1 to 19, lowers each ffprobe child's priority to that
+	// niceness as soon as it starts (Unix), so a host reading a whole
+	// library leaves the processor to everything else; 0 leaves it.
+	Nice int
 }
 
 // The Prober's defaults.
@@ -434,7 +438,13 @@ func (r run) do(ctx context.Context, args ...string) ([]byte, error) {
 	stdout := &capped{max: limit, cancel: cancel}
 	stderr := &capped{max: 2048, quiet: true}
 	cmd.Stdout, cmd.Stderr = stdout, stderr
-	err := cmd.Run()
+	err := cmd.Start()
+	if err == nil {
+		if p.Nice > 0 {
+			lower(cmd.Process.Pid, min(p.Nice, 19))
+		}
+		err = cmd.Wait()
+	}
 	switch {
 	case stdout.over:
 		return nil, fmt.Errorf("%w: output past %d bytes", ErrProbe, limit)

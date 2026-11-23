@@ -9,3 +9,6 @@ const openFlags = os.O_RDONLY
 // childPath is the path the child process reads the file by: its real
 // path, checked just before.
 func childPath(real string) string { return real }
+
+// lower does nothing here: no niceness.
+func lower(pid, nice int) {}

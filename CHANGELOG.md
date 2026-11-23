@@ -118,7 +118,7 @@ member it removed.
   `Prober.Probe` (real path, regular file opened read-only and handed to
   the child, `-f` forced, file protocol only, bounded probe, time and
   output; a run without data, then the codec records of the video and
-  AAC streams), `NeedsFrames` and `ReadFrames` (HDR10+, the alternative
+  AAC streams; `Nice` lowers each child's priority), `NeedsFrames` and `ReadFrames` (HDR10+, the alternative
   transfer SEI); `ParseAVC`, `ParseHEVC`, `ParseAV1`, `ParseVP9`,
   `ParseAudioConfig`, `HEVCString`, `VideoCodecs`, `AudioCodecs`;
   `Shape` and `Prober.Describe`; `Probe.Raw` (ffprobe's output without
