@@ -1,0 +1,36 @@
+{
+ "audioTracks": [
+  {
+   "channels": 1,
+   "codec": "opus",
+   "codecs": "Opus",
+   "id": "a1",
+   "sampleRate": 48000
+  }
+ ],
+ "durationMs": 2008,
+ "etag": "e1",
+ "id": "v1",
+ "mediaType": "video/webm",
+ "size": 108809,
+ "subtitleTracks": [
+  {
+   "external": true,
+   "forced": true,
+   "format": "subrip",
+   "id": "s2",
+   "language": "fr"
+  }
+ ],
+ "video": {
+  "bitDepth": 8,
+  "codec": "vp9",
+  "codecs": "vp09.00.11.08",
+  "colour": {
+   "fullRange": false
+  },
+  "fps": "24000/1001",
+  "height": 180,
+  "width": 320
+ }
+}

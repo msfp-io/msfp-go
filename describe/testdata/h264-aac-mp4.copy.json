@@ -1,0 +1,45 @@
+{
+ "audioTracks": [
+  {
+   "channels": 1,
+   "codec": "aac",
+   "codecs": "mp4a.40.2",
+   "default": true,
+   "id": "a1",
+   "sampleRate": 48000
+  }
+ ],
+ "chapters": [
+  {
+   "name": "Opening",
+   "startMs": 0
+  },
+  {
+   "startMs": 1000
+  }
+ ],
+ "durationMs": 2002,
+ "etag": "e1",
+ "id": "v1",
+ "mediaType": "video/mp4",
+ "size": 78302,
+ "subtitleTracks": [
+  {
+   "external": true,
+   "forced": true,
+   "format": "subrip",
+   "id": "s4",
+   "language": "fr"
+  }
+ ],
+ "video": {
+  "bitDepth": 8,
+  "codec": "h264",
+  "codecs": "avc1.64000C",
+  "fps": "24000/1001",
+  "height": 180,
+  "refFrames": 4,
+  "rotation": 270,
+  "width": 320
+ }
+}

@@ -1,0 +1,26 @@
+{
+ "audioTracks": [
+  {
+   "bitDepth": 16,
+   "channels": 1,
+   "codec": "flac",
+   "codecs": "fLaC",
+   "id": "a0",
+   "sampleRate": 48000
+  }
+ ],
+ "durationMs": 2000,
+ "etag": "e1",
+ "id": "v1",
+ "mediaType": "audio/flac",
+ "size": 36191,
+ "subtitleTracks": [
+  {
+   "external": true,
+   "forced": true,
+   "format": "subrip",
+   "id": "s2",
+   "language": "fr"
+  }
+ ]
+}

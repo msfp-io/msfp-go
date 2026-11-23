@@ -1,0 +1,26 @@
+{
+ "audioTracks": [],
+ "durationMs": 2002,
+ "etag": "e1",
+ "id": "v1",
+ "mediaType": "video/mp4",
+ "size": 58111,
+ "subtitleTracks": [
+  {
+   "external": true,
+   "forced": true,
+   "format": "subrip",
+   "id": "s1",
+   "language": "fr"
+  }
+ ],
+ "video": {
+  "bitDepth": 10,
+  "codec": "h264",
+  "codecs": "avc3.6E000C",
+  "fps": "24000/1001",
+  "height": 180,
+  "refFrames": 4,
+  "width": 320
+ }
+}

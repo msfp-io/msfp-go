@@ -1,0 +1,25 @@
+{
+ "audioTracks": [
+  {
+   "bitDepth": 24,
+   "channels": 1,
+   "codec": "pcm_s24le",
+   "id": "a0",
+   "sampleRate": 48000
+  }
+ ],
+ "durationMs": 2000,
+ "etag": "e1",
+ "id": "v1",
+ "mediaType": "audio/wave",
+ "size": 288102,
+ "subtitleTracks": [
+  {
+   "external": true,
+   "forced": true,
+   "format": "subrip",
+   "id": "s1",
+   "language": "fr"
+  }
+ ]
+}

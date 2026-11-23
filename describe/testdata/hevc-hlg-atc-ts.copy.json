@@ -1,0 +1,31 @@
+{
+ "audioTracks": [],
+ "durationMs": 2002,
+ "etag": "e1",
+ "id": "v1",
+ "mediaType": "video/mp2t",
+ "size": 56964,
+ "subtitleTracks": [
+  {
+   "external": true,
+   "forced": true,
+   "format": "subrip",
+   "id": "s1",
+   "language": "fr"
+  }
+ ],
+ "video": {
+  "bitDepth": 10,
+  "codec": "hevc",
+  "codecs": "hvc1.2.4.L60.90",
+  "colour": {
+   "fullRange": false,
+   "matrix": 9,
+   "primaries": 9,
+   "transfer": 18
+  },
+  "fps": "24000/1001",
+  "height": 180,
+  "width": 320
+ }
+}

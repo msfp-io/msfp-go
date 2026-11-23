@@ -1,0 +1,201 @@
+{
+ "mediaType": "video/vnd.dlna.mpeg-tts",
+ "size": 239616,
+ "outputs": {
+  "streams": {
+   "streams": [
+    {
+     "index": 0,
+     "codec_name": "mpeg2video",
+     "codec_long_name": "MPEG-2 video",
+     "profile": "Main",
+     "codec_type": "video",
+     "codec_tag_string": "[2][0][0][0]",
+     "codec_tag": "0x0002",
+     "width": 320,
+     "height": 180,
+     "coded_width": 0,
+     "coded_height": 0,
+     "closed_captions": 0,
+     "film_grain": 0,
+     "has_b_frames": 1,
+     "sample_aspect_ratio": "1:1",
+     "display_aspect_ratio": "16:9",
+     "pix_fmt": "yuv420p",
+     "level": 8,
+     "color_range": "tv",
+     "chroma_location": "left",
+     "field_order": "progressive",
+     "refs": 1,
+     "ts_id": "1",
+     "ts_packetsize": "192",
+     "id": "0x1011",
+     "r_frame_rate": "24000/1001",
+     "avg_frame_rate": "24000/1001",
+     "time_base": "1/90000",
+     "start_pts": 129754,
+     "start_time": "1.441711",
+     "duration_ts": 180179,
+     "duration": "2.001989",
+     "extradata_size": 22,
+     "disposition": {
+      "default": 0,
+      "dub": 0,
+      "original": 0,
+      "comment": 0,
+      "lyrics": 0,
+      "karaoke": 0,
+      "forced": 0,
+      "hearing_impaired": 0,
+      "visual_impaired": 0,
+      "clean_effects": 0,
+      "attached_pic": 0,
+      "timed_thumbnails": 0,
+      "non_diegetic": 0,
+      "captions": 0,
+      "descriptions": 0,
+      "metadata": 0,
+      "dependent": 0,
+      "still_image": 0,
+      "multilayer": 0
+     },
+     "side_data_list": [
+      {
+       "side_data_type": "CPB properties",
+       "max_bitrate": 0,
+       "min_bitrate": 0,
+       "avg_bitrate": 0,
+       "buffer_size": 49152,
+       "vbv_delay": -1
+      }
+     ]
+    },
+    {
+     "index": 1,
+     "codec_name": "mp2",
+     "codec_long_name": "MP2 (MPEG audio layer 2)",
+     "codec_type": "audio",
+     "codec_tag_string": "[6][0][0][0]",
+     "codec_tag": "0x0006",
+     "sample_fmt": "s16p",
+     "sample_rate": "48000",
+     "channels": 1,
+     "channel_layout": "mono",
+     "bits_per_sample": 0,
+     "initial_padding": 0,
+     "ts_id": "1",
+     "ts_packetsize": "192",
+     "id": "0x1100",
+     "r_frame_rate": "0/0",
+     "avg_frame_rate": "0/0",
+     "time_base": "1/90000",
+     "start_pts": 128852,
+     "start_time": "1.431689",
+     "duration_ts": 179280,
+     "duration": "1.992000",
+     "bit_rate": "384000",
+     "disposition": {
+      "default": 0,
+      "dub": 0,
+      "original": 0,
+      "comment": 0,
+      "lyrics": 0,
+      "karaoke": 0,
+      "forced": 0,
+      "hearing_impaired": 0,
+      "visual_impaired": 0,
+      "clean_effects": 0,
+      "attached_pic": 0,
+      "timed_thumbnails": 0,
+      "non_diegetic": 0,
+      "captions": 0,
+      "descriptions": 0,
+      "metadata": 0,
+      "dependent": 0,
+      "still_image": 0,
+      "multilayer": 0
+     }
+    }
+   ],
+   "chapters": [],
+   "format": {
+    "filename": "file:/dev/fd/3",
+    "nb_streams": 2,
+    "nb_programs": 1,
+    "nb_stream_groups": 0,
+    "format_name": "mpegts",
+    "format_long_name": "MPEG-TS (MPEG-2 Transport Stream)",
+    "start_time": "1.431689",
+    "duration": "2.012011",
+    "size": "239616",
+    "bit_rate": "952742",
+    "probe_score": 0
+   }
+  },
+  "data": [
+   {
+    "programs": [
+     {
+      "streams": [
+       {
+        "index": 0,
+        "extradata": "\n00000000: 0000 01b3 1400 b431 ffff e018 0000 01b5  .......1........\n00000010: 148a 0001 0000                           ......\n",
+        "extradata_size": 22,
+        "disposition": {},
+        "side_data_list": [
+         {
+          "side_data_type": "CPB properties",
+          "max_bitrate": 0,
+          "min_bitrate": 0,
+          "avg_bitrate": 0,
+          "buffer_size": 49152,
+          "vbv_delay": -1
+         }
+        ]
+       }
+      ]
+     }
+    ],
+    "stream_groups": [],
+    "streams": [
+     {
+      "index": 0,
+      "extradata": "\n00000000: 0000 01b3 1400 b431 ffff e018 0000 01b5  .......1........\n00000010: 148a 0001 0000                           ......\n",
+      "extradata_size": 22,
+      "disposition": {
+       "default": 0,
+       "dub": 0,
+       "original": 0,
+       "comment": 0,
+       "lyrics": 0,
+       "karaoke": 0,
+       "forced": 0,
+       "hearing_impaired": 0,
+       "visual_impaired": 0,
+       "clean_effects": 0,
+       "attached_pic": 0,
+       "timed_thumbnails": 0,
+       "non_diegetic": 0,
+       "captions": 0,
+       "descriptions": 0,
+       "metadata": 0,
+       "dependent": 0,
+       "still_image": 0,
+       "multilayer": 0
+      },
+      "side_data_list": [
+       {
+        "side_data_type": "CPB properties",
+        "max_bitrate": 0,
+        "min_bitrate": 0,
+        "avg_bitrate": 0,
+        "buffer_size": 49152,
+        "vbv_delay": -1
+       }
+      ]
+     }
+    ]
+   }
+  ]
+ }
+}

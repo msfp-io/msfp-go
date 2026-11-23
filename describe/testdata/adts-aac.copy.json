@@ -1,0 +1,25 @@
+{
+ "audioTracks": [
+  {
+   "channels": 1,
+   "codec": "aac",
+   "codecs": "mp4a.40.2",
+   "id": "a0",
+   "sampleRate": 48000
+  }
+ ],
+ "durationMs": 2003,
+ "etag": "e1",
+ "id": "v1",
+ "mediaType": "audio/aac",
+ "size": 18332,
+ "subtitleTracks": [
+  {
+   "external": true,
+   "forced": true,
+   "format": "subrip",
+   "id": "s1",
+   "language": "fr"
+  }
+ ]
+}

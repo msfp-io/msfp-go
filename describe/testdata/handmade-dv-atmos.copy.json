@@ -1,0 +1,113 @@
+{
+ "audioTracks": [
+  {
+   "channels": 6,
+   "codec": "eac3",
+   "codecs": "ec-3",
+   "default": true,
+   "id": "a1",
+   "language": "en",
+   "objects": "dolby-atmos",
+   "original": true,
+   "sampleRate": 48000
+  },
+  {
+   "bitDepth": 24,
+   "channels": 8,
+   "codec": "truehd",
+   "codecs": "mlpa",
+   "id": "a2",
+   "language": "en",
+   "objects": "dolby-atmos",
+   "sampleRate": 48000
+  },
+  {
+   "bitDepth": 24,
+   "channels": 8,
+   "codec": "dts",
+   "codecs": "dtsh",
+   "id": "a3",
+   "language": "fr",
+   "objects": "dts-x",
+   "role": "dub",
+   "sampleRate": 48000
+  },
+  {
+   "channels": 2,
+   "codec": "aac",
+   "codecs": "mp4a.40.29",
+   "id": "a4",
+   "language": "en",
+   "role": "description",
+   "sampleRate": 48000
+  }
+ ],
+ "chapters": [
+  {
+   "name": "Chapter 1",
+   "startMs": 0
+  },
+  {
+   "startMs": 60000
+  },
+  {
+   "startMs": 120000
+  },
+  {
+   "startMs": 180000
+  },
+  {
+   "name": "The Desert",
+   "startMs": 240000
+  }
+ ],
+ "durationMs": 8160043,
+ "etag": "e1",
+ "id": "v1",
+ "mediaType": "video/mp4",
+ "size": 48213884928,
+ "subtitleTracks": [
+  {
+   "forced": true,
+   "format": "hdmv_pgs_subtitle",
+   "id": "s5",
+   "language": "fr"
+  },
+  {
+   "format": "subrip",
+   "hearingImpaired": true,
+   "id": "s6",
+   "language": "en"
+  },
+  {
+   "external": true,
+   "forced": true,
+   "format": "subrip",
+   "id": "s9",
+   "language": "fr"
+  }
+ ],
+ "video": {
+  "bitDepth": 10,
+  "codec": "hevc",
+  "codecs": "hvc1.2.4.L153",
+  "colour": {
+   "fullRange": false,
+   "matrix": 9,
+   "primaries": 9,
+   "transfer": 16
+  },
+  "dv": {
+   "compatibility": 1,
+   "el": false,
+   "level": 6,
+   "profile": 8
+  },
+  "fps": "24000/1001",
+  "hdr": [
+   "hdr10plus"
+  ],
+  "height": 2160,
+  "width": 3840
+ }
+}

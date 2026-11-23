@@ -1,0 +1,157 @@
+{
+ "mediaType": "video/avi",
+ "size": 316774,
+ "outputs": {
+  "streams": {
+   "streams": [
+    {
+     "index": 0,
+     "codec_name": "mpeg4",
+     "codec_long_name": "MPEG-4 part 2",
+     "profile": "Simple Profile",
+     "codec_type": "video",
+     "codec_tag_string": "FMP4",
+     "codec_tag": "0x34504d46",
+     "width": 320,
+     "height": 180,
+     "coded_width": 320,
+     "coded_height": 180,
+     "closed_captions": 0,
+     "film_grain": 0,
+     "has_b_frames": 0,
+     "sample_aspect_ratio": "1:1",
+     "display_aspect_ratio": "16:9",
+     "pix_fmt": "yuv420p",
+     "level": 1,
+     "chroma_location": "left",
+     "refs": 1,
+     "quarter_sample": "false",
+     "divx_packed": "false",
+     "r_frame_rate": "24000/1001",
+     "avg_frame_rate": "24000/1001",
+     "time_base": "1001/24000",
+     "start_pts": 0,
+     "start_time": "0.000000",
+     "duration_ts": 48,
+     "duration": "2.002000",
+     "bit_rate": "454422",
+     "nb_frames": "48",
+     "extradata_size": 47,
+     "disposition": {
+      "default": 0,
+      "dub": 0,
+      "original": 0,
+      "comment": 0,
+      "lyrics": 0,
+      "karaoke": 0,
+      "forced": 0,
+      "hearing_impaired": 0,
+      "visual_impaired": 0,
+      "clean_effects": 0,
+      "attached_pic": 0,
+      "timed_thumbnails": 0,
+      "non_diegetic": 0,
+      "captions": 0,
+      "descriptions": 0,
+      "metadata": 0,
+      "dependent": 0,
+      "still_image": 0,
+      "multilayer": 0
+     }
+    },
+    {
+     "index": 1,
+     "codec_name": "pcm_s16le",
+     "codec_long_name": "PCM signed 16-bit little-endian",
+     "codec_type": "audio",
+     "codec_tag_string": "[1][0][0][0]",
+     "codec_tag": "0x0001",
+     "sample_fmt": "s16",
+     "sample_rate": "48000",
+     "channels": 1,
+     "bits_per_sample": 16,
+     "initial_padding": 0,
+     "r_frame_rate": "0/0",
+     "avg_frame_rate": "0/0",
+     "time_base": "1/48000",
+     "start_pts": 0,
+     "start_time": "0.000000",
+     "bit_rate": "768000",
+     "nb_frames": "96000",
+     "disposition": {
+      "default": 0,
+      "dub": 0,
+      "original": 0,
+      "comment": 0,
+      "lyrics": 0,
+      "karaoke": 0,
+      "forced": 0,
+      "hearing_impaired": 0,
+      "visual_impaired": 0,
+      "clean_effects": 0,
+      "attached_pic": 0,
+      "timed_thumbnails": 0,
+      "non_diegetic": 0,
+      "captions": 0,
+      "descriptions": 0,
+      "metadata": 0,
+      "dependent": 0,
+      "still_image": 0,
+      "multilayer": 0
+     }
+    }
+   ],
+   "chapters": [],
+   "format": {
+    "filename": "file:/dev/fd/3",
+    "nb_streams": 2,
+    "nb_programs": 0,
+    "nb_stream_groups": 0,
+    "format_name": "avi",
+    "format_long_name": "AVI (Audio Video Interleaved)",
+    "start_time": "0.000000",
+    "duration": "2.002000",
+    "size": "316774",
+    "bit_rate": "1265830",
+    "probe_score": 0,
+    "tags": {
+     "software": "Lavf61.7.103"
+    }
+   }
+  },
+  "data": [
+   {
+    "programs": [],
+    "stream_groups": [],
+    "streams": [
+     {
+      "index": 0,
+      "extradata": "\n00000000: 0000 01b0 0100 0001 b589 1300 0001 0000  ................\n00000010: 0001 2000 c48d 8aee 050a 0416 9443 0000  .. ..........C..\n00000020: 01b2 4c61 7663 3631 2e31 392e 3130 31    ..Lavc61.19.101\n",
+      "extradata_size": 47,
+      "disposition": {
+       "default": 0,
+       "dub": 0,
+       "original": 0,
+       "comment": 0,
+       "lyrics": 0,
+       "karaoke": 0,
+       "forced": 0,
+       "hearing_impaired": 0,
+       "visual_impaired": 0,
+       "clean_effects": 0,
+       "attached_pic": 0,
+       "timed_thumbnails": 0,
+       "non_diegetic": 0,
+       "captions": 0,
+       "descriptions": 0,
+       "metadata": 0,
+       "dependent": 0,
+       "still_image": 0,
+       "multilayer": 0
+      }
+     }
+    ]
+   }
+  ]
+ }
+}

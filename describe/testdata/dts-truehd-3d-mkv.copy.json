@@ -1,0 +1,47 @@
+{
+ "audioTracks": [
+  {
+   "channels": 1,
+   "codec": "dts",
+   "codecs": "dtsc",
+   "default": true,
+   "id": "a1",
+   "sampleRate": 48000
+  },
+  {
+   "bitDepth": 24,
+   "channels": 1,
+   "codec": "truehd",
+   "codecs": "mlpa",
+   "id": "a2",
+   "sampleRate": 48000
+  }
+ ],
+ "durationMs": 2002,
+ "etag": "e1",
+ "id": "v1",
+ "mediaType": "video/matroska",
+ "size": 496067,
+ "subtitleTracks": [
+  {
+   "external": true,
+   "forced": true,
+   "format": "subrip",
+   "id": "s3",
+   "language": "fr"
+  }
+ ],
+ "threeD": "sbs",
+ "video": {
+  "bitDepth": 8,
+  "codec": "h264",
+  "codecs": "avc1.64000C",
+  "colour": {
+   "fullRange": false
+  },
+  "fps": "24000/1001",
+  "height": 180,
+  "refFrames": 4,
+  "width": 320
+ }
+}
