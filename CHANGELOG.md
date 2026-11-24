@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased: the revision of version 0 (proposals 16 and 17)
+## v0.8.0 (2026-11-24): the revision of version 0 (proposals 16 and 17)
 
 MSFP version 0 is revised, and stays a draft until version 1: titles
 carry their copies, plays ask a delivery and a purpose (downloads and
@@ -124,7 +124,8 @@ member it removed.
   `Shape` and `Prober.Describe`; `Probe.Raw` (ffprobe's output without
   path or attachments) and `Parse` (kept outputs read again).
   examples/share-folder uses it, and now lists the subtitle tracks inside
-  its files (not served apart: `CopyInfo.NotApart`).
+  its files (not served apart: `CopyInfo.NotApart`), at most 64 a copy
+  (the file's own, then the .vtt beside it), and reads .avi files too.
 
 ### Changed
 

@@ -20,8 +20,8 @@ none of the protocol itself.
 - The protocol: [msfp-io/msfp-spec](https://github.com/msfp-io/msfp-spec),
   version 0 as revised by proposals 16 and 17, still a draft until version 1
   ([spec/v0](https://github.com/msfp-io/msfp-spec/tree/main/spec/v0)).
-  The code here, not released yet, speaks the revised draft; v0.7.1 and
-  before speak the draft before it, and servers on the two don't pair.
+  v0.8.0 and later speak the revised draft; v0.7.1 and before speak the
+  draft before it, and servers on the two don't pair.
   The [changelog](CHANGELOG.md) says what hosts change.
 - The engine's API in words: [api/](https://github.com/msfp-io/msfp-spec/tree/main/api)
   in the spec's repository, mainly
@@ -48,7 +48,7 @@ The only dependency beyond the standard library is
 ## Install
 
 ```sh
-go get github.com/msfp-io/msfp-go@v0.7.1
+go get github.com/msfp-io/msfp-go@v0.8.0
 ```
 
 It needs the Go version in [go.mod](go.mod) or later.
@@ -278,12 +278,12 @@ member's libraries and `SetGroupShows` hides some. In the example:
 
 The module follows [semantic versioning](https://semver.org). Its
 major.minor version is shared with the other MSFP engine,
-[msfp-dotnet](https://github.com/msfp-io/msfp-dotnet): msfp-go 0.7.x and
-msfp-dotnet 0.7.x-preview follow the same API design (the spec's api/). Patch versions are each library's own.
+[msfp-dotnet](https://github.com/msfp-io/msfp-dotnet): msfp-go 0.8.x and
+msfp-dotnet 0.8.x-preview follow the same API design (the spec's api/). Patch versions are each library's own.
 
 The module's version is separate from the protocol's: from v0.4.0 it
 speaks MSFP version 0, groups included; v0.3.0 and before speak the
-same protocol numbered 1, and the two don't talk. The next release
+same protocol numbered 1, and the two don't talk. From v0.8.0 it
 speaks version 0 as revised (proposals 16 and 17), which doesn't talk with v0.7.1
 and before either. Before 1.0, the API may change between minor versions.
 
