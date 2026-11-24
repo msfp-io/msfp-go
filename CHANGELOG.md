@@ -46,7 +46,8 @@ member it removed.
   `wire.LibraryKind` gone), extras no name; `ids` are sent only on
   episodes and on titles keyed under `tvdb` (`wire.VideoOtherID`).
 - Music: copies take `MediaType` (no `Name`, `Added`, `BitrateKbps`),
-  up to 16; no `SortName`; `ids` only on `mb` titles, `isrc` and
+  up to 16; no `SortName`; `ReleaseType` is now `PrimaryType` and
+  `SecondaryTypes` (MusicBrainz's); `ids` only on `mb` titles, `isrc` and
   `acoustid` gone; a track's artists, names, dates and genres leave only
   when they differ from its album's. Lyrics: no `Synced`, `Offset`,
   `DisplayArtist`, `DisplayTitle` (`wire.Lyrics.Synced()` tells it from
@@ -210,7 +211,7 @@ member it removed.
   `LastReading`: when the last reading ended, its `Failure`, and for a
   signed refusal its problem type), and `CatalogReadEnded.Failure` and
   `Refusal`. `ReadFailure` is a closed set of codes, the same in
-  msfp-dotnet (`ReadFailures`), never holding an address or anything the
+  msfp-dotnet (`ReadFailure`), never holding an address or anything the
   peer wrote: `unreachable`, `timeout`, `certificate-refused`,
   `refused-unsigned`, `refused`, `not-paired`, `suspended`, `uncallable`,
   `no-common-version`, `catalog-off`, `older-draft`,
@@ -386,8 +387,8 @@ member it removed.
 
 - Automatically accepting new members (`SetGroupAnswer` true) accepts a
   request as soon as it arrives: the group's `waitDays` changes nothing
-  (groups section 4.1). Requests that waited before it was turned on keep
-  waiting for the operator.
+  (groups section 4.1). Requests already waiting when it is turned on
+  are accepted too, by the engine's loop (`Run`).
 - `SetWants` no longer counts for a server known only through a group:
   what its groups show does.
 

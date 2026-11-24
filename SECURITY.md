@@ -19,7 +19,7 @@ report it there the same way.
 The engine checks every call and everything a peer's media brings
 before the host sees it, but some of what crosses still reaches the
 host's people's devices, or the host's own disks and bandwidth. With
-version 0 as revised (proposal 16):
+version 0 as revised (proposals 16 and 17):
 
 - **Fonts and ASS from peers.** A peer's ASS subtitles are rebuilt, not
   filtered: known sections, lines and override tags only, embedded fonts
