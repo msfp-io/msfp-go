@@ -841,18 +841,6 @@ func (e *Engine) register(p *PeerRecord, in wire.PlayRequest, queue []wire.Queue
 	return pb, ticket
 }
 
-// streamBase is the stream root of the address the request was signed
-// for: the former one during a move, for a peer still on it (MSFP media
-// section 1, core section 13.1, step 5).
-func (e *Engine) streamBase(req *request) string {
-	a := e.address()
-	addr := a.address
-	if req.v.Former && a.former != "" {
-		addr = a.former
-	}
-	return addr + e.cfg.Prefix + "/api/v1/stream/"
-}
-
 // hostRefusal is the host's error as the peer is told it (engine.md
 // section 6).
 func (e *Engine) hostRefusal(err error, what string) response {

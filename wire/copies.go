@@ -504,27 +504,9 @@ func videoIntOr0(v any, lo, hi int64) int64 {
 	return n
 }
 
-// videoNumber reads any JSON number, as a float.
-func videoNumber(v any) (float64, bool) {
-	n, ok := v.(json.Number)
-	if !ok {
-		return 0, false
-	}
-	f, err := strconv.ParseFloat(string(n), 64)
-	return f, err == nil
-}
-
 // videoForm is v when it is a string matching re, else "".
 func videoForm(v any, re *regexp.Regexp) string {
 	if s, ok := v.(string); ok && re.MatchString(s) {
-		return s
-	}
-	return ""
-}
-
-// videoOneOf is v when it is a string of list, else "".
-func videoOneOf(v any, list []string) string {
-	if s, ok := v.(string); ok && slices.Contains(list, s) {
 		return s
 	}
 	return ""

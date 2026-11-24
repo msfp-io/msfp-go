@@ -74,7 +74,8 @@ func TestCatalogPageBudget(t *testing.T) {
 	}
 	// Exactly 3 MiB in all, commas included, fits; one more byte doesn't.
 	b = NewPageBudget(MaxPageBytes - 21)
-	if !b.Add(10) || !b.Add(10) || b.Add(1) {
+	first, second, third := b.Add(10), b.Add(10), b.Add(1)
+	if !first || !second || third {
 		t.Error("the 3 MiB bound isn't inclusive")
 	}
 	// An entry that alone passes the bound: false on an empty page.
