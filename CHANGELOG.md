@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.8.1 (2026-11-24)
+
+### Fixed
+
+- A library no longer wanted, then wanted again before any reading of
+  that peer (two `SetWants` close together), left its titles out: the
+  next reading asked only for changes since the last one, and a host
+  that drops a library's titles as soon as it's no longer wanted (as
+  Overfin does) never got them back. Any change of what is wanted now
+  makes the next reading whole.
+
 ## v0.8.0 (2026-11-24): the revision of version 0 (proposals 16 and 17)
 
 MSFP version 0 is revised, and stays a draft until version 1: titles

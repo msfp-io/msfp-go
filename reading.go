@@ -326,14 +326,23 @@ func (e *Engine) SetWants(ctx context.Context, peer string, libraries []string) 
 		}
 	}
 	err = e.updatePeer(ctx, peer, func(q *PeerRecord) {
+		changed := false
 		kept := q.Wants[:0]
 		for _, w := range q.Wants {
+			was := w.Wanted
 			w.Wanted = slices.Contains(libraries, w.ID)
+			changed = changed || w.Wanted != was
 			if w.Wanted || !w.Gone {
 				kept = append(kept, w)
 			}
 		}
 		q.Wants = kept
+		// What it wants changed: its next reading is whole. A host may drop
+		// the titles of a library no longer wanted at once; wanted again
+		// before any reading, a reading of changes wouldn't bring them back.
+		if changed {
+			q.CatalogRead = CatalogRead{}
+		}
 	})
 	if err == nil {
 		e.readSoon(peer)

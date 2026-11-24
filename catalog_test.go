@@ -176,6 +176,47 @@ func TestCatalogChanges(t *testing.T) {
 	}
 }
 
+// A library no longer wanted, then wanted again before any reading: the
+// next reading is whole (a host may have dropped its titles at once).
+func TestWantsChangedReadWhole(t *testing.T) {
+	ctx := context.Background()
+	h := newFakeHost()
+	h.film("films", "movie/tmdb/1", "en")
+	s := newSharing(t, h, msfp.Config{}, msfp.Config{})
+	if _, err := s.b.eng.ReadNow(ctx, s.onB.ID); err != nil {
+		t.Fatal(err)
+	}
+	wants, err := s.b.eng.Wants(ctx, s.onB.ID)
+	if err != nil || len(wants) != 1 {
+		t.Fatalf("B's wants: %+v %v", wants, err)
+	}
+	// Unchanged wants: a reading of changes.
+	s.b.eng.SetWants(ctx, s.onB.ID, []string{wants[0].ID})
+	if _, err := s.b.eng.ReadNow(ctx, s.onB.ID); err != nil {
+		t.Fatal(err)
+	}
+	last := s.a.exchanges("titles")
+	if x := last[len(last)-1]; sinceOf(x.reqBody) == 0 {
+		t.Fatalf("wants unchanged, a whole reading: %s", x.reqBody)
+	}
+	s.b.eng.SetWants(ctx, s.onB.ID, nil)
+	s.b.eng.SetWants(ctx, s.onB.ID, []string{wants[0].ID})
+	if _, err := s.b.eng.ReadNow(ctx, s.onB.ID); err != nil {
+		t.Fatal(err)
+	}
+	last = s.a.exchanges("titles")
+	if x := last[len(last)-1]; sinceOf(x.reqBody) != 0 || strings.Contains(x.resBody, `"changes":true`) {
+		t.Errorf("wanted again before any reading, a reading of changes: %s → %s", x.reqBody, x.resBody)
+	}
+}
+
+// sinceOf is a titles request's since (0 when absent: a whole reading).
+func sinceOf(body string) int64 {
+	var r struct{ Since int64 }
+	json.Unmarshal([]byte(body), &r)
+	return r.Since
+}
+
 // A host's ChangeLog answers changes; one too old, the whole list.
 type loggingHost struct {
 	*fakeHost
