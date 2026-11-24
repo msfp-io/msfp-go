@@ -51,6 +51,9 @@ type fakeHost struct {
 	// hold makes Start wait until it is closed, so that plays cross;
 	// entered, when set, is told each Start that waits.
 	hold, entered chan struct{}
+	// titlesHold makes the next Titles wait until it is closed, telling
+	// titlesEntered first (once: it is cleared then).
+	titlesHold, titlesEntered chan struct{}
 	// peers are the peers Describe, Lyrics and Serve were called for, in
 	// order, by call ("describe", "lyrics", "serve").
 	peers []peerCall
@@ -110,6 +113,13 @@ func (h *fakeHost) Libraries(context.Context) ([]msfp.Library, error) {
 
 func (h *fakeHost) Titles(_ context.Context, libs []string, after string, limit int) (msfp.TitlePage, error) {
 	h.mu.Lock()
+	if hold, entered := h.titlesHold, h.titlesEntered; hold != nil {
+		h.titlesHold, h.titlesEntered = nil, nil
+		h.mu.Unlock()
+		close(entered)
+		<-hold
+		h.mu.Lock()
+	}
 	defer h.mu.Unlock()
 	var page msfp.TitlePage
 	for _, k := range slices.Sorted(maps.Keys(h.titles)) {

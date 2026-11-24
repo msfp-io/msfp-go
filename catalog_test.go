@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/msfp-io/msfp-go"
 	"github.com/msfp-io/msfp-go/wire"
@@ -313,6 +314,43 @@ func TestOwnTitlesChecked(t *testing.T) {
 	if !slices.Equal(ep.AudioLanguages(), []string{"en"}) || ep.Copies[0].ID == "ep1" || !slices.Equal(ep.With, []string{"series/tmdb/1399/e2", "series/tmdb/1399/e3"}) ||
 		len(ep.IDs) != 1 || ep.IDs["tvdb"] != "81189" {
 		t.Errorf("an episode as sent: %+v", ep)
+	}
+}
+
+// A titles answer comes after a change the host told of, even while the
+// refresh CatalogChanged started in the background is still reading the
+// host's titles: it waits for it, rather than answering from the log as
+// it was (the cause of TestTitleCopies' and TestLocalTitlesAndExtras'
+// rare failures).
+func TestChangeWaitsForRefresh(t *testing.T) {
+	ctx := context.Background()
+	h := newFakeHost()
+	h.film("films", "movie/tmdb/1", "en")
+	h.film("films", "movie/tmdb/2", "en")
+	s := newSharing(t, h, msfp.Config{}, msfp.Config{})
+	hold, entered := make(chan struct{}), make(chan struct{})
+	h.mu.Lock()
+	h.titlesHold, h.titlesEntered = hold, entered
+	h.mu.Unlock()
+	h.remove("movie/tmdb/2")
+	s.a.eng.CatalogChanged()
+	<-entered // the background refresh is reading the host's titles
+	read := make(chan error, 1)
+	go func() {
+		_, err := s.b.eng.ReadNow(ctx, s.onB.ID)
+		read <- err
+	}()
+	select {
+	case err := <-read:
+		t.Fatalf("a reading answered during the refresh: %v, B keeps %v", err, keysOf(s.peerTitles(t)))
+	case <-time.After(200 * time.Millisecond):
+	}
+	close(hold)
+	if err := <-read; err != nil {
+		t.Fatal(err)
+	}
+	if got := keysOf(s.peerTitles(t)); !slices.Equal(got, []string{"movie/tmdb/1"}) {
+		t.Errorf("B keeps %v after the film's removal", got)
 	}
 }
 

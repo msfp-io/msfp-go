@@ -297,6 +297,13 @@ func (e *Engine) catalogSeq(ctx context.Context) (seq, floor int64, err error) {
 		if err := e.refreshOwn(ctx); err != nil {
 			return 0, 0, err
 		}
+	} else {
+		// A refresh under way (CatalogChanged's, in the background) has
+		// cleared the hint but not yet logged what changed: wait for it, so
+		// that this answer comes after the change it was told of.
+		e.own.mu.Lock()
+		//lint:ignore SA2001 an empty critical section: waiting is the point
+		e.own.mu.Unlock()
 	}
 	err = e.cfg.Store.Read(ctx, func(tx Tx) error {
 		log := tx.(OwnLogTx)

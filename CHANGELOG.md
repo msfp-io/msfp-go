@@ -219,6 +219,14 @@ member it removed.
   tracks without `copies`), and the reading fails as `older-draft`
   (`ErrUnreachable`), keeping what was kept before.
 
+### Fixed
+
+- With the change log kept by the engine, a titles answer given while
+  the refresh that `CatalogChanged` starts in the background was still
+  reading the host's titles came from the log as it was: a changes
+  reading with nothing in it, the change seen only at the next reading.
+  The answer now waits for that refresh.
+
 ### Migration guide
 
 **A host that shares (the owning side):**
