@@ -275,11 +275,11 @@ func (e *Engine) serveStream(w http.ResponseWriter, r *http.Request, fallback ht
 		e.serveSmall(w, r, pb, path)
 		return
 	case MediaSheet:
-		e.serveSheet(w, r, pb.handle, path, pb.sheetWidth, pb.sheetHeight)
+		e.serveSheet(w, r, pb.ref(), pb.handle, path, pb.sheetWidth, pb.sheetHeight)
 		return
 	}
 	sink := &httpSink{w: w, ctx: ctx, pace: pb.pace}
-	err := e.cfg.Media.Serve(ctx, pb.handle, path, rng, sink)
+	err := e.cfg.Media.Serve(ctx, pb.ref(), pb.handle, path, rng, sink)
 	if sink.started || ctx.Err() != nil {
 		return
 	}
@@ -358,7 +358,7 @@ func (e *Engine) serveFile(w http.ResponseWriter, r *http.Request, pb *playback,
 		rng = &Range{First: start, Last: end}
 		sink.status, sink.contentRange = http.StatusPartialContent, wire.ContentRange(start, end, size)
 	}
-	err := e.cfg.Media.Serve(r.Context(), pb.handle, path, rng, sink)
+	err := e.cfg.Media.Serve(r.Context(), pb.ref(), pb.handle, path, rng, sink)
 	unsent = sink.left
 	switch {
 	case sink.started || r.Context().Err() != nil:
@@ -487,7 +487,7 @@ func (e *Engine) servePlaylist(w http.ResponseWriter, r *http.Request, pb *playb
 	}
 	var buf boundedSink
 	buf.max = wire.MaxPlaylist
-	err := e.cfg.Media.Serve(r.Context(), pb.handle, path, nil, &buf)
+	err := e.cfg.Media.Serve(r.Context(), pb.ref(), pb.handle, path, nil, &buf)
 	if !buf.started {
 		e.mediaError(w, r, err)
 		return
@@ -597,7 +597,7 @@ func smallRules(p MediaPath) (most int, rebuild func([]byte) ([]byte, string, bo
 func (e *Engine) serveSmall(w http.ResponseWriter, r *http.Request, pb *playback, path MediaPath) {
 	most, rebuild := smallRules(path)
 	buf := boundedSink{max: most}
-	err := e.cfg.Media.Serve(r.Context(), pb.handle, path, nil, &buf)
+	err := e.cfg.Media.Serve(r.Context(), pb.ref(), pb.handle, path, nil, &buf)
 	if !buf.started {
 		e.mediaError(w, r, err)
 		return
@@ -652,7 +652,7 @@ func fontsWithin(sizes *map[int]int, n, size int) bool {
 // SheetEncoder, so that only its pixels leave: whatever else the host's
 // file holds (metadata, trailing bytes) stays here. One outside the
 // layout isn't sent.
-func (e *Engine) serveSheet(w http.ResponseWriter, r *http.Request, handle string, path MediaPath, width, height int) {
+func (e *Engine) serveSheet(w http.ResponseWriter, r *http.Request, peer PeerRef, handle string, path MediaPath, width, height int) {
 	ctx := r.Context()
 	select {
 	case e.sheetGate <- struct{}{}:
@@ -661,7 +661,7 @@ func (e *Engine) serveSheet(w http.ResponseWriter, r *http.Request, handle strin
 		return
 	}
 	buf := boundedSink{max: wire.MaxSheetBytes}
-	err := e.cfg.Media.Serve(ctx, handle, path, nil, &buf)
+	err := e.cfg.Media.Serve(ctx, peer, handle, path, nil, &buf)
 	if !buf.started {
 		e.mediaError(w, r, err)
 		return

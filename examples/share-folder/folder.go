@@ -289,11 +289,19 @@ func previews(path string) *wire.PreviewLayout {
 	return &t
 }
 
+// offeredHere says the folder's one library is among those offered to
+// the peer a call is made for: a copy's handle (its file's path) is
+// resolved only then.
+func offeredHere(peer msfp.PeerRef) bool { return slices.Contains(peer.Libraries, "folder") }
+
 // Describe tells what the catalog doesn't: no fonts; every .vtt file is
 // served apart (as text: video section 5.4), the subtitle tracks inside
 // the file aren't (they play with the file as it is).
-func (f *folder) Describe(_ context.Context, id string) (msfp.CopyInfo, error) {
+func (f *folder) Describe(_ context.Context, peer msfp.PeerRef, id string) (msfp.CopyInfo, error) {
 	var info msfp.CopyInfo
+	if !offeredHere(peer) {
+		return info, msfp.ErrNotFound
+	}
 	if c, ok := f.copy(id); ok {
 		for _, s := range c.SubtitleTracks {
 			if !s.External {
@@ -316,7 +324,7 @@ func (f *folder) Describe(_ context.Context, id string) (msfp.CopyInfo, error) {
 // (Started.AudioRenditions false: MSFP playback section 2.3). The handle
 // is the protocol and the file's path.
 func (f *folder) Start(ctx context.Context, req msfp.StartRequest) (msfp.Started, error) {
-	if !filepath.IsLocal(req.Copy) {
+	if !filepath.IsLocal(req.Copy) || !offeredHere(req.Peer) {
 		return msfp.Started{}, msfp.ErrNotFound
 	}
 	path := filepath.Join(f.dir, req.Copy)
@@ -367,12 +375,12 @@ func (f *folder) Stop(_ context.Context, handle string, _ msfp.EndReason) error 
 
 // Serve answers what a playback's ticket opens (or, for a sheet under a
 // previews ticket, OfCopy, a copy's: its handle is then the file's path).
-func (f *folder) Serve(_ context.Context, handle string, p msfp.MediaPath, rng *msfp.Range, out msfp.ResponseSink) error {
+func (f *folder) Serve(_ context.Context, peer msfp.PeerRef, handle string, p msfp.MediaPath, rng *msfp.Range, out msfp.ResponseSink) error {
 	rel := handle
 	if !p.OfCopy {
 		_, rel, _ = strings.Cut(handle, " ")
 	}
-	if !filepath.IsLocal(rel) || p.Entry != 0 {
+	if !filepath.IsLocal(rel) || p.Entry != 0 || !offeredHere(peer) {
 		return msfp.ErrNotFound
 	}
 	path := filepath.Join(f.dir, rel)

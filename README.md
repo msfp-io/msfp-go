@@ -110,7 +110,11 @@ each film, episode and extra with its copies described as facts: the
 file's media type, the MSFP registry's codec and subtitle tokens,
 RFC 6381 codecs strings, H.273 colour, exact values, the layout of its
 previews; your copies in your order of preference), a `Playback`
-(starting and stopping a stream) and a `Media` (serving it). The engine
+(starting and stopping a stream) and a `Media` (serving it). A copy's
+ID in the catalog is your handle of it: name the copy alone, not where
+its file is. Each call given a handle for a peer is given the peer and
+your libraries offered to it (`PeerRef.Libraries`): resolve the handle
+to a file in one of them, `ErrNotFound` when it is in none. The engine
 serves a copy's file by byte ranges itself, against the size and etag
 the catalog gave, serves exactly the names a playback's answer opened,
 and checks or rebuilds what leaves (playlists, subtitles, fonts, preview

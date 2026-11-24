@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"
@@ -153,13 +154,22 @@ func TestFolderFileTracks(t *testing.T) {
 	if !slices.Equal(heat.SubtitleTracks, want) {
 		t.Errorf("Heat's subtitle tracks: %+v", heat.SubtitleTracks)
 	}
-	if info, _ := f.Describe(context.Background(), heat.ID); !slices.Equal(info.NotApart, []string{"s2", "s3"}) {
+	peer := msfp.PeerRef{ID: "peer", Libraries: []string{"folder"}}
+	if info, _ := f.Describe(context.Background(), peer, heat.ID); !slices.Equal(info.NotApart, []string{"s2", "s3"}) {
 		t.Errorf("not served apart: %v", info.NotApart)
 	}
 	var out sink
-	if err := f.Serve(context.Background(), "file "+heat.ID, msfp.MediaPath{Kind: msfp.MediaSubtitles, Track: "s4", Whole: true}, nil, &out); err != nil ||
+	if err := f.Serve(context.Background(), peer, "file "+heat.ID, msfp.MediaPath{Kind: msfp.MediaSubtitles, Track: "s4", Whole: true}, nil, &out); err != nil ||
 		!strings.Contains(out.String(), "Hallo") {
 		t.Errorf("the .vtt as s4: %q %v", out.String(), err)
+	}
+	// A peer the folder isn't offered to finds no copy of it.
+	other := msfp.PeerRef{ID: "other", Libraries: []string{}}
+	if _, err := f.Describe(context.Background(), other, heat.ID); !errors.Is(err, msfp.ErrNotFound) {
+		t.Errorf("Describe for a peer not offered the folder: %v", err)
+	}
+	if err := f.Serve(context.Background(), other, "file "+heat.ID, msfp.MediaPath{Kind: msfp.MediaSubtitles, Track: "s4", Whole: true}, nil, &sink{}); !errors.Is(err, msfp.ErrNotFound) {
+		t.Errorf("Serve for a peer not offered the folder: %v", err)
 	}
 	avi := byKey["movie/tmdb/78"]
 	if avi == nil {

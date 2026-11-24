@@ -316,11 +316,20 @@ const (
 	DeliveryTranscode = wire.DeliveryTranscode
 )
 
-// PeerRef names a peer for the host's live view: its ID and name, never
-// a person.
+// PeerRef is the peer a host call is made for: its ID and name (for the
+// host's live view; never a person), and Libraries, the host's libraries
+// offered to it when the call is made (their IDs, sorted). Every host
+// call that is given a copy's handle for a peer is given it too
+// (Playback.Describe, StartRequest.Peer, Lyrics.Lyrics, Media.Serve), so
+// that a handle can name the copy alone, wherever its files are: the
+// host resolves it to a file in one of these libraries, and finds none
+// (ErrNotFound) when the copy is only in libraries the peer isn't
+// offered. For a playback's media, they are those of when it started (a
+// playback ends once its title is in none of the libraries offered).
 type PeerRef struct {
-	ID   string
-	Name string
+	ID        string
+	Name      string
+	Libraries []string
 }
 
 // StartRequest is what the engine asks Playback.Start to serve.

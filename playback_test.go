@@ -111,6 +111,45 @@ func TestPlayAndRelay(t *testing.T) {
 	}
 }
 
+// Every host call given a copy's handle for a peer is given the peer and
+// the host's libraries offered to it (sorted), those not offered left
+// out: Describe, Start and Serve of a playback's media.
+func TestHostCallsCarryOfferedLibraries(t *testing.T) {
+	ctx := context.Background()
+	h := filmHost()
+	h.libs = []msfp.Library{{ID: "zz", Name: "Zz"}, {ID: "films", Name: "Films"}, {ID: "docs", Name: "Docs"}}
+	s := newSharing(t, h, msfp.Config{}, msfp.Config{})
+	if err := s.a.eng.SetOffers(ctx, s.onA.ID, []string{"zz", "films"}); err != nil {
+		t.Fatal(err)
+	}
+	pb, err := s.b.eng.Play(ctx, s.onB.ID, msfp.PlayRequest{Title: "movie/tmdb/949", VersionID: copyID(t, s, "movie/tmdb/949", 0)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.b.eng.Fetch(ctx, pb.ID, msfp.MediaPath{Kind: msfp.MediaMaster}, "", &sink{}); err != nil {
+		t.Fatal(err)
+	}
+	want := msfp.PeerRef{ID: s.onA.ID, Name: s.onA.Name, Libraries: []string{"films", "zz"}}
+	same := func(p msfp.PeerRef) bool {
+		return p.ID == want.ID && p.Name == want.Name && slices.Equal(p.Libraries, want.Libraries)
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	var calls []string
+	for _, c := range h.peers {
+		calls = append(calls, c.call)
+		if !same(c.peer) {
+			t.Errorf("%s was given %+v, not %+v", c.call, c.peer, want)
+		}
+	}
+	if !slices.Contains(calls, "describe") || !slices.Contains(calls, "serve") {
+		t.Errorf("the calls: %v", calls)
+	}
+	if len(h.started) != 1 || !same(h.started[0].Peer) {
+		t.Errorf("Start was given %+v", h.started)
+	}
+}
+
 // play's malformed requests are refused with 400, a key not offered with
 // 404, nothing at all for a pairing with no streams, and a ticket works
 // only as MSFP says.

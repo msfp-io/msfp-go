@@ -107,7 +107,7 @@ func (e *Engine) servePreviewSheet(w http.ResponseWriter, r *http.Request, it im
 		return
 	}
 	defer free()
-	e.serveSheet(w, r, it.handle, MediaPath{Kind: MediaSheet, Sheet: path.Sheet, OfCopy: true}, it.sheetWidth, it.sheetHeight)
+	e.serveSheet(w, r, peerRef(p), it.handle, MediaPath{Kind: MediaSheet, Sheet: path.Sheet, OfCopy: true}, it.sheetWidth, it.sheetHeight)
 }
 
 // lyrics answers a paired peer's lyrics call (MSFP music section 6): the
@@ -137,7 +137,7 @@ func (e *Engine) lyrics(req *request) response {
 	if c == nil || c.lyrics == "" {
 		return refuse(probNotFound)
 	}
-	sets, err := host.Lyrics(ctx, c.handle)
+	sets, err := host.Lyrics(ctx, peerRef(p), c.handle)
 	if err != nil {
 		return e.hostRefusal(err, "lyrics")
 	}

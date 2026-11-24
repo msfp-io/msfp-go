@@ -94,6 +94,7 @@ type playback struct {
 	title              string
 	queue              []string // the request's queue, by place
 	libraries          []string // the host's libraries holding the title, offered when it started
+	offers             []string // the host's libraries offered to the peer when it started (PeerRef.Libraries)
 	handle, method     string
 	purpose            string
 	audioOnly          bool
@@ -313,6 +314,20 @@ func (e *Engine) versionID(peer, handle string) string {
 	m := hmac.New(sha256.New, e.ourKeys().ids)
 	m.Write([]byte("version\n" + peer + "\n" + handle))
 	return "ver_" + wire.Encode64(m.Sum(nil)[:16])
+}
+
+// peerRef is the peer as the host calls given a copy's handle for it
+// see it: its ID, name and the libraries offered to it, sorted.
+func peerRef(p *PeerRecord) PeerRef {
+	libs := offered(p)
+	slices.Sort(libs)
+	return PeerRef{ID: p.ID, Name: p.Name, Libraries: libs}
+}
+
+// ref is the peer of a playback, for its media calls: its libraries
+// those offered when it started.
+func (pb *playback) ref() PeerRef {
+	return PeerRef{ID: pb.peer, Name: pb.peerName, Libraries: pb.offers}
 }
 
 // offeredCopy is a copy of a title as the catalog sends it to a peer
@@ -535,7 +550,8 @@ func (e *Engine) play(req *request) response {
 	if in.Delivery == wire.DeliveryTranscode {
 		in.Transcode = served.Transcode
 	}
-	info, err := e.cfg.Playback.Describe(ctx, chosen.handle)
+	ref := peerRef(p)
+	info, err := e.cfg.Playback.Describe(ctx, ref, chosen.handle)
 	if err != nil {
 		return e.hostRefusal(err, "describe")
 	}
@@ -599,7 +615,7 @@ func (e *Engine) play(req *request) response {
 	var slot *countSlot
 	sr := StartRequest{Copy: chosen.handle, Title: in.Title, AudioOnly: audioOnly, Purpose: in.Purpose, Delivery: in.Delivery,
 		MediaType: in.MediaType, Transcode: in.Transcode, Served: served, AudioRenditions: in.AudioRenditions,
-		Parts: chosen.copy.FileCount(), Peer: PeerRef{ID: p.ID, Name: p.Name}, AudioTrack: audio, StartMs: start,
+		Parts: chosen.copy.FileCount(), Peer: ref, AudioTrack: audio, StartMs: start,
 		MaxBitrateKbps: kbps, Queue: queued,
 		Admit: func(method string) (Slot, error) {
 			if slot != nil {
@@ -772,7 +788,7 @@ func (e *Engine) register(p *PeerRecord, in wire.PlayRequest, queue []wire.Queue
 		titles = append(titles, q.Title)
 	}
 	pb := &playback{id: "play_" + lowerBase32.EncodeToString(idBytes), peer: p.ID, peerName: p.Name, title: in.Title, queue: titles,
-		libraries: libs, handle: s.Handle, method: s.Method, purpose: in.Purpose, audioOnly: audioOnly,
+		libraries: libs, offers: peerRef(p).Libraries, handle: s.Handle, method: s.Method, purpose: in.Purpose, audioOnly: audioOnly,
 		ticket: sha256.Sum256([]byte(ticket)), started: now, used: now, slot: slot, audio: map[string]bool{},
 		subtitles: map[string]subtitleServed{}, entries: map[int]entryServed{0: {protocol: s.Protocol, size: c.copy.Size,
 			etag: c.copy.ETag, mediaType: c.copy.MediaType}}}

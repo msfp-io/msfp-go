@@ -51,6 +51,15 @@ type fakeHost struct {
 	// hold makes Start wait until it is closed, so that plays cross;
 	// entered, when set, is told each Start that waits.
 	hold, entered chan struct{}
+	// peers are the peers Describe, Lyrics and Serve were called for, in
+	// order, by call ("describe", "lyrics", "serve").
+	peers []peerCall
+}
+
+// peerCall is a host call given a copy's handle and its peer.
+type peerCall struct {
+	call string
+	peer msfp.PeerRef
 }
 
 func newFakeHost() *fakeHost {
@@ -134,18 +143,20 @@ func (h *fakeHost) Image(_ context.Context, key string) ([]byte, error) {
 	return nil, msfp.ErrNotFound
 }
 
-func (h *fakeHost) Lyrics(_ context.Context, copy string) ([]wire.Lyrics, error) {
+func (h *fakeHost) Lyrics(_ context.Context, peer msfp.PeerRef, copy string) ([]wire.Lyrics, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	h.peers = append(h.peers, peerCall{"lyrics", peer})
 	if l, ok := h.lyrics[copy]; ok {
 		return l, nil
 	}
 	return nil, msfp.ErrNotFound
 }
 
-func (h *fakeHost) Describe(_ context.Context, copy string) (msfp.CopyInfo, error) {
+func (h *fakeHost) Describe(_ context.Context, peer msfp.PeerRef, copy string) (msfp.CopyInfo, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	h.peers = append(h.peers, peerCall{"describe", peer})
 	return h.info[copy], nil
 }
 
@@ -260,8 +271,9 @@ func entryOf(p msfp.MediaPath) string {
 	return fmt.Sprintf("queue/%d/", p.Entry-1)
 }
 
-func (h *fakeHost) Serve(ctx context.Context, _ string, path msfp.MediaPath, rng *msfp.Range, out msfp.ResponseSink) error {
+func (h *fakeHost) Serve(ctx context.Context, peer msfp.PeerRef, _ string, path msfp.MediaPath, rng *msfp.Range, out msfp.ResponseSink) error {
 	h.mu.Lock()
+	h.peers = append(h.peers, peerCall{"serve", peer})
 	h.served = append(h.served, path)
 	serve := h.serve
 	body, ok := h.files[mediaName(path)]

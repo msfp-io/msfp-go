@@ -232,7 +232,7 @@ type Lyrics interface {
 	// milliseconds (MSFP music section 6). The engine cleans them as a
 	// viewer's server keeps them (wire.ReadLyrics) before they leave.
 	// ErrNotFound for none.
-	Lyrics(ctx context.Context, copy string) ([]wire.Lyrics, error)
+	Lyrics(ctx context.Context, peer PeerRef, copy string) ([]wire.Lyrics, error)
 }
 
 // Playback is the owning side of a peer's playback here. The engine has
@@ -246,8 +246,9 @@ type Lyrics interface {
 type Playback interface {
 	// Describe gives what the catalog doesn't say of a copy: its fonts,
 	// the subtitle tracks it can't serve apart, the forms of those of
-	// formats video section 5.4 doesn't list.
-	Describe(ctx context.Context, copy string) (CopyInfo, error)
+	// formats video section 5.4 doesn't list. The copy is resolved
+	// within peer.Libraries, as Start's.
+	Describe(ctx context.Context, peer PeerRef, copy string) (CopyInfo, error)
 	// Start starts serving the copy for its purpose and delivery. Without
 	// a delivery it serves the baseline in complete HLS, as req.Served
 	// says (method remux when each stream is within the baseline and left
@@ -276,7 +277,7 @@ type Playback interface {
 // are checked against MSFP's subset. Errors: ErrNotFound,
 // ErrRangeNotSatisfiable, ErrServerBusy.
 type Media interface {
-	Serve(ctx context.Context, handle string, path MediaPath, rng *Range, out ResponseSink) error
+	Serve(ctx context.Context, peer PeerRef, handle string, path MediaPath, rng *Range, out ResponseSink) error
 }
 
 // Sealer seals the seeds and secrets the engine stores, each under a

@@ -128,6 +128,16 @@ member it removed.
 
 ### Changed
 
+- The host calls given a copy's handle for a peer are given the peer
+  and the host's libraries offered to it (`PeerRef.Libraries`, sorted):
+  `Playback.Describe(ctx, peer, copy)`, `StartRequest.Peer`,
+  `Lyrics.Lyrics(ctx, peer, copy)` and `Media.Serve(ctx, peer, handle,
+  …)` (a playback's media: those offered when it started). A handle can
+  then name the copy alone, wherever its files are, and the version ID
+  a peer sees stays the same when a file moves to another library: the
+  host resolves the handle to a file in one of those libraries, and
+  answers `ErrNotFound` when the copy is in none. Not a protocol change.
+  examples/share-folder serves its folder only to a peer offered it.
 - Titles carry their copies: `VideoTitle.Copies` and `MusicTitle.Copies`
   are `wire.Copy` and `wire.MusicCopy`, each copy's ID the host's handle
   (the engine sends the version ID `play` gives). `VideoTitle.Audio`,
@@ -235,6 +245,10 @@ member it removed.
    the copy's). Playlists are complete (`VOD`, `#EXT-X-ENDLIST`), their
    audio renditions named by the copy's track IDs. Sheets are JPEGs
    within the layout; the engine re-encodes them.
+   `Playback.Describe`, `Lyrics.Lyrics` and `Media.Serve` take the
+   `PeerRef` the call is made for, after the context; with
+   `StartRequest.Peer`, its `Libraries` are the libraries offered to the
+   peer: resolve a copy's handle to a file in one of them.
 6. Extras: titles of kind `extra`, keyed `<film, series or season
    key>/x/<opaque>`, with `ExtraType` and an optional `Name` (theme
    songs and videos too, since proposal 17).
