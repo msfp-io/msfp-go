@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -178,5 +179,29 @@ func TestFolderFileTracks(t *testing.T) {
 	if c := avi.Copies[0]; c.MediaType != "video/avi" || c.Video == nil || c.Video.Codec != "mpeg4" || len(c.AudioTracks) != 1 ||
 		c.AudioTracks[0].ID != "a1" || c.DurationMs < 1900 {
 		t.Errorf("the AVI's copy: %+v", c)
+	}
+}
+
+// A copy lists at most 64 subtitle tracks (MSFP video section 3.2): of
+// 70 .vtt files beside a film, the first 64 by name.
+func TestFolderSubtitlesCapped(t *testing.T) {
+	dir := t.TempDir()
+	film := filepath.Join(dir, "Heat (1995) [tmdbid-949].mkv")
+	if err := os.WriteFile(film, []byte("heat"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for i := range 70 {
+		name := filepath.Join(dir, "Heat (1995) [tmdbid-949]."+strconv.Itoa(100+i)+".vtt")
+		if err := os.WriteFile(name, []byte("WEBVTT\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	f := &folder{dir: dir}
+	c, ok := f.copy(filepath.Base(film))
+	if !ok || len(c.SubtitleTracks) != wire.MaxSubtitleTracks {
+		t.Fatalf("%d subtitle tracks listed", len(c.SubtitleTracks))
+	}
+	if first, last := c.SubtitleTracks[0], c.SubtitleTracks[63]; first.ID != "s0" || last.ID != "s63" || !last.External {
+		t.Errorf("the tracks kept: %+v … %+v", first, last)
 	}
 }

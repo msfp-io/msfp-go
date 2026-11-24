@@ -242,7 +242,8 @@ func (f *folder) Image(_ context.Context, key string) ([]byte, error) {
 // copy describes a video file as the catalog lists a copy (MSFP video
 // section 3.2): its exact size, its media type and etag, what ffprobe
 // says of it (probe.go, with the describe package), its .vtt subtitles
-// (numbered after the file's streams), its previews' layout. Its ID is its handle: its path in the
+// (numbered after the file's streams; the file's own tracks first, at
+// most 64 in all), its previews' layout. Its ID is its handle: its path in the
 // folder.
 func (f *folder) copy(rel string) (wire.Copy, bool) {
 	path := filepath.Join(f.dir, rel)
@@ -257,6 +258,9 @@ func (f *folder) copy(rel string) (wire.Copy, bool) {
 	c.ID, c.Size = rel, st.Size()
 	c.SubtitleTracks = slices.Clip(c.SubtitleTracks) // the probe's copy is shared: appends copy it
 	for i, s := range subtitles(path) {
+		if len(c.SubtitleTracks) == wire.MaxSubtitleTracks {
+			break // a copy lists at most 64 subtitle tracks (MSFP video section 3.2)
+		}
 		c.SubtitleTracks = append(c.SubtitleTracks, wire.CopySubtitle{ID: "s" + strconv.Itoa(streams+i), Language: language(s),
 			Format: "webvtt", External: true})
 	}

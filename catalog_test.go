@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -312,6 +313,28 @@ func TestOwnTitlesChecked(t *testing.T) {
 	if !slices.Equal(ep.AudioLanguages(), []string{"en"}) || ep.Copies[0].ID == "ep1" || !slices.Equal(ep.With, []string{"series/tmdb/1399/e2", "series/tmdb/1399/e3"}) ||
 		len(ep.IDs) != 1 || ep.IDs["tvdb"] != "81189" {
 		t.Errorf("an episode as sent: %+v", ep)
+	}
+}
+
+// A host's copy with more subtitle tracks than MSFP allows leaves with
+// the first 64 (MSFP video section 3.2): the engine sends nothing a
+// receiver would drop.
+func TestOwnSubtitleTracksCapped(t *testing.T) {
+	h := newFakeHost()
+	h.film("films", "movie/tmdb/1", "en")
+	c := h.copyOf("movie/tmdb/1", 0)
+	c.SubtitleTracks = nil
+	for i := range 70 {
+		c.SubtitleTracks = append(c.SubtitleTracks, wire.CopySubtitle{ID: "s" + strconv.Itoa(i), Language: "fr", Format: "subrip"})
+	}
+	s := newSharing(t, h, msfp.Config{}, msfp.Config{})
+	got := s.peerTitles(t)["movie/tmdb/1"].(*msfp.VideoTitle)
+	if n := len(got.Copies[0].SubtitleTracks); n != wire.MaxSubtitleTracks {
+		t.Errorf("%d subtitle tracks kept", n)
+	}
+	last := s.a.exchanges("titles")
+	if body := last[len(last)-1].resBody; strings.Count(body, `"format":"subrip"`) != wire.MaxSubtitleTracks || strings.Contains(body, `"s64"`) {
+		t.Errorf("as sent: %s", body)
 	}
 }
 
