@@ -60,6 +60,14 @@ func TestDamagedFilesRefused(t *testing.T) {
 		}
 		st.Close()
 	}
+	// An empty state.json (a disk full at the wrong moment) too.
+	dir0 := t.TempDir()
+	st0, _ := Open(dir0)
+	st0.Close()
+	os.WriteFile(filepath.Join(dir0, "state.json"), nil, 0o600)
+	if _, err := Open(dir0); err == nil || !strings.Contains(err.Error(), "state.json") {
+		t.Errorf("an empty state.json: %v", err)
+	}
 	// A peer's catalog too.
 	ctx := context.Background()
 	dir := t.TempDir()
