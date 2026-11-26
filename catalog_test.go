@@ -3,6 +3,7 @@ package msfp_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"slices"
@@ -686,4 +687,63 @@ func TestTitlePlaces(t *testing.T) {
 // oneCopy is a title's one copy, of the least a copy carries.
 func oneCopy(handle string) []wire.Copy {
 	return []wire.Copy{{ID: handle, DurationMs: 60_000, MediaType: "video/mp4", Size: 100, ETag: "e1", AudioTracks: []wire.CopyAudio{}}}
+}
+
+// The host's libraries, and those offered to a peer marked; a peer that
+// isn't one, not found. A library the host says is gone is offered to
+// nobody from then on: the peer's next reading has none of its titles.
+func TestOffersAndALibraryRemoved(t *testing.T) {
+	ctx := context.Background()
+	h := newFakeHost()
+	h.libs = []msfp.Library{{ID: "films", Name: "Films"}, {ID: "docs", Name: "Docs"}}
+	h.film("films", "movie/tmdb/1", "en")
+	h.film("docs", "movie/tmdb/2", "en")
+	s := newSharing(t, h, msfp.Config{}, msfp.Config{})
+	if libs, err := s.a.eng.HostLibraries(ctx); err != nil || len(libs) != 2 {
+		t.Fatalf("host libraries: %v %v", libs, err)
+	}
+	if err := s.a.eng.SetOffers(ctx, s.onA.ID, []string{"films", "docs"}); err != nil {
+		t.Fatal(err)
+	}
+	offered := func() map[string]bool {
+		t.Helper()
+		libs, err := s.a.eng.Offers(ctx, s.onA.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		out := map[string]bool{}
+		for _, l := range libs {
+			out[l.ID] = l.Offered
+		}
+		return out
+	}
+	if got := offered(); !got["films"] || !got["docs"] {
+		t.Fatalf("offers: %v", got)
+	}
+	if _, err := s.a.eng.Offers(ctx, "nobody"); !errors.Is(err, msfp.ErrNotFound) {
+		t.Errorf("offers of a peer that isn't: %v", err)
+	}
+	if _, err := s.b.eng.ReadNow(ctx, s.onB.ID); err != nil {
+		t.Fatal(err)
+	}
+	if got := keysOf(s.peerTitles(t)); !slices.Equal(got, []string{"movie/tmdb/1", "movie/tmdb/2"}) {
+		t.Fatalf("B keeps %v", got)
+	}
+
+	if err := s.a.eng.LibraryRemoved(ctx, "docs"); err != nil {
+		t.Fatal(err)
+	}
+	if got := offered(); !got["films"] || got["docs"] {
+		t.Errorf("offers after the removal: %v", got)
+	}
+	if _, err := s.b.eng.ReadNow(ctx, s.onB.ID); err != nil {
+		t.Fatal(err)
+	}
+	if got := keysOf(s.peerTitles(t)); !slices.Equal(got, []string{"movie/tmdb/1"}) {
+		t.Errorf("B keeps %v after the removal", got)
+	}
+	// A library nobody was offered: nothing changes.
+	if err := s.a.eng.LibraryRemoved(ctx, "never-offered"); err != nil {
+		t.Errorf("a library offered to nobody: %v", err)
+	}
 }
