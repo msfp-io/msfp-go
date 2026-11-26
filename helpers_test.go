@@ -16,6 +16,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -290,6 +291,11 @@ func newServerWith(t *testing.T, cfg msfp.Config, opts serverOpts) *server {
 				}
 			} else {
 				rec.Body = bytes.NewBuffer(b)
+				// A rewrite may change the status too, by this header.
+				if code := rec.Header().Get("X-Test-Status"); code != "" {
+					rec.Header().Del("X-Test-Status")
+					rec.Code, _ = strconv.Atoi(code)
+				}
 				if rec.Header().Get(wire.HeaderSignature) != "" {
 					rec.Header().Set(wire.HeaderSignature, wire.SignResponse(s.key(t), r.Header.Get(wire.HeaderNonce),
 						rec.Code, rec.Header().Get("Content-Type"), b))

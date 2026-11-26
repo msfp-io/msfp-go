@@ -158,6 +158,20 @@ func TestRelayHostilePeer(t *testing.T) {
 	if _, err := fetch(seg, "bytes=2-5"); !errors.Is(err, msfp.ErrNotFound) {
 		t.Errorf("a 206 of another range: %v", err)
 	}
+	// For a segment, unlike the file, an unknown total is fine; and a 200
+	// to a range is the whole segment, accepted (media section 2.1).
+	s.set("seg0.m4s", func(h http.Header, b []byte) []byte { h.Set("Content-Range", "bytes 2-5/*"); return b })
+	if out, err := fetch(seg, "bytes=2-5"); err != nil || out.status != 206 || string(out.body) != "2345" {
+		t.Errorf("a segment's 206 of unknown total: %v %+v", err, out)
+	}
+	s.set("seg0.m4s", func(h http.Header, b []byte) []byte {
+		h.Del("Content-Range")
+		h.Set("X-Test-Status", "200")
+		return []byte("0123456789abcdefghij")
+	})
+	if out, err := fetch(seg, "bytes=2-5"); err != nil || out.status != 200 || string(out.body) != "0123456789abcdefghij" {
+		t.Errorf("a segment's 200 to a range: %v %+v", err, out)
+	}
 	s.set("seg0.m4s", func(h http.Header, b []byte) []byte { h.Set("Content-Length", "99"); return b })
 	if _, err := fetch(seg, "bytes=2-5"); !errors.Is(err, msfp.ErrNotFound) {
 		t.Errorf("a 206 whose length isn't its range's: %v", err)
