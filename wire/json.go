@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
-	"io"
 	"reflect"
 	"regexp"
 	"slices"
@@ -159,13 +158,13 @@ func strictTree(body []byte, nulls bool) (any, error) {
 	if bytes.HasPrefix(body, []byte("\xef\xbb\xbf")) || !utf8.Valid(body) || !escapesOK(body) {
 		return nil, ErrJSON
 	}
-	dec := json.NewDecoder(bytes.NewReader(body))
-	dec.UseNumber()
-	v, err := readValue(dec, 0, nulls)
-	if err != nil {
+	s := scanner{b: body, nulls: nulls}
+	s.ws()
+	v, ok := s.value(0)
+	if !ok {
 		return nil, ErrJSON
 	}
-	if _, err := dec.Token(); err != io.EOF {
+	if s.ws(); s.i != len(body) {
 		return nil, ErrJSON // something after the value
 	}
 	return v, nil
@@ -260,62 +259,6 @@ func (notInteger) MarshalJSON() ([]byte, error) {
 }
 
 // readValue reads one value, token by token.
-func readValue(dec *json.Decoder, depth int, nulls bool) (any, error) {
-	if depth > maxDepth {
-		return nil, ErrJSON
-	}
-	tok, err := dec.Token()
-	if err != nil {
-		return nil, err
-	}
-	switch t := tok.(type) {
-	case json.Delim:
-		switch t {
-		case '{':
-			obj := map[string]any{}
-			for dec.More() {
-				name, err := dec.Token()
-				if err != nil {
-					return nil, err
-				}
-				key, ok := name.(string)
-				if _, dup := obj[key]; !ok || dup {
-					return nil, ErrJSON // the same member twice
-				}
-				if obj[key], err = readValue(dec, depth+1, nulls); err != nil {
-					return nil, err
-				}
-			}
-			_, err := dec.Token() // }
-			return obj, err
-		case '[':
-			list := []any{}
-			for dec.More() {
-				v, err := readValue(dec, depth+1, nulls)
-				if err != nil {
-					return nil, err
-				}
-				list = append(list, v)
-			}
-			_, err := dec.Token() // ]
-			return list, err
-		}
-		return nil, ErrJSON
-	case json.Number:
-		// Any I-JSON number: whether it is an integer is the field's
-		// question (keepExact), since a version list ignores entries
-		// that aren't (section 10.2) and unknown members are ignored
-		// whatever they hold.
-		return t, nil
-	case nil:
-		if !nulls {
-			return nil, ErrJSON // null is never a valid value
-		}
-		return nil, nil
-	default: // string, bool
-		return t, nil
-	}
-}
 
 // Marshal writes v as a federation body: JSON, with no null anywhere
 // (core section 2.3). A member that would be null (a nil list, map or
@@ -326,11 +269,11 @@ func Marshal(v any) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	dec := json.NewDecoder(bytes.NewReader(b))
-	dec.UseNumber()
-	var tree any
-	if err := dec.Decode(&tree); err != nil {
-		return nil, err
+	// encoding/json's own bound on nesting; its output is valid JSON.
+	s := scanner{b: b, nulls: true, depth: 10_000}
+	tree, ok := s.value(0)
+	if !ok {
+		return nil, ErrJSON
 	}
 	tree, err = dropNulls(tree)
 	if err != nil {

@@ -1,10 +1,8 @@
 package msfp
 
 import (
-	"bytes"
 	"encoding/json"
 	"errors"
-	"io"
 )
 
 // marshal writes a body the engine sends: JSON, its members in the
@@ -17,17 +15,30 @@ func marshal(v any) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	dec := json.NewDecoder(bytes.NewReader(b))
-	for {
-		tok, err := dec.Token()
-		if err == io.EOF {
-			return b, nil
-		}
-		if err != nil {
-			return nil, err
-		}
-		if tok == nil {
-			return nil, errors.New("msfp: a null in a body")
+	if !noNull(b) {
+		return nil, errors.New("msfp: a null in a body")
+	}
+	return b, nil
+}
+
+// noNull says whether b, valid JSON (json.Marshal's), holds no null.
+// Outside strings, the only token that starts with n is null; inside,
+// a backslash escapes the next byte. One pass over the bytes, where
+// encoding/json's Decoder took several times as long, token by token.
+func noNull(b []byte) bool {
+	in := false
+	for i := 0; i < len(b); i++ {
+		switch c := b[i]; {
+		case in && c == '\\':
+			i++
+		case in && c == '"':
+			in = false
+		case in:
+		case c == '"':
+			in = true
+		case c == 'n':
+			return false
 		}
 	}
+	return true
 }
