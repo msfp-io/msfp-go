@@ -4,9 +4,8 @@ import "testing"
 
 // spsBits writes an SPS bit by bit, as H.264 section 7.3.2.1.1 lays it out.
 type spsBits struct {
-	out  []byte
-	n    int
-	last byte
+	out []byte
+	n   int
 }
 
 func (b *spsBits) u(width int, v uint64) {
