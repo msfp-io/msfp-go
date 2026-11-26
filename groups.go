@@ -2369,8 +2369,8 @@ func isMember(m *wire.GroupMember, p *PeerRecord) bool {
 }
 
 // acceptWaited accepts, where this server accepts members by itself, the
-// requests whose senders have now been in the group its days (groups
-// section 4.1).
+// requests kept until their senders were members in its copy (groups
+// section 4.1; waitDays, which earlier drafts had, changes nothing).
 func (e *Engine) acceptWaited(ctx context.Context, id string) {
 	var ready []GroupRequest
 	err := e.cfg.Store.Update(ctx, func(tx Tx) error {
