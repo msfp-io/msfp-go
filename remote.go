@@ -182,7 +182,7 @@ type remote struct {
 	base      string // the peer's stream base: its ticket in it, never shown
 	audioOnly bool
 	audio     map[string]bool // the playback's audio track IDs
-	subtitles map[string]subtitleServed
+	subtitles map[string]wire.SubtitleServing
 	layout    *wire.PreviewLayout // the copy's, when its sheets are opened
 	ctx       context.Context
 	cancel    context.CancelFunc
@@ -474,7 +474,7 @@ func (e *Engine) readPlay(ctx context.Context, p *PeerRecord, raw json.RawMessag
 		}
 	}
 	rm := &remote{peer: p.ID, peerName: p.Name, theirID: a.ID, base: a.Base(root), audioOnly: audioOnly, audio: map[string]bool{},
-		subtitles: map[string]subtitleServed{}, entries: map[int]remoteEntry{}}
+		subtitles: map[string]wire.SubtitleServing{}, entries: map[int]remoteEntry{}}
 	v := &rm.view
 	v.Peer, v.Title, v.Purpose, v.Delivery = p.ID, req.Title, purpose, req.Delivery
 	v.Method, v.Protocol, v.Etag, v.Size = a.Method, a.Protocol, a.Etag, -1
@@ -502,7 +502,7 @@ func (e *Engine) readPlay(ctx context.Context, p *PeerRecord, raw json.RawMessag
 	if !audioOnly {
 		v.Subtitles, v.Fonts = a.Subtitles, a.FontCount
 		for _, s := range a.Subtitles {
-			rm.subtitles[s.ID] = subtitleServed{text: s.Form == wire.FormText, ass: s.ASS, pictures: s.Form == wire.FormPicture}
+			rm.subtitles[s.ID] = s.Serving()
 		}
 		if l := c.PreviewLayout; known && !v.CopyChanged && l != nil && purpose == wire.PurposePlay {
 			rm.layout, v.Sheets = l, l.SheetCount()

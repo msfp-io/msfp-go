@@ -4,6 +4,8 @@ import (
 	"errors"
 	"net/http"
 	"testing"
+
+	"github.com/msfp-io/msfp-go/wire"
 )
 
 // A peer's signed refusal as the engine's error (engine.md section 6):
@@ -24,14 +26,14 @@ func TestRefusalErrors(t *testing.T) {
 		probInternal:     ErrPeerFailed,
 		probServerBusy:   ErrServerBusy,
 	}
-	for typ, p := range problems {
-		w, ok := want[typ]
+	for typ, w := range want {
+		status, _, ok := wire.Problem(string(typ))
 		if !ok {
-			t.Errorf("%s: no error expected of it", typ)
+			t.Errorf("%s: not one of MSFP's", typ)
 			continue
 		}
-		if got := refusalError(p.status, string(typ)); !errors.Is(got, w) {
-			t.Errorf("%d %s: %v, want %v", p.status, typ, got, w)
+		if got := refusalError(status, string(typ)); !errors.Is(got, w) {
+			t.Errorf("%d %s: %v, want %v", status, typ, got, w)
 		}
 	}
 	// A type this engine doesn't know: by its status alone.

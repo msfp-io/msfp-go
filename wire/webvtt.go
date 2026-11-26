@@ -421,14 +421,14 @@ func dropInvisible(s string) string {
 // early.
 const StretchSeconds = 120
 
-// stretchEarly is how early a stretch starts, in milliseconds.
-const stretchEarly = 10_000
+// StretchEarlyMs is how early a stretch starts, in milliseconds.
+const StretchEarlyMs = 10_000
 
 // inStretch says whether what shows from start to end (milliseconds)
 // belongs in part n: it ends after the part's start, 10 seconds early,
 // and starts before its end.
 func inStretch(start, end int64, n int) bool {
-	return end > int64(n)*StretchSeconds*1000-stretchEarly && start < int64(n+1)*StretchSeconds*1000
+	return end > int64(n)*StretchSeconds*1000-StretchEarlyMs && start < int64(n+1)*StretchSeconds*1000
 }
 
 // WebVTTPart is part n of a whole WebVTT track, for an owning server

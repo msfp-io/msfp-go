@@ -3,6 +3,8 @@ package msfp
 import (
 	"errors"
 	"net/http"
+
+	"github.com/msfp-io/msfp-go/wire"
 )
 
 // Error is an error of the engine: one code of MSFP's shared vocabulary
@@ -129,41 +131,22 @@ var (
 )
 
 // problemType is a problem document's type, as MSFP core section 8.2
-// lists them.
+// lists them (wire.Problem gives their statuses and titles).
 type problemType string
 
 const (
-	probNotFound     problemType = "not-found"
-	probNotSupported problemType = "not-supported"
-	probInvalid      problemType = "invalid-request"
-	probRotation     problemType = "rotation-refused"
-	probStreamLimit  problemType = "stream-limit-reached"
-	probNotPlayable  problemType = "not-playable"
-	probDelivery     problemType = "delivery-refused"
-	probStopped      problemType = "playback-stopped"
-	probRateLimited  problemType = "rate-limited"
-	probInternal     problemType = "internal-error"
-	probServerBusy   problemType = "server-busy"
+	probNotFound     problemType = wire.ProblemNotFound
+	probNotSupported problemType = wire.ProblemNotSupported
+	probInvalid      problemType = wire.ProblemInvalid
+	probRotation     problemType = wire.ProblemRotationRefused
+	probStreamLimit  problemType = wire.ProblemStreamLimit
+	probNotPlayable  problemType = wire.ProblemNotPlayable
+	probDelivery     problemType = wire.ProblemDeliveryRefused
+	probStopped      problemType = wire.ProblemStopped
+	probRateLimited  problemType = wire.ProblemRateLimited
+	probInternal     problemType = wire.ProblemInternal
+	probServerBusy   problemType = wire.ProblemServerBusy
 )
-
-// problems gives each type its status and title (the titles are
-// examples, as section 8.2 says; these are its own).
-var problems = map[problemType]struct {
-	status int
-	title  string
-}{
-	probNotFound:     {http.StatusNotFound, "Not found"},
-	probNotSupported: {http.StatusNotFound, "Not supported"},
-	probInvalid:      {http.StatusBadRequest, "Invalid request"},
-	probRotation:     {http.StatusConflict, "Rotation refused"},
-	probStreamLimit:  {http.StatusConflict, "Too many streams on this account"},
-	probNotPlayable:  {http.StatusConflict, "This item can't be played"},
-	probDelivery:     {http.StatusConflict, "This delivery isn't served"},
-	probStopped:      {http.StatusGone, "Playback was stopped"},
-	probRateLimited:  {http.StatusTooManyRequests, "Too many requests"},
-	probInternal:     {http.StatusInternalServerError, "Internal error"},
-	probServerBusy:   {http.StatusServiceUnavailable, "The server is busy; try again shortly"},
-}
 
 // refusalError is what a peer's signed refusal means, as an engine
 // error (engine.md section 6). hello's signed 404 is ErrUnknown, and

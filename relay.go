@@ -175,7 +175,7 @@ func (e *Engine) relayName(rm *remote, path MediaPath) (string, bool) {
 	case MediaSubtitles, MediaASS, MediaPictures:
 		how, ok := rm.subtitles[path.Track]
 		n, partOK := part()
-		served := map[MediaKind]bool{MediaSubtitles: how.text, MediaASS: how.ass, MediaPictures: how.pictures}[path.Kind]
+		served := map[MediaKind]bool{MediaSubtitles: how.Text, MediaASS: how.ASS, MediaPictures: how.Pictures}[path.Kind]
 		if !ok || !served || !partOK || path.Entry != 0 {
 			return "", false
 		}

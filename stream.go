@@ -151,11 +151,11 @@ func mediaPath(rest string, pb *playback) (MediaPath, bool) {
 	how := pb.subtitles[p.Track]
 	switch p.Kind {
 	case MediaSubtitles:
-		return p, how.text
+		return p, how.Text
 	case MediaASS:
-		return p, how.ass
+		return p, how.ASS
 	}
-	return p, how.pictures
+	return p, how.Pictures
 }
 
 // ParseRange reads a Range header of MSFP media section 2.1: one range of

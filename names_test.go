@@ -47,14 +47,14 @@ func TestServedNames(t *testing.T) {
 			ok = parsed && p.Kind == MediaSheet && p.Sheet < tk.SheetCount
 		default:
 			purpose := map[string]string{"playback": wire.PurposePlay, "download": wire.PurposeDownload, "scan": wire.PurposeScan}[tk.Kind]
-			pb := &playback{purpose: purpose, fonts: tk.FontCount, subtitles: map[string]subtitleServed{},
+			pb := &playback{purpose: purpose, fonts: tk.FontCount, subtitles: map[string]wire.SubtitleServing{},
 				entries: map[int]entryServed{0: {protocol: tk.Protocol}}, names: map[string]bool{}}
 			if purpose == wire.PurposePlay {
 				pb.sheets = tk.SheetCount
 			}
 			if purpose != wire.PurposeScan {
 				for _, s := range tk.Subtitles {
-					pb.subtitles[s.ID] = subtitleServed{text: s.Form == wire.FormText, ass: s.ASS, pictures: s.Form == wire.FormPicture}
+					pb.subtitles[s.ID] = s.Serving()
 				}
 			}
 			for n, protocol := range tk.Queue {
@@ -83,11 +83,11 @@ func TestMasterAttributes(t *testing.T) {
 		Video: &wire.VideoStream{Codec: "hevc", Codecs: "hvc1.2.4.L153.B0", Width: 3840, Height: 2160, BitDepth: 10,
 			Colour: &wire.VideoColour{Primaries: &one, Transfer: &pq}, DV: &wire.VideoDV{Profile: 8, Level: 6, Compatibility: 1}},
 		AudioTracks: []wire.CopyAudio{{ID: "a1", Codec: "eac3", Codecs: "ec-3", Objects: "dolby-atmos"}}}
-	f := servedFacts{copy: c, audio: "a1", served: wire.Served{Method: wire.MethodRemux, Video: wire.CodecCopy, Audio: wire.CodecCopy}}
+	f := servedFacts{copy: c, audio: "a1", served: wire.Served{Method: wire.MethodRemux, Video: wire.CodecCopy, Audio: wire.CodecCopy, Segments: wire.SegmentsMP4}}
 	in := "#EXTM3U\n#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID=\"a\",NAME=\"a1\",URI=\"a1.m3u8\"\n#EXT-X-STREAM-INF:BANDWIDTH=9000\nv0.m3u8\n"
 	out, missing := masterAttributes([]byte(in), f)
 	want := "#EXTM3U\n#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID=\"a\",NAME=\"a1\",URI=\"a1.m3u8\",CHANNELS=\"16/JOC\"\n" +
-		"#EXT-X-STREAM-INF:BANDWIDTH=9000,CODECS=\"hvc1.2.4.L153.B0,ec-3\",RESOLUTION=3840x2160,VIDEO-RANGE=PQ,SUPPLEMENTAL-CODECS=\"dvh1.08.06\"\nv0.m3u8\n"
+		"#EXT-X-STREAM-INF:BANDWIDTH=9000,CODECS=\"hvc1.2.4.L153.B0,ec-3\",RESOLUTION=3840x2160,VIDEO-RANGE=PQ,SUPPLEMENTAL-CODECS=\"dvh1.08.06/db1p\"\nv0.m3u8\n"
 	if string(out) != want || len(missing) != 0 {
 		t.Errorf("%q %v", out, missing)
 	}

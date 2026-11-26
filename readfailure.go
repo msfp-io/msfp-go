@@ -132,7 +132,7 @@ func (e *Engine) readFailure(p *PeerRecord, err error) (f ReadFailure, refusal s
 	case errors.Is(err, ErrBackingOff), errors.Is(err, context.Canceled):
 		return "", "", false
 	case errors.As(err, &signed):
-		if _, known := problems[problemType(signed.problem)]; known {
+		if _, _, known := wire.Problem(signed.problem); known {
 			refusal = signed.problem
 		}
 		return ReadRefused, refusal, true

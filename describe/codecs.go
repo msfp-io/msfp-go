@@ -269,5 +269,5 @@ func AudioCodecs(s Stream) string {
 		}
 		return ""
 	}
-	return map[string]string{"ac3": "ac-3", "eac3": "ec-3", "flac": "fLaC", "opus": "Opus", "truehd": "mlpa", "alac": "alac"}[s.CodecName]
+	return wire.FixedAudioCodecs(s.CodecName)
 }
