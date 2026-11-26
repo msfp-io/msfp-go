@@ -23,7 +23,9 @@ type fuzzBody struct {
 
 // What DecodeJSON takes is always JSON encoding/json takes too, valid
 // UTF-8, without a member twice at any depth; and its tree, written out
-// again, reads the same.
+// again, reads the same. Its tree is the one with nulls (core section
+// 2.3: null in an unknown member is ignored like any other value; DecodeJSON
+// refuses it in the members it knows).
 func FuzzDecodeJSON(f *testing.F) {
 	for _, s := range []string{`{}`, `{"state":"paired","count":3,"list":["a"]}`, `{"a":1,"a":2}`, `{"a":1,"a":2}`,
 		`{"State":"x","state":"y"}`, `{"count":1e3}`, `{"count":-0}`, `{"count":9007199254740991}`, `"\ud800"`,
@@ -31,7 +33,7 @@ func FuzzDecodeJSON(f *testing.F) {
 		f.Add([]byte(s))
 	}
 	f.Fuzz(func(t *testing.T, body []byte) {
-		tree, err := strictTree(body, false)
+		tree, err := strictTree(body, true)
 		var v fuzzBody
 		derr := DecodeJSON(body, &v)
 		if (err == nil) != (derr == nil) && derr == nil {
@@ -50,7 +52,7 @@ func FuzzDecodeJSON(f *testing.F) {
 		if err != nil {
 			t.Fatalf("its tree: %v", err)
 		}
-		if _, err := strictTree(again, false); err != nil {
+		if _, err := strictTree(again, true); err != nil {
 			t.Fatalf("its tree written out (%q) refused: %v", again, err)
 		}
 	})
