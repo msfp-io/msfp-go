@@ -10,7 +10,7 @@ import "testing"
 // it. A peer by hand only, or in one group only, keeps that one's.
 func TestGenerousLimits(t *testing.T) {
 	hand := Limits{Streams: 2, Transcodes: 1, BitrateKbps: 8000, Downloads: 0, DownloadsPerDay: 9, ScansPerDay: 1, ScanBytes: 100}
-	family := Limits{Streams: 1, Transcodes: 3, BitrateKbps: 0, Downloads: 2, DownloadsPerDay: 5, DownloadKbps: 4000, Audio: true, AudioStreams: 2}
+	family := Limits{Streams: 3, Transcodes: 3, BitrateKbps: 0, Downloads: 2, DownloadsPerDay: 5, DownloadKbps: 4000, Audio: true, AudioStreams: 2}
 	friends := Limits{Streams: 4, Transcodes: 0, BitrateKbps: 20000, Downloads: 1, DownloadsPerDay: 10, DownloadKbps: 0, ScanBytes: 500, AudioTranscodes: 1}
 
 	byHand := &PeerRecord{Limits: hand}
