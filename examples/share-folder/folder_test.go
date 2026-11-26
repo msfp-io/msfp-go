@@ -205,3 +205,28 @@ func TestFolderSubtitlesCapped(t *testing.T) {
 		t.Errorf("the tracks kept: %+v … %+v", first, last)
 	}
 }
+
+func TestFolderForgetsRemovedFiles(t *testing.T) {
+	dir := t.TempDir()
+	for _, name := range []string{"Heat (1995) [tmdbid-949].mkv", "Alien (1979) [tmdbid-348].mp4"} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(name), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	f := &folder{dir: dir, opaque: func(s string) string { return "o" }}
+	if _, err := f.Titles(context.Background(), nil, "", 100); err != nil {
+		t.Fatal(err)
+	}
+	if n := len(f.probes.done); n != 2 {
+		t.Fatalf("probes after the first reading: %d, want 2", n)
+	}
+	if err := os.Remove(filepath.Join(dir, "Heat (1995) [tmdbid-949].mkv")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.Titles(context.Background(), nil, "", 100); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := f.probes.done[filepath.Join(dir, "Heat (1995) [tmdbid-949].mkv")]; ok || len(f.probes.done) != 1 {
+		t.Fatalf("probes after Heat left: %v", f.probes.done)
+	}
+}

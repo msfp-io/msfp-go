@@ -70,6 +70,17 @@ func (p *probes) describe(path string, st os.FileInfo) (wire.Copy, int) {
 	return c, streams
 }
 
+// keep forgets what the files outside here gave.
+func (p *probes) keep(here map[string]bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	for path := range p.done {
+		if !here[path] {
+			delete(p.done, path)
+		}
+	}
+}
+
 // mediaTypeOf is the media type of a file ffprobe didn't read: from its
 // first bytes where they tell it, else from its extension, else
 // video/mp4.

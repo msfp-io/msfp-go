@@ -24,8 +24,8 @@ import (
 // folder is a folder of films and series, shared as one library: the
 // engine's Catalog (with Images), Playback and Media. What it reads:
 //
-//	Heat (1995) [tmdbid-949].mkv             a film, by its TMDB ID
-//	Heat (1995) [tmdbid-949].fr.vtt          its subtitles, a file per language
+//	Heat (1995) [tmdbid-949].mkv             a film, by its TMDB ID (.mp4 .m4v .mkv .webm .mov .ts .avi)
+//	Heat (1995) [tmdbid-949].fr.vtt          its subtitles, a file per language, after the file's own
 //	Heat (1995) [tmdbid-949].hls/            an HLS copy made beforehand (master.m3u8 and what it names)
 //	Heat (1995) [tmdbid-949].trickplay/      seek-bar previews: layout.json, 0.jpg, 1.jpg…
 //	Alien (1979) [tmdbid-348]/               a film in a folder of its own (its largest video file)
@@ -206,6 +206,16 @@ func (f *folder) Libraries(context.Context) ([]msfp.Library, error) {
 
 func (f *folder) Titles(_ context.Context, _ []string, after string, limit int) (msfp.TitlePage, error) {
 	items := f.scan()
+	if after == "" {
+		// A first page: the files no longer in the folder leave the probes.
+		here := map[string]bool{}
+		for _, it := range items {
+			if it.video != "" {
+				here[filepath.Join(f.dir, it.video)] = true
+			}
+		}
+		f.probes.keep(here)
+	}
 	var page msfp.TitlePage
 	for _, key := range slices.Sorted(maps.Keys(items)) {
 		if key <= after {
