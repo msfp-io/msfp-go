@@ -222,11 +222,21 @@ func TestFileRanges(t *testing.T) {
 	if _, err := fetch("bytes=30-"); !errors.Is(err, msfp.ErrRangeNotSatisfiable) {
 		t.Errorf("a range past the end: %v", err)
 	}
-	// Another etag, another size, a 200 to a range: the copy changed.
+	// Another etag, another size, a 200 to a range: the copy changed; a 206
+	// for another range than the one asked: a failed fetch.
 	for name, f := range map[string]func(h http.Header, b []byte) []byte{
 		"another etag": func(h http.Header, b []byte) []byte { h.Set("ETag", `"e9"`); return b },
 		"a weak etag":  func(h http.Header, b []byte) []byte { h.Set("ETag", `W/"e0"`); return b },
 		"another size": func(h http.Header, b []byte) []byte { h.Set("Content-Range", "bytes 2-5/21"); return b },
+		// A 206 that isn't the range asked (media section 2.1, checking a 206).
+		"another start": func(h http.Header, b []byte) []byte { h.Set("Content-Range", "bytes 3-6/20"); return b },
+		"an end past last": func(h http.Header, b []byte) []byte {
+			h.Set("Content-Range", "bytes 2-9/20")
+			return []byte("23456789")
+		},
+		"an unknown total": func(h http.Header, b []byte) []byte { h.Set("Content-Range", "bytes 2-5/*"); return b },
+		"malformed":        func(h http.Header, b []byte) []byte { h.Set("Content-Range", "bytes 2-5"); return b },
+		"end before start": func(h http.Header, b []byte) []byte { h.Set("Content-Range", "bytes 5-2/20"); return b },
 		"a 200": func(h http.Header, b []byte) []byte {
 			h.Del("Content-Range")
 			return []byte("0123456789abcdefghij")
