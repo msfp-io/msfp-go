@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased: MSFP Media (proposal 19)
+## v0.10.0 (2026-11-27): MSFP Media (proposal 19)
 
 MSFP's media language is now MSFP Media version 0, which MSFP carries
 between servers. Doc comments cite the language's rules as MSFP Media's
