@@ -44,6 +44,41 @@ var ServedForms = map[string]ServedSubtitle{
 	"hdmv_pgs_subtitle": {Form: FormPicture}, "dvd_subtitle": {Form: FormPicture}, "dvb_subtitle": {Form: FormPicture},
 }
 
+// SubtitleServing is how a subtitle track of a playback is served apart
+// (video section 5.3): as text (WebVTT), its ASS too, or as pictures
+// (PGS); none of them when it isn't served apart.
+type SubtitleServing struct{ Text, ASS, Pictures bool }
+
+// ServeSubtitle is how an owning server serves a subtitle track of
+// format apart: the form ServedForms gives a listed format, else form
+// (FormText, FormPicture, or "" for none), the host's; none when
+// notApart, the host's own word that it can't.
+func ServeSubtitle(format, form string, notApart bool) SubtitleServing {
+	if notApart {
+		return SubtitleServing{}
+	}
+	if s, listed := ServedForms[format]; listed {
+		return SubtitleServing{Text: s.Form == FormText, ASS: s.ASS, Pictures: s.Form == FormPicture}
+	}
+	return SubtitleServing{Text: form == FormText, Pictures: form == FormPicture}
+}
+
+// Apart says whether the track is served apart at all.
+func (s SubtitleServing) Apart() bool { return s.Text || s.Pictures }
+
+// Entry is the play answer's entry of track id served as s (Apart).
+func (s SubtitleServing) Entry(id string) ServedSubtitle {
+	if s.Pictures {
+		return ServedSubtitle{ID: id, Form: FormPicture}
+	}
+	return ServedSubtitle{ID: id, Form: FormText, ASS: s.ASS}
+}
+
+// Serving is how the answer's entry says its track is served.
+func (s ServedSubtitle) Serving() SubtitleServing {
+	return SubtitleServing{Text: s.Form == FormText, ASS: s.ASS, Pictures: s.Form == FormPicture}
+}
+
 // PlayAnswer is what a viewer's server keeps of play's answer (playback
 // section 2.3, video section 5.3), checked and cleaned (ReadPlayAnswer).
 // It carries no URL: URLs builds them from the owning server's stream

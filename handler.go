@@ -46,14 +46,14 @@ func refuse(t problemType) response {
 
 // refuseAfter is a signed problem document with retryAfter (0: none).
 func refuseAfter(t problemType, retryAfter int) response {
-	p := problems[t]
+	status, title, _ := wire.Problem(string(t))
 	var b bytes.Buffer
-	fmt.Fprintf(&b, `{"type":%q,"title":%q,"status":%d`, t, p.title, p.status)
+	fmt.Fprintf(&b, `{"type":%q,"title":%q,"status":%d`, t, title, status)
 	if retryAfter > 0 {
 		fmt.Fprintf(&b, `,"retryAfter":%d`, retryAfter)
 	}
 	b.WriteString("}\n")
-	return response{status: p.status, contentType: "application/problem+json", body: b.Bytes(), retryAfter: retryAfter}
+	return response{status: status, contentType: "application/problem+json", body: b.Bytes(), retryAfter: retryAfter}
 }
 
 // answer is a signed 200 with v as JSON, never with a null in it (MSFP

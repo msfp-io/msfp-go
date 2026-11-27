@@ -1,5 +1,30 @@
 # Changelog
 
+## v0.9.0 (2026-11-26)
+
+### Added
+
+- The media rules a host also applies to its own players, exported so
+  that it applies them once: `wire.ServeSubtitle` and
+  `wire.SubtitleServing` (how a subtitle track is served apart, video
+  section 5.3), `wire.CopiedVideoCodecs`, `wire.KeptVideoRange`,
+  `wire.FixedAudioCodecs` and `Copy.BitsPerSecond` (what a master
+  playlist says of a copy's streams, media section 3.1),
+  `wire.StretchEarlyMs` (subtitle parts, media section 3.4), and
+  `wire.Problem` with every problem type of core section 8.2
+  (`wire.ProblemNotSupported`, `ProblemRotationRefused`,
+  `ProblemRateLimited` and `ProblemInternal` are new).
+
+### Changed
+
+- The master playlist's attributes the engine fills: a copied picture's
+  codecs string as mp4 segments carry it (`hev1` written `hvc1`, `avc3`
+  `avc1`), Dolby Vision's `SUPPLEMENTAL-CODECS` with its compatibility
+  brand (`dvh1.08.06/db1p`) and only in mp4 segments, Dolby Vision
+  profile 5 as its own codecs string, `VIDEO-RANGE=PQ` for a copied
+  Dolby Vision picture with no transfer told, and the fixed codecs
+  strings of an audio track whose own isn't in the catalog.
+
 ## v0.8.1 (2026-11-24)
 
 ### Fixed

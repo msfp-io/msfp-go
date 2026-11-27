@@ -72,10 +72,6 @@ type endedPlay struct {
 	lastAt   time.Time
 }
 
-// subtitleServed is how a subtitle track of a playback is served apart:
-// as WebVTT (text), as ASS too (ass), or as PGS (pictures).
-type subtitleServed struct{ text, ass, pictures bool }
-
 // entryServed is a stream of a playback: its own (entry 0) or a queue
 // entry's: how it is served, and for a file its exact size, etag and
 // media type (the copy's, from the catalog).
@@ -104,7 +100,7 @@ type playback struct {
 	// sheetWidth and sheetHeight bound a sheet: its layout's full sheet.
 	sheetWidth, sheetHeight int
 	audio                   map[string]bool // the copy's audio track IDs
-	subtitles               map[string]subtitleServed
+	subtitles               map[string]wire.SubtitleServing
 	entries                 map[int]entryServed // 0: its own stream; n+1: queue entry n
 	slot                    *countSlot
 	pace                    *pacer // a download's, at downloadKbps; nil for none
@@ -417,20 +413,6 @@ func (e *Engine) senderFor(ctx context.Context, p *PeerRecord, libs []string) (*
 	return &sender{e: e, ctx: ctx, p: p, libs: libs, local: localOffered(p), pub: pub, parents: map[string]string{}}, nil
 }
 
-// servedAs is how a subtitle track of format is served apart (MSFP
-// video section 5.3): the form video section 5.4's table gives a listed
-// format, else the one the host says (form), else none; none either
-// when the host says it can't.
-func servedAs(format, form string, notApart bool) subtitleServed {
-	if notApart {
-		return subtitleServed{}
-	}
-	if s, listed := wire.ServedForms[format]; listed {
-		return subtitleServed{text: s.Form == wire.FormText, ass: s.ASS, pictures: s.Form == wire.FormPicture}
-	}
-	return subtitleServed{text: form == wire.FormText, pictures: form == wire.FormPicture}
-}
-
 // playAnswer is play's answer (MSFP playback section 2.3, video section
 // 5.3, music section 5.2): no URL, the viewer's server builds them from
 // the ticket.
@@ -686,12 +668,8 @@ func (e *Engine) play(req *request) response {
 		out.ScanBytes = pb.scanCap
 	}
 	for _, t := range chosen.copy.SubtitleTracks {
-		if how, ok := pb.subtitles[t.ID]; ok && (how.text || how.pictures) {
-			s := wire.ServedSubtitle{ID: t.ID, Form: wire.FormText, ASS: how.ass}
-			if how.pictures {
-				s.Form, s.ASS = wire.FormPicture, false
-			}
-			out.Subtitles = append(out.Subtitles, s)
+		if how, ok := pb.subtitles[t.ID]; ok && how.Apart() {
+			out.Subtitles = append(out.Subtitles, how.Entry(t.ID))
 		}
 	}
 	out.FontCount = pb.fonts
@@ -790,7 +768,7 @@ func (e *Engine) register(p *PeerRecord, in wire.PlayRequest, queue []wire.Queue
 	pb := &playback{id: "play_" + lowerBase32.EncodeToString(idBytes), peer: p.ID, peerName: p.Name, title: in.Title, queue: titles,
 		libraries: libs, offers: peerRef(p).Libraries, handle: s.Handle, method: s.Method, purpose: in.Purpose, audioOnly: audioOnly,
 		ticket: sha256.Sum256([]byte(ticket)), started: now, used: now, slot: slot, audio: map[string]bool{},
-		subtitles: map[string]subtitleServed{}, entries: map[int]entryServed{0: {protocol: s.Protocol, size: c.copy.Size,
+		subtitles: map[string]wire.SubtitleServing{}, entries: map[int]entryServed{0: {protocol: s.Protocol, size: c.copy.Size,
 			etag: c.copy.ETag, mediaType: c.copy.MediaType}}}
 	pb.facts = servedFacts{copy: c.copy, audio: audio, served: served}
 	if in.Purpose == wire.PurposeScan {
@@ -812,11 +790,11 @@ func (e *Engine) register(p *PeerRecord, in wire.PlayRequest, queue []wire.Queue
 		}
 		hasASS := false
 		for _, t := range c.copy.SubtitleTracks {
-			how := servedAs(t.Format, info.Forms[t.ID], slices.Contains(info.NotApart, t.ID))
-			if how.text || how.pictures {
+			how := wire.ServeSubtitle(t.Format, info.Forms[t.ID], slices.Contains(info.NotApart, t.ID))
+			if how.Apart() {
 				pb.subtitles[t.ID] = how
 			}
-			hasASS = hasASS || how.ass
+			hasASS = hasASS || how.ASS
 		}
 		if hasASS && info.Fonts > 0 && info.Fonts <= wire.MaxFonts {
 			pb.fonts = info.Fonts

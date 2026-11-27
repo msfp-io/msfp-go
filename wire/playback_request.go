@@ -38,17 +38,6 @@ const (
 	ProtocolFile = "file"
 )
 
-// The problem types of playback's refusals (playback sections 2.5, 3, 4).
-const (
-	ProblemInvalid         = "invalid-request"
-	ProblemNotFound        = "not-found"
-	ProblemStreamLimit     = "stream-limit-reached"
-	ProblemDeliveryRefused = "delivery-refused"
-	ProblemNotPlayable     = "not-playable"
-	ProblemServerBusy      = "server-busy"
-	ProblemStopped         = "playback-stopped"
-)
-
 // Bounds of play's numbers (playback section 2.1, video section 5.1).
 const (
 	MaxPositionMs = 8_640_000_000 // 100 days

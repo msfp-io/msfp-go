@@ -56,34 +56,34 @@ func masterAttributes(playlist []byte, f servedFacts) ([]byte, []string) {
 			track = &f.copy.AudioTracks[i]
 		}
 	}
-	// What the facts tell.
+	// What the facts tell (wire's rules, the same for any server).
 	var codecs []string
+	videoCodecs, supplemental := "", ""
 	if videoCopied && v.Codecs != "" {
-		codecs = append(codecs, v.Codecs)
+		videoCodecs, supplemental = wire.CopiedVideoCodecs(*v, f.served.Segments == wire.SegmentsMP4)
+		codecs = append(codecs, videoCodecs)
 	}
-	if audioCopied && track != nil && track.Codecs != "" {
-		codecs = append(codecs, track.Codecs)
-	}
-	codecsKnown := (v == nil || videoCopied && v.Codecs != "") && audioCopied && track != nil && track.Codecs != ""
-	rangeKept := v != nil && (videoCopied || f.served.Transcode != nil && f.served.Transcode.Range == wire.RangeKeep)
-	videoRange := ""
-	if rangeKept && v.Colour != nil && v.Colour.Transfer != nil {
-		switch *v.Colour.Transfer {
-		case wire.TransferPQ:
-			videoRange = "PQ"
-		case wire.TransferHLG:
-			videoRange = "HLG"
+	audioCodecs := ""
+	if audioCopied && track != nil {
+		audioCodecs = track.Codecs
+		if audioCodecs == "" {
+			audioCodecs = wire.FixedAudioCodecs(track.Codec)
 		}
 	}
-	supplemental := ""
-	if videoCopied && v.DV != nil {
-		if c, err := wire.ReadCodecs(v.Codec, v.Codecs, v.BitDepth, v.DV); err == nil && c.DolbyVision != "" {
-			supplemental = c.DolbyVision
+	if audioCodecs != "" {
+		codecs = append(codecs, audioCodecs)
+	}
+	codecsKnown := (v == nil || videoCodecs != "") && audioCodecs != ""
+	rangeKept := v != nil && (videoCopied || f.served.Transcode != nil && f.served.Transcode.Range == wire.RangeKeep)
+	videoRange := ""
+	if rangeKept {
+		if r := wire.KeptVideoRange(*v, videoCopied); r != "SDR" {
+			videoRange = r
 		}
 	}
 	bandwidth := int64(0)
-	if (v == nil || videoCopied) && audioCopied && f.copy.DurationMs > 0 && len(f.copy.AudioTracks) <= 1 {
-		bandwidth = f.copy.Size * 8 * 1000 / f.copy.DurationMs
+	if (v == nil || videoCopied) && audioCopied && len(f.copy.AudioTracks) <= 1 {
+		bandwidth = f.copy.BitsPerSecond()
 	}
 	lines := strings.Split(string(playlist), "\n")
 	missing := map[string]bool{}
