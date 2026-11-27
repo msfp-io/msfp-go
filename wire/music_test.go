@@ -193,4 +193,10 @@ func TestQueueURLs(t *testing.T) {
 	if _, err := CheckQueue("album/local/A1", nil); err == nil {
 		t.Error("an album's play took a queue check")
 	}
+	// A remux to a media type a track's remux doesn't take is a target
+	// the source doesn't make (MSFP Media playing 2.2, step 7).
+	_, err := CheckQueue("track/local/T1", json.RawMessage(`[{"title":"track/local/T2","delivery":"remux","mediaType":"video/mp4"}]`))
+	if r, ok := err.(*PlayRefusal); !ok || r.Problem != ProblemTargetRefused {
+		t.Errorf("a queued remux to video/mp4: %v, want target-refused", err)
+	}
 }

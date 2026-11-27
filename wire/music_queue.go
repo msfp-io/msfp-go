@@ -42,7 +42,8 @@ var MusicRemuxTypes = []string{"audio/" + SegmentsTS, "audio/" + SegmentsMP4}
 // whose transcode comes without its own delivery transcode or isn't a
 // transcode object (TranscodeTargets' rules); then, once no entry is
 // malformed, 409 delivery-refused for an entry's delivery not of the
-// list or a remux to another media type than MusicRemuxTypes. A queued
+// list, or 409 target-refused for a remux to another media type than
+// MusicRemuxTypes. A queued
 // track the owning server doesn't offer the caller, or can't play, isn't
 // refused: it is left out of the answer, its place kept empty.
 func CheckQueue(title string, queue json.RawMessage) ([]QueueAsk, error) {
@@ -90,7 +91,7 @@ func CheckQueue(title string, queue json.RawMessage) ([]QueueAsk, error) {
 		case a.Delivery != "" && !KnownDelivery(a.Delivery):
 			refused = refusedDelivery("queue entry " + strconv.Itoa(i) + ": a delivery the owning server doesn't make")
 		case a.Delivery == DeliveryRemux && !slices.Contains(MusicRemuxTypes, a.MediaType):
-			refused = refusedDelivery("queue entry " + strconv.Itoa(i) + ": a remux to another media type than audio/mp2t or audio/mp4")
+			refused = refusedTarget("queue entry " + strconv.Itoa(i) + ": a remux to another media type than audio/mp2t or audio/mp4")
 		}
 		asked = append(asked, a)
 	}
