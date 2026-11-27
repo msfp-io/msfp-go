@@ -381,7 +381,7 @@ func TestMediaWholeTrackBounds(t *testing.T) {
 	}
 }
 
-// relayTypes of media.json (media section 3): the Content-Type a viewer's
+// relayTypes of media.json (MSFP Media fetching 3): the Content-Type a viewer's
 // server relays a copy's file and a segment with.
 func TestRelayTypeVectors(t *testing.T) {
 	var v struct {

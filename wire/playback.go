@@ -6,25 +6,25 @@ import (
 	"strings"
 )
 
-// Playback (MSFP playback, video section 5) and its media's URLs (media
-// section 1, video section 6.1): the forms of what a play answer gives,
+// Playback (MSFP playback, MSFP Media video 5) and its media's URLs (MSFP Media fetching
+// 1, MSFP Media video 6.1): the forms of what a play answer gives,
 // as the viewer's server checks them.
 
 var idRe = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
 
-// PlayID says whether s is a playback ID (playback section 2.3): the
+// PlayID says whether s is a playback ID (MSFP Media playing 2.3): the
 // form of other opaque IDs (ID). An owning server makes it from at least
 // 128 bits of a secure random source, so that nobody guesses another
 // pairing's playback.
 func PlayID(s string) bool { return ID(s) }
 
 // ID says whether s has the form of a library's, a track's or a
-// version's ID (catalog section 2, playback section 2.3), and of a
-// ticket (media section 1): 1 to 64 characters of A–Z a–z 0–9 _ -.
+// version's ID (catalog section 2, MSFP Media playing 2.3), and of a
+// ticket (MSFP Media fetching 1): 1 to 64 characters of A–Z a–z 0–9 _ -.
 func ID(s string) bool { return idRe.MatchString(s) }
 
 // TrackID reads a track ID of the given kind ('a' for audio, 's' for
-// subtitles; playback section 2.1, video section 5.1): the letter and a
+// subtitles; MSFP Media playing 2.1, MSFP Media video 5.1): the letter and a
 // number from 0 to 999 without leading zeros (a01 is malformed); false
 // for anything else.
 func TrackID(id string, kind byte) (int, bool) {
@@ -35,14 +35,14 @@ func TrackID(id string, kind byte) (int, bool) {
 	return n, err == nil
 }
 
-// StreamRoot is a server's stream root (media section 1) at address,
+// StreamRoot is a server's stream root (MSFP media section 1) at address,
 // without a discovery document: <address>/api/v1/stream/.
 func StreamRoot(address string) string {
 	return strings.TrimSuffix(address, "/") + "/api/v1/stream/"
 }
 
-// The names an owning server serves under a ticket (video section 6.1,
-// media section 1): a viewer's server builds every media URL from the
+// The names an owning server serves under a ticket (MSFP Media video 6.1,
+// MSFP Media fetching 1): a viewer's server builds every media URL from the
 // owning server's stream root, the ticket and one of these, and never
 // fetches an address a peer wrote.
 const (
@@ -51,7 +51,7 @@ const (
 	NameImage  = "image"
 )
 
-// StreamURL is the URL of a playback's stream (playback section 2.3):
+// StreamURL is the URL of a playback's stream (MSFP Media playing 2.3):
 // <root><ticket>/master.m3u8 for hls, <root><ticket>/file for file.
 func StreamURL(root, ticket, protocol string) string {
 	if protocol == ProtocolFile {
@@ -64,7 +64,7 @@ func StreamURL(root, ticket, protocol string) string {
 func TicketBase(root, ticket string) string { return root + ticket + "/" }
 
 // SubtitleURL is the base of a subtitle track's URLs under a ticket's
-// base (video section 6.1), to which /<part> or /whole is added:
+// base (MSFP Media video 6.1), to which /<part> or /whole is added:
 // subtitles/<track> for the form text, pictures/<track> for picture,
 // ass/<track> for a track's ASS.
 func SubtitleURL(base, track, form string) string {
@@ -78,15 +78,15 @@ func SubtitleURL(base, track, form string) string {
 }
 
 // FontURL is the URL of font n of a copy under a ticket's base, n from 0
-// to fontCount − 1 (video section 6.1).
+// to fontCount − 1 (MSFP Media video 6.1).
 func FontURL(base string, n int) string { return base + "fonts/" + strconv.Itoa(n) }
 
 // SheetURL is the URL of sheet n of a copy's previews under a ticket's
-// base (video section 6.1), n below the sheet count of its layout.
+// base (MSFP Media video 6.1), n below the sheet count of its layout.
 func SheetURL(base string, n int) string { return base + "trickplay/" + strconv.Itoa(n) }
 
 // PreviewLayout is the layout of a copy's seek-bar previews, as the
-// catalog gives it (video section 5.5): the tiles' size, the grid of a
+// catalog gives it (MSFP Media video 5.5): the tiles' size, the grid of a
 // sheet, the time between tiles and their count. Its sheets are fetched
 // on demand, under the playback's ticket or a previews ticket.
 type PreviewLayout struct {
@@ -98,7 +98,7 @@ type PreviewLayout struct {
 	TileCount  int `json:"tileCount"`
 }
 
-// The bounds of video section 5.5.
+// The bounds of MSFP Media video 5.5.
 const (
 	maxTile       = 2048
 	maxGrid       = 100
@@ -106,7 +106,7 @@ const (
 	MaxSheets     = 1000
 	minInterval   = 100
 	maxInterval   = 3_600_000
-	MaxSheetBytes = 8 << 20 // a sheet, as read (media section 2.4)
+	MaxSheetBytes = 8 << 20 // a sheet, as read (MSFP Media fetching 2.4)
 )
 
 // SheetCount is how many sheets the tiles fill: ⌈tileCount / (columns ×
@@ -119,7 +119,7 @@ func (t PreviewLayout) SheetCount() int {
 	return (t.TileCount + per - 1) / per
 }
 
-// InBounds says whether a layout is within video section 5.5's bounds:
+// InBounds says whether a layout is within MSFP Media video 5.5's bounds:
 // tiles 1 to 2048 pixels a side, 1 to 100 columns and rows, a sheet at
 // most 4096 pixels a side, an interval of 100 ms to an hour, and 1 to
 // 1,000 × columns × rows tiles.
@@ -155,7 +155,7 @@ func readPreviewLayout(v any) *PreviewLayout {
 }
 
 // RelayedMediaType is the Content-Type a viewer's server gives a
-// segment it relays (media section 3): the owning server's, lowercased
+// segment it relays (MSFP Media fetching 3): the owning server's, lowercased
 // and without parameters, when it is a video/ or audio/ type made of
 // letters, digits and .+- only (never a playlist's),
 // application/octet-stream otherwise.
@@ -171,7 +171,7 @@ func RelayedMediaType(ct string) string {
 }
 
 // RelayedFileType is the Content-Type a viewer's server gives a copy's
-// file it relays (media section 3): the copy's own mediaType from the
+// file it relays (MSFP Media fetching 3): the copy's own mediaType from the
 // catalog, whatever its top level, when it is a media type;
 // application/octet-stream when it has none.
 func RelayedFileType(mediaType string) string {

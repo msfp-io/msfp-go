@@ -13,7 +13,7 @@ import (
 	"unicode/utf8"
 )
 
-// Federation bodies are I-JSON (RFC 7493), read as MSFP core section 2.3 says,
+// Federation bodies are I-JSON (RFC 7493), read as MSFP Media base 2.2 says,
 // both ways: the requests peers send here and the answers they give.
 // encoding/json alone is more lenient: it keeps the last of two members
 // of the same name, replaces invalid UTF-8 and lone surrogates with
@@ -23,7 +23,7 @@ import (
 // members whose names are exactly a field's: "State" is an unknown member,
 // ignored, never "state".
 //
-// null is never a valid value (core section 2.3). A request that holds
+// null is never a valid value (MSFP Media base 2.2). A request that holds
 // one, anywhere, is refused (DecodeJSON). In an answer, a member of the
 // wrong type fails the whole answer at its top, and only counts as absent,
 // or skips its entry, inside it: DecodeAnswer refuses null at the top,
@@ -38,7 +38,7 @@ var ErrJSON = errors.New("federation: not a valid body")
 const maxDepth = 64
 
 // DecodeJSON reads a federation request, a JSON object, into v (a
-// pointer), as MSFP core section 2.3 says: null refused in every member
+// pointer), as MSFP Media base 2.2 says: null refused in every member
 // v knows, ignored, like any other value, in the members it doesn't.
 func DecodeJSON(body []byte, v any) error {
 	return decodeRequest(body, v, nil, nil)
@@ -58,7 +58,7 @@ func DecodeEntry(raw []byte, v any) error {
 }
 
 // decodeRequest reads a request into v. null is never a valid value in
-// it (core section 2.3), but only in the members v knows: an unknown
+// it (MSFP Media base 2.2), but only in the members v knows: an unknown
 // member is ignored whatever it holds, null included. The members named
 // ignored, at the top, are dropped first, whatever their value: a
 // hello's knownKey and rotation, from a server that can be called
@@ -238,8 +238,8 @@ func noncharacter(r rune) bool {
 // integerRe is a JSON integer: no fraction, no exponent, no leading zero.
 var integerRe = regexp.MustCompile(`^-?(0|[1-9][0-9]{0,15})$`)
 
-// isInteger says whether a JSON number is an integer as MSFP core
-// section 2.3 says: no fraction, no exponent, not -0, within
+// isInteger says whether a JSON number is an integer as MSFP Media base
+// 2.2 says: no fraction, no exponent, not -0, within
 // ±(2^53 − 1).
 func isInteger(s string) bool {
 	if !integerRe.MatchString(s) || s == "-0" {
@@ -251,7 +251,7 @@ func isInteger(s string) bool {
 
 // notInteger stands, in a body read for a struct, for a number that isn't
 // an integer where an integer field is: it can't be written, so the body
-// is refused (a member of the wrong type, core section 2.3).
+// is refused (a member of the wrong type, MSFP Media base 2.2).
 type notInteger struct{}
 
 func (notInteger) MarshalJSON() ([]byte, error) {
@@ -261,7 +261,7 @@ func (notInteger) MarshalJSON() ([]byte, error) {
 // readValue reads one value, token by token.
 
 // Marshal writes v as a federation body: JSON, with no null anywhere
-// (core section 2.3). A member that would be null (a nil list, map or
+// (MSFP Media base 2.2). A member that would be null (a nil list, map or
 // pointer) is left out, as omitempty would; null inside a list is an
 // error, since leaving it out would change the list.
 func Marshal(v any) ([]byte, error) {

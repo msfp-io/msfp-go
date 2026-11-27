@@ -7,7 +7,7 @@ import (
 
 // marshal writes a body the engine sends: JSON, its members in the
 // order of v's fields (the order of the specification's tables, as the
-// vectors write them), and never a null (MSFP core section 2.3): a field
+// vectors write them), and never a null (MSFP Media base 2.2): a field
 // that could be null is omitempty, or always set, and a null that slips
 // through is an error, not a body.
 func marshal(v any) ([]byte, error) {

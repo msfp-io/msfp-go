@@ -15,8 +15,8 @@ import (
 	"github.com/msfp-io/msfp-go/wire"
 )
 
-// The previews call (MSFP video section 5.6) and the lyrics call (music
-// section 6), both ways: a ticket for a copy's seek-bar previews outside
+// The previews call (MSFP Media video 5.6) and the lyrics call (MSFP Media music
+// 6), both ways: a ticket for a copy's seek-bar previews outside
 // a playback, which is no playback; a track's lyrics, with no ticket at
 // all.
 
@@ -25,7 +25,7 @@ const (
 	callLyrics   = "lyrics"
 )
 
-// previews answers a paired peer's previews call (MSFP video section
+// previews answers a paired peer's previews call (MSFP Media video
 // 5.6): a ticket that opens the copy's sheets only, for 10 minutes, and
 // the copy's etag as the host holds it now; 404 for a copy without a
 // previewLayout in the catalog. The layout is the catalog's: the answer
@@ -79,7 +79,7 @@ func (e *Engine) offeredCopy(ctx context.Context, p *PeerRecord, key, id string)
 
 // servePreviewSheet serves a sheet under a previews ticket: only its
 // copy's sheets, below the sheet count of its layout, while the title
-// is still sent to the peer with that layout (MSFP media section 4).
+// is still sent to the peer with that layout (MSFP Media fetching 4.2).
 func (e *Engine) servePreviewSheet(w http.ResponseWriter, r *http.Request, it imageTicket, name string) {
 	notFound := func() { e.cfg.NotFound.ServeHTTP(w, r) }
 	path, ok := ParseMediaPath(name)
@@ -110,7 +110,7 @@ func (e *Engine) servePreviewSheet(w http.ResponseWriter, r *http.Request, it im
 	e.serveSheet(w, r, peerRef(p), it.handle, MediaPath{Kind: MediaSheet, Sheet: path.Sheet, OfCopy: true}, it.sheetWidth, it.sheetHeight)
 }
 
-// lyrics answers a paired peer's lyrics call (MSFP music section 6): the
+// lyrics answers a paired peer's lyrics call (MSFP Media music 6): the
 // host's lyrics of a copy whose catalog description says it has some,
 // cleaned as a viewer's server keeps them.
 func (e *Engine) lyrics(req *request) response {
@@ -164,8 +164,8 @@ func (e *Engine) keptTitle(ctx context.Context, peer, key string) (Title, error)
 	return t, err
 }
 
-// sheetCacheBytes bounds the sheets kept of peers' copies (MSFP video
-// section 5.5: caching recommended, keyed by the copy's etag and its
+// sheetCacheBytes bounds the sheets kept of peers' copies (MSFP Media video
+// 5.5: caching recommended, keyed by the copy's etag and its
 // previewLayout).
 const sheetCacheBytes = 64 << 20
 
@@ -211,7 +211,7 @@ func (c *sheetCache) put(key string, b []byte) {
 }
 
 // PreviewSheet fetches sheet n of the seek-bar previews of a peer's copy
-// kept here with a previewLayout (MSFP video section 5.5), checked
+// kept here with a previewLayout (MSFP Media video 5.5), checked
 // against that layout and re-encoded as a JPEG. Previews are fetched on
 // demand, for a copy someone opened (its page, its chapters, a
 // playback, a scrub), never for a whole library nor in bulk for copies
@@ -289,7 +289,7 @@ func (e *Engine) playingCopy(peer, key, versionID string) *remote {
 
 // previewsTicket is a previews ticket of a peer's copy: the one kept
 // while it works, else a new previews call's, one call per copy at a
-// time (MSFP video section 5.6).
+// time (MSFP Media video 5.6).
 func (e *Engine) previewsTicket(ctx context.Context, p *PeerRecord, key, versionID, etag string) (string, error) {
 	id := p.ID + "\n" + key + "\n" + versionID
 	l := e.imageLock("previews\n" + id)
@@ -366,8 +366,8 @@ func (e *Engine) fetchWhole(ctx context.Context, p *PeerRecord, url string, most
 }
 
 // TrackLyrics asks a peer for the lyrics of one of its tracks' copies
-// kept here whose description says it has some (MSFP music section 6),
-// cleaned as music section 6 says (wire.ReadLyrics). The host keeps them
+// kept here whose description says it has some (MSFP Media music 6),
+// cleaned as MSFP Media music 6 says (wire.ReadLyrics). The host keeps them
 // while the copy's etag holds. Errors: ErrNotFound (no such copy kept,
 // none with lyrics, or the peer's refusal), ErrNotPaired, ErrUncallable,
 // ErrSuspended, ErrNotSupported, ErrUnreachable (an answer refused),

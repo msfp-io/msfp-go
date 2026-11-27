@@ -9,19 +9,19 @@ import (
 	"strings"
 )
 
-// Video titles (MSFP video, sections 3 and 4): their keys, of the tmdb,
+// Video titles (MSFP Media video 3 and 4): their keys, of the tmdb,
 // tvdb and local schemes and of extras, and what a server keeps of a
-// title a peer lists in titles (catalog section 3.3, video section 3.1).
+// title a peer lists in titles (MSFP Media listing 3.3, MSFP Media video 3.1).
 // Copies are in copies.go, the previews call in video_previews.go.
 
-// The schemes of video keys (video section 4).
+// The schemes of video keys (MSFP Media video 4).
 const (
 	SchemeTMDB  = "tmdb"
 	SchemeTVDB  = "tvdb"
 	SchemeLocal = "local"
 )
 
-// VideoKey is a video title key, parsed (video section 4): movie/tmdb/949,
+// VideoKey is a video title key, parsed (MSFP Media video 4): movie/tmdb/949,
 // series/tmdb/1399, series/tmdb/1399/s1, series/tmdb/1399/e63056 (an
 // episode by TMDB's ID of it), series/tmdb/1399/s1/e2 (an episode by its
 // numbers), series/tvdb/81189/a27 (by its absolute number),
@@ -48,8 +48,8 @@ type VideoKey struct {
 	ParentKind string
 }
 
-// ParseVideoKey reads a video title key in its one canonical form (video
-// section 4): the kind, the scheme (tmdb, tvdb for series only, local),
+// ParseVideoKey reads a video title key in its one canonical form (MSFP Media video
+// 4): the kind, the scheme (tmdb, tvdb for series only, local),
 // the ID (1 to 9,999,999,999) or the local identifier (OpaqueKeyPart),
 // then for a season s<season> (0, or 1 to 4 digits), for an episode
 // e<episode id> (tmdb only, 1 to 10 digits), s<season>/e<episode>
@@ -163,7 +163,7 @@ func (k VideoKey) Series() string {
 	return kind + "/" + k.Scheme + "/" + id
 }
 
-// Parent is, for an extra, the title it belongs to (video section 4.6);
+// Parent is, for an extra, the title it belongs to (MSFP Media video 4.6);
 // false for any other title.
 func (k VideoKey) Parent() (VideoKey, bool) {
 	if k.Kind != "extra" {
@@ -174,7 +174,7 @@ func (k VideoKey) Parent() (VideoKey, bool) {
 }
 
 // Playable says whether play takes the title, and whether it carries
-// copies: a film, an episode or an extra (video section 5).
+// copies: a film, an episode or an extra (MSFP Media video 5).
 func (k VideoKey) Playable() bool {
 	return k.Kind == "movie" || k.Kind == "episode" || k.Kind == "extra"
 }
@@ -193,7 +193,7 @@ func containsFold(list []string, s string) bool {
 }
 
 // MaxWith is how many other episodes' keys an episode's with lists at
-// most (video section 4.2).
+// most (MSFP Media video 4.2).
 const MaxWith = 16
 
 // CleanWith keeps of an episode's with the keys of other episodes of the
@@ -215,7 +215,7 @@ func CleanWith(episode VideoKey, keys []string) []string {
 	return out
 }
 
-// Other identifiers of a series or an episode (video section 4.3, the
+// Other identifiers of a series or an episode (MSFP Media video 4.3, the
 // registry's ids schemes), by scheme: their form.
 var otherIDs = map[string]*regexp.Regexp{
 	"imdb": regexp.MustCompile(`^tt[0-9]{7,10}$`),
@@ -224,7 +224,7 @@ var otherIDs = map[string]*regexp.Regexp{
 }
 
 // OtherID says whether value is an identifier of a known scheme, in its
-// form (video section 4.3). Whether the title carries that scheme is
+// form (MSFP Media video 4.3). Whether the title carries that scheme is
 // VideoOtherID's.
 func OtherID(scheme, value string) bool {
 	re, known := otherIDs[scheme]
@@ -232,7 +232,7 @@ func OtherID(scheme, value string) bool {
 }
 
 // VideoOtherID says whether a title of that kind, keyed under keyScheme,
-// carries ids' value under scheme (video section 4.3): ids are sent only
+// carries ids' value under scheme (MSFP Media video 4.3): ids are sent only
 // where the receiver can't find them itself, on episodes of the tmdb and
 // tvdb schemes and on series of the tvdb scheme, never on films, on
 // series keyed under tmdb (TMDB's lookup by key gives them), on local
@@ -253,11 +253,11 @@ func VideoOtherID(kind, keyScheme, scheme, value string) bool {
 	return true
 }
 
-// Heights are the values of a transcode's maxHeight (playback section
+// Heights are the values of a transcode's maxHeight (MSFP Media playing
 // 2.7).
 var Heights = []int{480, 720, 1080, 1440, 2160, 4320}
 
-// Place is an episode's place in TMDB's numbering (video section 4.1):
+// Place is an episode's place in TMDB's numbering (MSFP Media video 4.1):
 // TMDB's current season and episode numbers, sent with each episode keyed
 // by its TMDB episode ID.
 type Place struct {
@@ -265,7 +265,7 @@ type Place struct {
 	Episode int `json:"episode"`
 }
 
-// The greatest numbers a place may carry (video section 3.1); both may
+// The greatest numbers a place may carry (MSFP Media video 3.1); both may
 // be 0 (season 0 holds specials, episode 0 a pilot or prologue).
 const (
 	MaxPlaceSeason  = 9999
@@ -277,9 +277,9 @@ func (p Place) Valid() bool {
 	return p.Season >= 0 && p.Season <= MaxPlaceSeason && p.Episode >= 0 && p.Episode <= MaxPlaceEpisode
 }
 
-// readPlace reads place as a receiver keeps it (video section 3.1): nil
+// readPlace reads place as a receiver keeps it (MSFP Media video 3.1): nil
 // unless it is an object whose season and episode are MSFP integers in
-// range (core section 2.3: 1.0 and "1" aren't); other members are
+// range (MSFP Media base 2.2: 1.0 and "1" aren't); other members are
 // ignored.
 func readPlace(v any) *Place {
 	o, ok := v.(map[string]any)
@@ -294,7 +294,7 @@ func readPlace(v any) *Place {
 	return &Place{Season: int(season), Episode: int(episode)}
 }
 
-// Theme songs and theme videos are extras like the others (video section
+// Theme songs and theme videos are extras like the others (MSFP Media video
 // 3.9): an owning server may offer them, and the viewer's server decides
 // whether and how to present them.
 const (
@@ -302,7 +302,7 @@ const (
 	ExtraThemeVideo = "themevideo"
 )
 
-// VideoTitle is a peer's video title, as kept (video section 3.1): its
+// VideoTitle is a peer's video title, as kept (MSFP Media video 3.1): its
 // key, its kind, the library it gives, and the members video adds,
 // cleaned. Copies are set for films, episodes and extras, and always for
 // them; Place for episodes keyed by their TMDB episode ID, and always
@@ -321,8 +321,8 @@ type VideoTitle struct {
 	Description *Description
 }
 
-// ReadVideoTitle reads one entry of a titles answer as catalog section
-// 3.3 and video sections 3.1, 3.8, 3.9 and 3.10 say: false, to skip it,
+// ReadVideoTitle reads one entry of a titles answer as MSFP Media listing
+// 3.3 and MSFP Media video 3.1, 3.8, 3.9 and 3.10 say: false, to skip it,
 // when it isn't an object whose key and library are strings, when the
 // key isn't a canonical video key of a known scheme, when it is a film, an episode or an extra whose
 // copies isn't an array or keeps no copy (ReadCopy), an extra whose
@@ -424,7 +424,7 @@ func videoStrings(v any) []string {
 	return out
 }
 
-// videoInt reads an MSFP integer (core section 2.3) from lo to hi, of a
+// videoInt reads an MSFP integer (MSFP Media base 2.2) from lo to hi, of a
 // value read by strictTree; false for any other value.
 func videoInt(v any, lo, hi int64) (int64, bool) {
 	n, ok := v.(json.Number)

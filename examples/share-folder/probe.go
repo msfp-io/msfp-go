@@ -15,7 +15,7 @@ import (
 	"github.com/msfp-io/msfp-go/wire"
 )
 
-// probes describe video files as MSFP video section 3.2 lists a copy,
+// probes describe video files as MSFP Media video 3.2 lists a copy,
 // with the describe package: its media type from its first bytes, its
 // length, its picture, its tracks and chapters from ffprobe when it is
 // installed (two runs, the codec records read, attachments never),
@@ -101,7 +101,7 @@ func mediaTypeOf(path string) string {
 }
 
 // contentTag is the file's etag: from its content, so that it changes
-// whenever its bytes change, and only then (MSFP video section 3.2):
+// whenever its bytes change, and only then (MSFP Media video 3.2):
 // the first 16 bytes of its SHA-256, base64url. "" when it can't be
 // read.
 func contentTag(path string) string {

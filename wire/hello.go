@@ -72,7 +72,7 @@ type helloMembers struct {
 
 // versionMembers are a hello's members whose reader, readVersions, judges
 // what they hold: a null entry of a list is ignored, as an unknown part
-// is whatever its value (core sections 2.3 and 10.2).
+// is whatever its value (MSFP Media base 2.2, MSFP core section 10.2).
 var versionMembers = []string{"core", "parts"}
 
 // ReadHello reads a hello's body: a request, or with answer, an answer.

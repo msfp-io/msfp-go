@@ -15,8 +15,8 @@ import (
 	"github.com/msfp-io/msfp-go/wire"
 )
 
-// Playback, on the owning side (MSFP playback sections 2 to 8, video
-// section 5, music section 5): play, progress and stop from peers, the
+// Playback, on the owning side (MSFP Media playing, MSFP playback sections 2 to 8, MSFP Media video
+// 5, MSFP Media music 5): play, progress and stop from peers, the
 // choice of the copy and the tracks among the title's copies as the
 // catalog sends them, the delivery and the purpose (a play, a download,
 // a scan), the pool's limits counted in one step with the host's start
@@ -25,7 +25,7 @@ import (
 // progress gets 410 and it starts again; downloads alone are kept in the
 // store for their late reports (downloads.go).
 
-// Times of a playback (MSFP playback section 6.3).
+// Times of a playback (MSFP Media playing 5).
 const (
 	// expiryEvery is how often expired playbacks are looked for.
 	expiryEvery = 30 * time.Second
@@ -59,7 +59,7 @@ type counts struct {
 }
 
 // endedPlay is a playback ended lately: whose, why, when; for a
-// download, what its late reports need (MSFP playback section 7).
+// download, what its late reports need (MSFP Media playing 6).
 type endedPlay struct {
 	peer     string
 	reason   EndReason
@@ -107,6 +107,7 @@ type playback struct {
 	ctx                     context.Context
 	cancel                  context.CancelFunc
 	used                    time.Time
+	idle                    time.Duration // its idle limit: twice the progressSeconds its answer gave
 	active                  bool
 	open                    int
 	lastAt                  time.Time
@@ -227,11 +228,47 @@ func (ps *plays) countsOf(pool string) *counts {
 	return c
 }
 
+// credits says whether the playback a play replaces (old, nil for none)
+// counts as the new one in a pool: live, of the same purpose, counted in
+// that pool among the same streams (MSFP playback section 6). Under
+// plays.mu.
+func credits(old *playback, pool, purpose string, audio bool) bool {
+	return old != nil && old.slot != nil && !old.slot.released && old.slot.pool == pool &&
+		old.slot.purpose == purpose && old.slot.audio == audio
+}
+
+// replacedHandle is the host's handle of the playback replaced, "" for
+// none.
+func replacedHandle(old *playback) string {
+	if old == nil {
+		return ""
+	}
+	return old.handle
+}
+
+// replaced is the live playback of peer that a play's replaces names; nil
+// for none, or for one of another peer.
+func (e *Engine) replaced(peer, id string) *playback {
+	if id == "" {
+		return nil
+	}
+	ps := &e.plays
+	ps.mu.Lock()
+	defer ps.mu.Unlock()
+	if pb := ps.byID[id]; pb != nil && pb.peer == peer {
+		return pb
+	}
+	return nil
+}
+
 // admitIn counts a playback of purpose in a pool, in one step no other
 // play comes between (MSFP playback section 6.2): for a play, a stream
 // (and for "transcode" a transcode); for a download, one of its
-// downloads and of the day's; for a scan, one of the day's.
-func (e *Engine) admitIn(pool string, l Limits, purpose string, audio bool, method string) (*countSlot, error) {
+// downloads and of the day's; for a scan, one of the day's. The playback
+// it replaces (old) is counted as ended, when it counts in that pool
+// (wire.LimitUse.Without): a play frees its stream and its transcode, a
+// download its download but never the day's count, a scan nothing.
+func (e *Engine) admitIn(pool string, l Limits, purpose string, audio bool, method string, old *playback) (*countSlot, error) {
 	switch method {
 	case "direct", "remux", "transcode":
 	default:
@@ -244,9 +281,16 @@ func (e *Engine) admitIn(pool string, l Limits, purpose string, audio bool, meth
 	c := ps.countsOf(pool)
 	now := e.now()
 	c.downloadDay, c.scanDay = lastDay(c.downloadDay, now), lastDay(c.scanDay, now)
+	credit, creditTranscode := 0, 0
+	if credits(old, pool, purpose, s.audio) {
+		credit = 1
+		if old.slot.transcode {
+			creditTranscode = 1
+		}
+	}
 	switch purpose {
 	case wire.PurposeDownload:
-		if c.downloads >= l.Downloads || l.DownloadsPerDay > 0 && len(c.downloadDay) >= l.DownloadsPerDay {
+		if c.downloads-credit >= l.Downloads || l.DownloadsPerDay > 0 && len(c.downloadDay) >= l.DownloadsPerDay {
 			return nil, ErrStreamLimitReached
 		}
 		c.downloads++
@@ -262,9 +306,9 @@ func (e *Engine) admitIn(pool string, l Limits, purpose string, audio bool, meth
 	most, mostTranscodes := s.caps()
 	streams, transcodes := c.of(s.audio)
 	switch {
-	case *streams >= most:
+	case *streams-credit >= most:
 		return nil, ErrStreamLimitReached
-	case method == "transcode" && *transcodes >= mostTranscodes:
+	case method == "transcode" && *transcodes-creditTranscode >= mostTranscodes:
 		return nil, ErrServerBusy
 	}
 	*streams++
@@ -276,8 +320,9 @@ func (e *Engine) admitIn(pool string, l Limits, purpose string, audio bool, meth
 }
 
 // roomIn says whether a pool has room for a playback of purpose now
-// (room), and whether its limits allow any at all (open).
-func (e *Engine) roomIn(pool string, l Limits, purpose string, audio bool) (room, open bool) {
+// (room), the playback it replaces (old) counted as ended, and whether
+// its limits allow any at all (open).
+func (e *Engine) roomIn(pool string, l Limits, purpose string, audio bool, old *playback) (room, open bool) {
 	ps := &e.plays
 	ps.mu.Lock()
 	defer ps.mu.Unlock()
@@ -286,22 +331,26 @@ func (e *Engine) roomIn(pool string, l Limits, purpose string, audio bool) (room
 		c = *have
 	}
 	now := e.now()
+	s := &countSlot{audio: audio && l.Audio, limits: l}
+	credit := 0
+	if credits(old, pool, purpose, s.audio) {
+		credit = 1
+	}
 	switch purpose {
 	case wire.PurposeDownload:
 		today := len(lastDay(slices.Clone(c.downloadDay), now))
-		return c.downloads < l.Downloads && (l.DownloadsPerDay == 0 || today < l.DownloadsPerDay), l.Downloads > 0
+		return c.downloads-credit < l.Downloads && (l.DownloadsPerDay == 0 || today < l.DownloadsPerDay), l.Downloads > 0
 	case wire.PurposeScan:
 		return len(lastDay(slices.Clone(c.scanDay), now)) < l.ScansPerDay, l.ScansPerDay > 0
 	}
-	s := &countSlot{audio: audio && l.Audio, limits: l}
 	most, _ := s.caps()
 	used, _ := c.of(s.audio)
-	return *used < most, most > 0
+	return *used-credit < most, most > 0
 }
 
 // versionID is a copy's version ID toward a peer: a keyed MAC of its
-// handle under the IDs secret, which tells the peer nothing of it (MSFP
-// catalog section 2.1), stable as long as the handle is. Its form is
+// handle under the IDs secret, which tells the peer nothing of it (MSFP Media
+// listing 2.1), stable as long as the handle is. Its form is
 // Overfin's from before the engine ("ver_", then the first 16 bytes of
 // HMAC-SHA-256 over "version", the peer's ID and the handle, a line feed
 // between each, base64url), so that the version IDs its peers kept stay
@@ -339,8 +388,8 @@ type offeredCopy struct {
 func (c offeredCopy) id() string { return c.copy.ID }
 
 // offeredCopies are the copies of exactly that title the peer may play
-// here, as the catalog sends them to it (MSFP playback section 2.2, step
-// 3; video section 3.7: in the host's order of preference), and the host's libraries holding
+// here, as the catalog sends them to it (MSFP Media playing 2.2, step
+// 3; MSFP Media video 3.7: in the host's order of preference), and the host's libraries holding
 // it among those offered; none when the title isn't sent to the peer.
 func (e *Engine) offeredCopies(ctx context.Context, p *PeerRecord, key string) ([]offeredCopy, []string, error) {
 	if e.cfg.Catalog == nil {
@@ -413,8 +462,8 @@ func (e *Engine) senderFor(ctx context.Context, p *PeerRecord, libs []string) (*
 	return &sender{e: e, ctx: ctx, p: p, libs: libs, local: localOffered(p), pub: pub, parents: map[string]string{}}, nil
 }
 
-// playAnswer is play's answer (MSFP playback section 2.3, video section
-// 5.3, music section 5.2): no URL, the viewer's server builds them from
+// playAnswer is play's answer (MSFP Media playing 2.3, MSFP Media video
+// 5.3, MSFP Media music 5.2): no URL, the viewer's server builds them from
 // the ticket.
 type playAnswer struct {
 	ID              string                `json:"id"`
@@ -431,6 +480,7 @@ type playAnswer struct {
 	Subtitles       []wire.ServedSubtitle `json:"subtitles,omitempty"`
 	FontCount       int                   `json:"fontCount,omitempty"`
 	Queue           []wire.QueueEntry     `json:"queue,omitempty"`
+	ProgressSeconds int                   `json:"progressSeconds"`
 }
 
 // refusalOf is a wire refusal of play, progress or stop as answered.
@@ -442,6 +492,8 @@ func refusalOf(err error) response {
 			return refuse(probStreamLimit)
 		case wire.ProblemDeliveryRefused:
 			return refuse(probDelivery)
+		case wire.ProblemTargetRefused:
+			return refuse(probTarget)
 		case wire.ProblemNotPlayable:
 			return refuse(probNotPlayable)
 		case wire.ProblemServerBusy:
@@ -455,8 +507,8 @@ func refusalOf(err error) response {
 	return refuse(probInvalid)
 }
 
-// play starts a paired peer's playback of a title here (MSFP playback
-// section 2.2), in its steps.
+// play starts a paired peer's playback of a title here (MSFP Media playing
+// 2.2), in its steps.
 func (e *Engine) play(req *request) response {
 	p := req.peer
 	if p == nil || p.State != Paired {
@@ -483,12 +535,16 @@ func (e *Engine) play(req *request) response {
 		}
 	}
 	if !video && in.Transcode != nil {
-		// Members of another content part are ignored (playback section
+		// Members of another content part are ignored (MSFP Media playing
 		// 2.4).
 		in.Transcode.BurnSubtitle = ""
 	}
+	// The playback it replaces, if it names a live one of this peer's:
+	// the limits count both as one (MSFP Media playing 2.2, step 8; MSFP
+	// playback section 6). Any other replaces is ignored.
+	old := e.replaced(p.ID, in.Replaces)
 	// 2. No room at all for this purpose in any of the link's pools.
-	if _, open := e.poolRoom(p, in.Purpose, audioOnly); !open {
+	if _, open := e.poolRoom(p, in.Purpose, audioOnly, old); !open {
 		return refuse(probStreamLimit)
 	}
 	// 3. The title's copies, as the catalog sends them to it.
@@ -518,7 +574,7 @@ func (e *Engine) play(req *request) response {
 	audio := wire.DefaultAudio(chosen.copy.AudioTracks, in.AudioTrack)
 	// 5. The purpose's limits all in use: refused before any work (the
 	// count that matters is Admit's).
-	if room, _ := e.poolRoom(p, in.Purpose, audioOnly); !room {
+	if room, _ := e.poolRoom(p, in.Purpose, audioOnly, old); !room {
 		return refuse(probStreamLimit)
 	}
 	// 6 and 7. The bitrate cap (0: none), and the deliveries MSFP itself
@@ -545,8 +601,8 @@ func (e *Engine) play(req *request) response {
 	}
 	// The queue: each entry's copy (the one it names, else its first) and
 	// its own delivery, else the request's; one not offered, of no such
-	// copy, or that can't be served so keeps its place empty (MSFP music
-	// section 5.2). A codec not made refuses the request.
+	// copy, or that can't be served so keeps its place empty (MSFP Media music
+	// 5.2). A codec not made refuses the request.
 	var queued []QueuedCopy
 	queueCopies := map[int]offeredCopy{}
 	queueTranscodes := false
@@ -564,8 +620,8 @@ func (e *Engine) play(req *request) response {
 		if err != nil {
 			return refuse(probInternal)
 		}
-		// The copy the entry names, else its first (MSFP music section
-		// 5.2, as play's versionId: playback section 2.6). A track with
+		// The copy the entry names, else its first (MSFP Media music
+		// 5.2, as play's versionId: MSFP Media playing 2.6). A track with
 		// no copy offered is left out.
 		if len(qc) == 0 {
 			continue
@@ -583,7 +639,7 @@ func (e *Engine) play(req *request) response {
 	}
 	// counted is the method admitted: a transcode whose video and audio
 	// are both copied takes no transcode; a queue with a track converted
-	// takes one (MSFP playback section 2.6, music section 5.2).
+	// takes one (MSFP Media playing 2.6, MSFP Media music 5.2).
 	counted := func(method string) string {
 		switch {
 		case method == "transcode" && in.Delivery == wire.DeliveryTranscode && !served.Transcodes && !queueTranscodes:
@@ -598,12 +654,12 @@ func (e *Engine) play(req *request) response {
 	sr := StartRequest{Copy: chosen.handle, Title: in.Title, AudioOnly: audioOnly, Purpose: in.Purpose, Delivery: in.Delivery,
 		MediaType: in.MediaType, Transcode: in.Transcode, Served: served, AudioRenditions: in.AudioRenditions,
 		Parts: chosen.copy.FileCount(), Peer: ref, AudioTrack: audio, StartMs: start,
-		MaxBitrateKbps: kbps, Queue: queued,
+		MaxBitrateKbps: kbps, Queue: queued, Replaces: replacedHandle(old),
 		Admit: func(method string) (Slot, error) {
 			if slot != nil {
 				return nil, ErrInternal.with(errors.New("admit called twice"))
 			}
-			s, err := e.admitPools(p, in.Purpose, audioOnly, counted(method))
+			s, err := e.admitPools(p, in.Purpose, audioOnly, counted(method), old)
 			if err != nil {
 				return nil, err
 			}
@@ -629,7 +685,7 @@ func (e *Engine) play(req *request) response {
 	if slot == nil {
 		// A host that didn't ask: admitted now, its playback stopped when
 		// the limits refuse it.
-		if slot, err = e.admitPools(p, in.Purpose, audioOnly, counted(started.Method)); err != nil {
+		if slot, err = e.admitPools(p, in.Purpose, audioOnly, counted(started.Method), old); err != nil {
 			e.hostStop(started.Handle, EndStopped)
 			return e.hostRefusal(err, "admit")
 		}
@@ -651,13 +707,13 @@ func (e *Engine) play(req *request) response {
 		e.endPlayback(pb, EndNotOffered)
 		return refuse(probNotFound)
 	}
-	// 9. The answer: the ticket, and what the catalog can't know (MSFP
-	// playback section 2.3); the viewer's server builds every URL.
+	// 9. The answer: the ticket, and what the catalog can't know (MSFP Media
+	// playing 2.3); the viewer's server builds every URL.
 	out := playAnswer{ID: pb.id, Ticket: ticket, Protocol: started.Protocol, Method: started.Method, Etag: chosen.copy.ETag,
-		PositionMs: started.PositionMs, VersionID: chosen.id(), AudioTrack: audio}
+		PositionMs: started.PositionMs, VersionID: chosen.id(), AudioTrack: audio, ProgressSeconds: e.cfg.ProgressSeconds}
 	if in.AudioRenditions && started.Protocol == wire.ProtocolHLS {
 		// Asked for, never refused: the answer says whether the host made
-		// them (MSFP playback section 2.3), false when it made none.
+		// them (MSFP Media playing 2.3), false when it made none.
 		made := started.AudioRenditions
 		out.AudioRenditions = &made
 	}
@@ -678,6 +734,11 @@ func (e *Engine) play(req *request) response {
 			Method: q.Method, Protocol: q.Protocol, At: q.Place})
 	}
 	slices.SortFunc(out.Queue, func(a, b wire.QueueEntry) int { return a.At - b.At })
+	if old != nil {
+		// Answered 200: the playback it replaces ends now (MSFP Media
+		// playing 2.3).
+		e.endPlayback(old, EndReplaced)
+	}
 	e.log.Info("msfp: a peer's playback started", "peer", p.ID, "playback", pb.id, "method", started.Method, "purpose", in.Purpose)
 	e.notify(PlaybackStarted{Peer: p.ID, Name: p.Name, Playback: pb.id, Title: pb.title, Method: pb.method, Purpose: pb.purpose})
 	return answer(out)
@@ -742,7 +803,7 @@ func startedBreaks(in wire.PlayRequest, c offeredCopy, served wire.Served, s Sta
 
 // register makes a started playback live: its ID and its ticket, 128
 // bits and 256 bits of randomness, the ticket kept by its hash only
-// (MSFP media section 1). It gives the ticket's text, for the answer
+// (MSFP Media fetching 1). It gives the ticket's text, for the answer
 // only.
 func (e *Engine) register(p *PeerRecord, in wire.PlayRequest, queue []wire.QueueAsk, libs []string, c offeredCopy, info CopyInfo,
 	audio string, served wire.Served, s Started, slot *countSlot, queueCopies map[int]offeredCopy, audioOnly bool) (*playback, string) {
@@ -767,7 +828,7 @@ func (e *Engine) register(p *PeerRecord, in wire.PlayRequest, queue []wire.Queue
 	}
 	pb := &playback{id: "play_" + lowerBase32.EncodeToString(idBytes), peer: p.ID, peerName: p.Name, title: in.Title, queue: titles,
 		libraries: libs, offers: peerRef(p).Libraries, handle: s.Handle, method: s.Method, purpose: in.Purpose, audioOnly: audioOnly,
-		ticket: sha256.Sum256([]byte(ticket)), started: now, used: now, slot: slot, audio: map[string]bool{},
+		ticket: sha256.Sum256([]byte(ticket)), started: now, used: now, idle: wire.IdleLimit(e.cfg.ProgressSeconds), slot: slot, audio: map[string]bool{},
 		subtitles: map[string]wire.SubtitleServing{}, entries: map[int]entryServed{0: {protocol: s.Protocol, size: c.copy.Size,
 			etag: c.copy.ETag, mediaType: c.copy.MediaType}}}
 	pb.facts = servedFacts{copy: c.copy, audio: audio, served: served}
@@ -783,7 +844,7 @@ func (e *Engine) register(p *PeerRecord, in wire.PlayRequest, queue []wire.Queue
 		}
 	}
 	if !audioOnly && in.Purpose != wire.PurposeScan {
-		// A playback's ticket opens its copy's sheets (video section 5.5);
+		// A playback's ticket opens its copy's sheets (MSFP Media video 5.5);
 		// a download's opens none.
 		if t := c.copy.PreviewLayout; t != nil && in.Purpose == wire.PurposePlay {
 			pb.sheets, pb.sheetWidth, pb.sheetHeight = t.SheetCount(), t.Columns*t.TileWidth, t.Rows*t.TileHeight
@@ -827,6 +888,11 @@ func (e *Engine) hostRefusal(err error, what string) response {
 		return refuse(probNotPlayable)
 	case errors.Is(err, ErrDeliveryRefused):
 		return refuse(probDelivery)
+	case errors.Is(err, ErrTargetRefused):
+		return refuse(probTarget)
+	case errors.Is(err, ErrUnreachable):
+		// The host can't reach the media now (MSFP Media base 4).
+		return refuse(probUnreachable)
 	case errors.Is(err, ErrStreamLimitReached):
 		return refuse(probStreamLimit)
 	case errors.Is(err, ErrServerBusy):
@@ -859,7 +925,7 @@ func (e *Engine) hostStop(handle string, why EndReason) {
 
 // endPlayback ends a live playback, once: its ticket stops working at
 // once, its open responses are cut, its stream is freed, the host is
-// told (MSFP playback section 6.3).
+// told (MSFP Media playing 5).
 func (e *Engine) endPlayback(pb *playback, why EndReason) {
 	ps := &e.plays
 	ps.mu.Lock()
@@ -899,8 +965,8 @@ func (e *Engine) endPlaybacks(which func(*playback) bool, why EndReason) {
 }
 
 // expirePlaybacks ends the playbacks with neither progress nor a media
-// request for 2 minutes (an open response counts as use; never a
-// download), those past their life (a download's 24 hours, a scan's 10
+// request for their idle limit, twice the progressSeconds their answer
+// gave (an open response counts as use; never a download), those past their life (a download's 24 hours, a scan's 10
 // minutes) and those longer than LongestPlayback (a download's 24 hours
 // stand instead); it forgets endings past their time.
 func (e *Engine) expirePlaybacks(force bool) {
@@ -924,7 +990,7 @@ func (e *Engine) expirePlaybacks(force bool) {
 		switch {
 		case now.Sub(pb.started) >= life:
 			tooLong = append(tooLong, pb)
-		case wire.Idles(pb.purpose) && now.Sub(pb.used) >= wire.IdleEnd:
+		case wire.Idles(pb.purpose) && now.Sub(pb.used) >= pb.idle:
 			expired = append(expired, pb)
 		}
 	}
@@ -979,7 +1045,7 @@ func (e *Engine) playState(peer, id string) (wire.PlaybackState, *playback) {
 	return wire.PlaybackState{}, nil
 }
 
-// report answers a peer's progress or stop (MSFP playback sections 3, 4
+// report answers a peer's progress or stop (MSFP Media playing 3, 4
 // and 7): read as MSFP reads it, applied to the playback's state, kept
 // reports passed on to the host; a stop ends a live playback.
 func (e *Engine) report(req *request, call string) response {
@@ -1027,7 +1093,7 @@ func (e *Engine) report(req *request, call string) response {
 			e.keepDownload(req.r.Context(), *kept)
 		}
 		hr := Report{Handle: handle, Title: out.Title, PositionMs: out.PositionMs, HasPosition: out.HasPosition,
-			At: out.At, Stop: call == wire.CallStop, Late: pb == nil}
+			At: out.At, Stop: call == wire.CallStop, Late: pb == nil, Paused: r.Paused}
 		if err := e.cfg.Playback.Progress(req.r.Context(), hr); err != nil {
 			e.log.Info("msfp: the host's Progress failed", "error", err)
 		}
@@ -1038,16 +1104,16 @@ func (e *Engine) report(req *request, call string) response {
 	return answer(struct{}{})
 }
 
-// progress is a peer telling that a playback is still watched (MSFP
-// playback section 3).
+// progress is a peer telling that a playback is still watched (MSFP Media
+// playing 3).
 func (e *Engine) progress(req *request) response { return e.report(req, wire.CallProgress) }
 
-// stop is a peer telling that a playback is over (MSFP playback section
+// stop is a peer telling that a playback is over (MSFP Media playing
 // 4): 200 whether or not it was live; another pairing's changes nothing.
 func (e *Engine) stop(req *request) response { return e.report(req, wire.CallStop) }
 
 // StopPlayback ends a peer's playback here from the host's side, for
-// why (MSFP playback section 6.3): EndOperator when the operator stops
+// why (MSFP Media playing 5): EndOperator when the operator stops
 // it, EndExpired or EndTooLong when the host's own idle or time rules
 // end it, EndNotOffered when its copy is no longer shared; "" is
 // EndOperator. Errors: ErrNotFound, ErrInvalidReason for another reason (the
@@ -1101,8 +1167,8 @@ func (e *Engine) Playbacks() []PlaybackView {
 }
 
 // playAllowed says whether a peer may still use a playback here: paired,
-// not suspended, its title's library still offered (MSFP media section
-// 4). Read from storage at each media request, so an ending noticed only
+// not suspended, its title's library still offered (MSFP Media fetching
+// 4.2). Read from storage at each media request, so an ending noticed only
 // then still stops the ticket.
 func (e *Engine) playAllowed(ctx context.Context, pb *playback) bool {
 	p, err := e.peerRecord(ctx, pb.peer)
@@ -1122,8 +1188,8 @@ func (e *Engine) playAllowed(ctx context.Context, pb *playback) bool {
 	return true
 }
 
-// pacer paces a download's bytes at its speed cap (MSFP playback section
-// 7, media section 4.1): over any 10 seconds, never more than the cap
+// pacer paces a download's bytes at its speed cap (MSFP Media playing
+// 6, MSFP Media fetching 4.3): over any 10 seconds, never more than the cap
 // allows, all its fetches together; it slows the body, never refuses.
 // It lets a second's worth through at once and refills at nine tenths of
 // the cap, so that a second's burst and nine seconds' refill stay within

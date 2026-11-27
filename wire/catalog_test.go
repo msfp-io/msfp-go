@@ -229,7 +229,7 @@ func TestLanguageValidTag(t *testing.T) {
 	}
 }
 
-// openTokens and openMediaTypes of strict.json (core section 8.5).
+// openTokens and openMediaTypes of strict.json (MSFP Media base 3).
 func TestOpenTokens(t *testing.T) {
 	type valued struct {
 		Text  string `json:"text"`

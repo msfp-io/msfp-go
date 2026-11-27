@@ -110,8 +110,8 @@ type sink struct{ bytes.Buffer }
 
 func (*sink) Start(int, string, int64, string) {}
 
-// A file's own subtitle tracks listed with the .vtt beside it (MSFP video
-// section 3.3: a copy lists all its subtitle tracks), told not served
+// A file's own subtitle tracks listed with the .vtt beside it (MSFP Media video
+// 3.3: a copy lists all its subtitle tracks), told not served
 // apart; an AVI read. With ffprobe, on the media in $EXAMPLE_MEDIA:
 // subs.mkv (h264, aac, SubRip fr, ASS en forced) and film.avi (mpeg4,
 // mp3), made with ffmpeg (testsrc and sine, 2 s); skipped otherwise.
@@ -182,7 +182,7 @@ func TestFolderFileTracks(t *testing.T) {
 	}
 }
 
-// A copy lists at most 64 subtitle tracks (MSFP video section 3.2): of
+// A copy lists at most 64 subtitle tracks (MSFP Media video 3.2): of
 // 70 .vtt files beside a film, the first 64 by name.
 func TestFolderSubtitlesCapped(t *testing.T) {
 	dir := t.TempDir()

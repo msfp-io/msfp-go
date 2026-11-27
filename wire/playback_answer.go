@@ -5,15 +5,15 @@ import (
 	"slices"
 )
 
-// play's answer (MSFP playback section 2.3, video section 5.3), as a
+// play's answer (MSFP Media playing 2.3, MSFP Media video 5.3), as a
 // viewer's server checks and cleans it, the URLs it builds from the
-// answer's ticket (media section 1, video section 6.1), and the restart
-// of a file being read (playback section 2.7).
+// answer's ticket (MSFP Media fetching 1, MSFP Media video 6.1), and the restart
+// of a file being read (MSFP Media playing 2.7).
 
 // HLSType is the media type of an HLS playlist.
 const HLSType = "application/vnd.apple.mpegurl"
 
-// The forms a subtitle track is served apart in (video section 5.3):
+// The forms a subtitle track is served apart in (MSFP Media video 5.3):
 // text (WebVTT, under subtitles/), picture (PGS, under pictures/), and
 // FormASS, the ASS a text track's ass: true also opens (under ass/).
 const (
@@ -23,10 +23,10 @@ const (
 )
 
 // MaxServedSubtitles is how many entries an answer's subtitles holds at
-// most (video section 5.3).
+// most (MSFP Media video 5.3).
 const MaxServedSubtitles = 64
 
-// ServedSubtitle is an entry of an answer's subtitles (video section
+// ServedSubtitle is an entry of an answer's subtitles (MSFP Media video
 // 5.3): a track of the copy the owning server serves apart, its form,
 // and for a text track whether its ASS is served too.
 type ServedSubtitle struct {
@@ -35,7 +35,7 @@ type ServedSubtitle struct {
 	ASS  bool   `json:"ass,omitempty"`
 }
 
-// ServedForms are video section 5.4's table: the form a track of a
+// ServedForms are MSFP Media video 5.4's table: the form a track of a
 // listed format is served in, and whether its ASS is too. A track in
 // another format waits for the answer to know its form.
 var ServedForms = map[string]ServedSubtitle{
@@ -45,7 +45,7 @@ var ServedForms = map[string]ServedSubtitle{
 }
 
 // SubtitleServing is how a subtitle track of a playback is served apart
-// (video section 5.3): as text (WebVTT), its ASS too, or as pictures
+// (MSFP Media video 5.3): as text (WebVTT), its ASS too, or as pictures
 // (PGS); none of them when it isn't served apart.
 type SubtitleServing struct{ Text, ASS, Pictures bool }
 
@@ -79,11 +79,11 @@ func (s ServedSubtitle) Serving() SubtitleServing {
 	return SubtitleServing{Text: s.Form == FormText, ASS: s.ASS, Pictures: s.Form == FormPicture}
 }
 
-// PlayAnswer is what a viewer's server keeps of play's answer (playback
-// section 2.3, video section 5.3), checked and cleaned (ReadPlayAnswer).
+// PlayAnswer is what a viewer's server keeps of play's answer (MSFP Media playing
+// 2.3, MSFP Media video 5.3), checked and cleaned (ReadPlayAnswer).
 // It carries no URL: URLs builds them from the owning server's stream
 // root and Ticket. AudioRenditions: the playlist carries every audio
-// track as a rendition (media section 3.1); false, the owning server
+// track as a rendition (MSFP Media fetching 3.1); false, the owning server
 // made none, and switching tracks means a new playback. ScanBytes is a
 // scan's cap, the bytes its ticket may read in all. Subtitles and
 // FontCount are video's; music's queue is music's (ReadQueue).
@@ -101,6 +101,11 @@ type PlayAnswer struct {
 	ScanBytes       int64            `json:"scanBytes,omitempty"`
 	Subtitles       []ServedSubtitle `json:"subtitles,omitempty"`
 	FontCount       int              `json:"fontCount,omitempty"`
+	// ProgressSeconds is how often the source wants a progress report
+	// (MSFP Media playing 3): 45 to 120, DefaultProgressSeconds when the
+	// answer gives none, or one out of range. The idle limit is twice it
+	// (IdleLimit).
+	ProgressSeconds int `json:"progressSeconds"`
 	// ReadTitleAgain: the etag isn't the catalog's. The answer wins for
 	// this playback; the title is read again from titles.
 	ReadTitleAgain bool `json:"readTitleAgain,omitempty"`
@@ -110,16 +115,20 @@ type PlayAnswer struct {
 // answer: the request's purpose and delivery ("" for none), the title's
 // content part (PartVideo, PartMusic), and the copy as the catalog gives
 // it: its etag ("" when unknown) and its subtitle tracks (their IDs, and
-// their formats for video section 5.4's table).
+// their formats for MSFP Media video 5.4's table).
 type Asked struct {
-	Purpose     string
-	Delivery    string
-	Part        string
-	CatalogEtag string
-	Subtitles   []CopySubtitle
+	Purpose  string
+	Delivery string
+	// Capabilities: the request carried a capability list (MSFP Media
+	// playing 2.8), for a host reading its own source's answer; the
+	// method is then the source's pick, file with direct.
+	Capabilities bool
+	Part         string
+	CatalogEtag  string
+	Subtitles    []CopySubtitle
 }
 
-// ErrPlayAnswer is an answer that breaks a "must" of playback section
+// ErrPlayAnswer is an answer that breaks a "must" of MSFP Media playing
 // 2.3: the viewer's server sends stop for its id, when it has one, and
 // gives up.
 var ErrPlayAnswer = errors.New("msfp: play's answer refused")
@@ -138,7 +147,8 @@ var methodOf = map[string]string{DeliveryFile: MethodDirect, DeliveryRemux: Meth
 // audioTrack not of its form dropped; audioRenditions true kept with hls
 // only; maxBitrateKbps out of range dropped; for a scan, scanBytes
 // missing or out of MinScanBytes to MaxScanBytes counted as
-// MinScanBytes (other purposes ignore it); for video, each subtitles
+// MinScanBytes (other purposes ignore it); progressSeconds absent, not
+// an integer or out of 45 to 120 counted as DefaultProgressSeconds; for video, each subtitles
 // entry kept only when its id is a subtitle track of the copy in the
 // catalog, not a repeat, its form text or picture (ass kept with text
 // only), and, for a format of ServedForms, the form and ass the table
@@ -155,8 +165,9 @@ func ReadPlayAnswer(body []byte, ask Asked) (PlayAnswer, error) {
 	if !ok {
 		return a, ErrPlayAnswer
 	}
-	for _, v := range o {
-		if v == nil {
+	for name, v := range o {
+		// progressSeconds null reads as out of range: 60.
+		if v == nil && name != "progressSeconds" {
 			return a, ErrPlayAnswer
 		}
 	}
@@ -171,8 +182,15 @@ func ReadPlayAnswer(body []byte, ask Asked) (PlayAnswer, error) {
 	if ask.Delivery == DeliveryFile {
 		wantProtocol = ProtocolFile
 	}
+	if ask.Capabilities {
+		wantProtocol = ProtocolHLS
+		if a.Method == MethodDirect {
+			wantProtocol = ProtocolFile
+		}
+	}
 	if !PlayID(a.ID) || !ID(a.Ticket) || a.Protocol != ProtocolHLS && a.Protocol != ProtocolFile ||
-		KnownDelivery(ask.Delivery) && a.Protocol != wantProtocol || ask.Delivery == "" && a.Protocol != ProtocolHLS ||
+		(KnownDelivery(ask.Delivery) || ask.Capabilities) && a.Protocol != wantProtocol ||
+		ask.Delivery == "" && !ask.Capabilities && a.Protocol != ProtocolHLS ||
 		!slices.Contains([]string{MethodDirect, MethodRemux, MethodTranscode}, a.Method) ||
 		methodOf[ask.Delivery] != "" && a.Method != methodOf[ask.Delivery] || !ID(a.Etag) || !ID(a.VersionID) {
 		return a, ErrPlayAnswer
@@ -208,6 +226,10 @@ func ReadPlayAnswer(body []byte, ask Asked) (PlayAnswer, error) {
 			a.MaxBitrateKbps = &k
 		}
 	}
+	a.ProgressSeconds = DefaultProgressSeconds
+	if n, ok := integerOf(o["progressSeconds"]); ok && n >= MinProgressSeconds && n <= MaxProgressSeconds {
+		a.ProgressSeconds = int(n)
+	}
 	if ask.Purpose == PurposeScan {
 		a.ScanBytes = MinScanBytes
 		if n, ok := integerOf(o["scanBytes"]); ok && n >= MinScanBytes && n <= MaxScanBytes {
@@ -224,8 +246,8 @@ func ReadPlayAnswer(body []byte, ask Asked) (PlayAnswer, error) {
 	return a, nil
 }
 
-// readServedSubtitles keeps an answer's subtitles entries as video
-// section 5.3 says.
+// readServedSubtitles keeps an answer's subtitles entries as MSFP Media video
+// 5.3 says.
 func readServedSubtitles(v any, tracks []CopySubtitle) []ServedSubtitle {
 	list, _ := v.([]any)
 	var out []ServedSubtitle
@@ -293,7 +315,7 @@ type Reading struct {
 }
 
 // RestartOutcome is what a viewer's server does with a new play of a
-// file it was reading (playback section 2.7): Join, going on at Offset;
+// file it was reading (MSFP Media playing 2.7): Join, going on at Offset;
 // else StopNew (a new playback was started: stop it), FailRead and
 // ReadTitles (read the title again from titles).
 type RestartOutcome struct {
@@ -305,7 +327,7 @@ type RestartOutcome struct {
 }
 
 // Restart says whether the bytes of a new playback may follow those of
-// r (playback section 2.7): only for a reading of delivery file, a new
+// r (MSFP Media playing 2.7): only for a reading of delivery file, a new
 // play of the same copy (its versionId), purpose and delivery, answered
 // 200 (status) with an answer ReadPlayAnswer keeps, of the same etag,
 // compared byte for byte.

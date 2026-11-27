@@ -16,7 +16,7 @@ func TestTrackID(t *testing.T) {
 }
 
 // Every media URL is built from the stream root, the ticket and a
-// fixed name (media section 1, video section 6.1).
+// fixed name (MSFP Media fetching 1, MSFP Media video 6.1).
 func TestStreamURLs(t *testing.T) {
 	root := StreamRoot("https://b.example.org")
 	if root != "https://b.example.org/api/v1/stream/" {

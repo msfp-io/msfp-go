@@ -144,7 +144,7 @@ type CallsFailed struct{ Peer, Name string }
 
 // CatalogReadEnded: a reading of a peer's titles ended: Titles kept (new or
 // changed, for a reading of changes), or Err, why it failed; what was
-// kept before a failed reading stays (MSFP catalog section 3.2). Failure
+// kept before a failed reading stays (MSFP Media listing 3.2). Failure
 // is why, as a closed code ("" when it read, or when the host cancelled
 // it), Refusal the problem type of a signed refusal (LastReading).
 type CatalogReadEnded struct {
@@ -157,15 +157,15 @@ type CatalogReadEnded struct {
 }
 
 // WantsGone: libraries this server wants of a peer (their public IDs)
-// weren't in its last libraries answer: it no longer offers them (MSFP
-// catalog section 2.2). Their titles go with the next reading.
+// weren't in its last libraries answer: it no longer offers them (MSFP Media
+// listing 2.2). Their titles go with the next reading.
 type WantsGone struct {
 	Peer, Name string
 	Libraries  []string
 }
 
-// PlaybackStarted: a peer's playback of Title started here (MSFP
-// playback section 6.1), for the host's live view.
+// PlaybackStarted: a peer's playback of Title started here (MSFP Media
+// playing 5), for the host's live view.
 type PlaybackStarted struct {
 	Peer, Name, Playback, Title, Method, Purpose string
 }
@@ -297,7 +297,7 @@ func (e *Engine) tell(ev Event) {
 
 // react is what the engine itself does on an event, before the host is
 // told: a peer no longer paired, or suspended, ends its playbacks both
-// ways (MSFP playback section 6.3); one that can't be called is fetched
+// ways (MSFP Media playing 5); one that can't be called is fetched
 // from no more, and what was kept of its titles goes (MSFP core section
 // 7.5); one that can be called again is read at once.
 func (e *Engine) react(ev Event) {

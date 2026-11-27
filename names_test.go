@@ -11,7 +11,7 @@ import (
 )
 
 // The names an owning server serves under a ticket (media.json's names,
-// MSFP media sections 1 and 4): exactly those its answer opened, 404
+// MSFP Media fetching 1 and 4.2): exactly those its answer opened, 404
 // past the counts.
 func TestServedNames(t *testing.T) {
 	raw, err := os.ReadFile("wire/testdata/v0/media.json")
@@ -76,7 +76,7 @@ func TestServedNames(t *testing.T) {
 }
 
 // The master playlist's attributes the copy's facts tell, filled when
-// the host leaves them out (MSFP media section 3.1).
+// the host leaves them out (MSFP Media fetching 3.1).
 func TestMasterAttributes(t *testing.T) {
 	pq, one := 16, 1
 	c := wire.Copy{DurationMs: 1000, Size: 1000,

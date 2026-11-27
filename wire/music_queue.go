@@ -6,7 +6,7 @@ import (
 	"strconv"
 )
 
-// The queue of a play (MSFP music section 5.2): the tracks a play names
+// The queue of a play (MSFP Media music 5.2): the tracks a play names
 // after its title, which the owning server prepares under the same
 // playback, each with its own copy and delivery when it names them, and
 // what the viewer's server keeps of the answer's entries.
@@ -15,7 +15,7 @@ import (
 // entries of an answer's queue are kept.
 const MaxQueue = 5
 
-// QueueAsk is an entry of a play's queue (music section 5.2): a track's
+// QueueAsk is an entry of a play's queue (MSFP Media music 5.2): a track's
 // key, the copy it plays (VersionID; without it, its first) and its own
 // delivery, with its own mediaType or transcode targets as a request's;
 // without Delivery, the request's delivery, media type and targets.
@@ -27,8 +27,8 @@ type QueueAsk struct {
 	Transcode *TranscodeTargets `json:"transcode,omitempty"`
 }
 
-// MusicRemuxTypes are the media types a track's remux takes (playback
-// section 2.7, for a copy with no video).
+// MusicRemuxTypes are the media types a track's remux takes (MSFP Media playing
+// 2.7, for a copy with no video).
 var MusicRemuxTypes = []string{"audio/" + SegmentsTS, "audio/" + SegmentsMP4}
 
 // CheckQueue is the owning server's check of a music play's title and
@@ -100,7 +100,7 @@ func CheckQueue(title string, queue json.RawMessage) ([]QueueAsk, error) {
 	return asked, nil
 }
 
-// Request is the play an entry of r's queue starts (music section 5.2):
+// Request is the play an entry of r's queue starts (MSFP Media music 5.2):
 // the entry's title and copy, its own delivery with its own media type
 // or targets, else the request's; purpose, the caps and audio renditions
 // are the request's. It starts at 0, on its default audio, and counts
@@ -136,7 +136,7 @@ type QueueEntry struct {
 }
 
 // QueueURL is the stream URL of the queued track at place n (0 to 4) of
-// the request's queue, under the playback's ticket (media section 1):
+// the request's queue, under the playback's ticket (MSFP Media fetching 1):
 // <stream root><ticket>/queue/<n>/master.m3u8 for hls, with the files it
 // names under <stream root><ticket>/queue/<n>/, or .../queue/<n>/file
 // for file.

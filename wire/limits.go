@@ -5,9 +5,9 @@ import (
 	"time"
 )
 
-// The limits a libraries answer sends (MSFP playback section 5, music
-// section 5.1): what a caller keeps of them, and how an owning server
-// counts a play against them (playback sections 2.2, 6, 7 and 8).
+// The limits a libraries answer sends (MSFP playback section 5, MSFP Media music
+// 5.1): what a caller keeps of them, and how an owning server
+// counts a play against them (MSFP Media playing 2.2 and 6, MSFP playback sections 6 and 8).
 
 // Limits is the limits object: playbacks of purpose play at once, of
 // them transcoded, a bitrate cap (0: none); downloads at once, a day,
@@ -88,7 +88,7 @@ type KeptLimits struct {
 }
 
 // OffersDownloads says whether the caller shows Download for the peer's
-// titles: downloads above 0 (playback section 7).
+// titles: downloads above 0 (MSFP Media playing 6).
 func (k KeptLimits) OffersDownloads() bool { return k.Downloads > 0 }
 
 // OffersScans says whether the caller asks the peer for scans:
@@ -159,9 +159,31 @@ type LimitUse struct {
 	ServerTranscodesFree           int
 }
 
+// Without is the use with a live playback of purpose counted as ended:
+// the one a play replaces (MSFP Media playing 2.2, step 8; MSFP playback
+// section 6). A play frees its stream, and when it holds one
+// (transcode) its transcode, the pairing's and the server's; a download
+// frees a download, never the day's count; a scan frees nothing.
+func (u LimitUse) Without(purpose string, transcode bool) LimitUse {
+	switch purpose {
+	case PurposePlay, "":
+		u.Streams = max(u.Streams-1, 0)
+		if transcode {
+			u.Transcodes = max(u.Transcodes-1, 0)
+			u.ServerTranscodesFree++
+		}
+	case PurposeDownload:
+		u.Downloads = max(u.Downloads-1, 0)
+		if transcode {
+			u.ServerTranscodesFree++
+		}
+	}
+	return u
+}
+
 func streamLimit(why string) error { return &PlayRefusal{409, ProblemStreamLimit, why} }
 
-// Open is step 2 of playback section 2.2: a 409 stream-limit-reached when
+// Open is step 2 of MSFP Media playing 2.2: a 409 stream-limit-reached when
 // the limit of the purpose is 0 (streams for play, downloads for
 // download, scansPerDay for scan).
 func (l Limits) Open(purpose string) error {
@@ -176,7 +198,7 @@ func (l Limits) Open(purpose string) error {
 	return nil
 }
 
-// Room is step 5 of playback section 2.2: a 409 stream-limit-reached when
+// Room is step 5 of MSFP Media playing 2.2: a 409 stream-limit-reached when
 // the limits of the purpose are used: for play, the streams all in use;
 // for download, the downloads all in use or downloadsPerDay reached (0:
 // no daily cap); for scan, scansPerDay reached. A download or a scan
@@ -202,8 +224,8 @@ func (l Limits) Room(purpose string, u LimitUse) error {
 	return nil
 }
 
-// TranscodeRoom is the transcode a playback that converts needs (playback
-// sections 2.6 and 7): for a play, one of the pairing's transcodes and
+// TranscodeRoom is the transcode a playback that converts needs (MSFP Media playing
+// 2.6 and 6): for a play, one of the pairing's transcodes and
 // one of the server's budget; for a download, one of the server's budget
 // only. A 503 server-busy without.
 func (l Limits) TranscodeRoom(purpose string, u LimitUse) error {
@@ -216,11 +238,36 @@ func (l Limits) TranscodeRoom(purpose string, u LimitUse) error {
 	return nil
 }
 
-// The lives of playbacks (playback sections 6.3, 7 and 8).
+// The interval of progress (MSFP Media playing 3): the source's, given
+// by play's answer in progressSeconds, 45 to 120 seconds, 60 when absent.
 const (
-	// IdleEnd ends a play or a scan without a progress or a media
-	// request for that long; never a download.
-	IdleEnd = 2 * time.Minute
+	MinProgressSeconds     = 45
+	MaxProgressSeconds     = 120
+	DefaultProgressSeconds = 60
+)
+
+// ProgressInterval is the interval of a playback whose answer gave
+// progressSeconds: that many seconds, DefaultProgressSeconds when it is
+// out of 45 to 120 (or 0, absent).
+func ProgressInterval(progressSeconds int) time.Duration {
+	if progressSeconds < MinProgressSeconds || progressSeconds > MaxProgressSeconds {
+		progressSeconds = DefaultProgressSeconds
+	}
+	return time.Duration(progressSeconds) * time.Second
+}
+
+// IdleLimit is the idle limit of a playback whose answer gave
+// progressSeconds (MSFP Media playing 3 and 5): twice its interval. A
+// play or a scan with neither a progress nor a media request for that
+// long ends; never a download.
+func IdleLimit(progressSeconds int) time.Duration { return 2 * ProgressInterval(progressSeconds) }
+
+// The lives of playbacks (MSFP Media playing 5 and 6, MSFP playback
+// section 8).
+const (
+	// IdleEnd is the idle limit at the default interval, 2 minutes
+	// (IdleLimit(DefaultProgressSeconds)).
+	IdleEnd = 2 * DefaultProgressSeconds * time.Second
 	// DownloadLife and ScanLife end a download and a scan after their
 	// play was answered.
 	DownloadLife = 24 * time.Hour
@@ -235,8 +282,8 @@ const (
 	DownloadPace = 10 * time.Second
 )
 
-// Idles says whether a playback of purpose ends after IdleEnd unused: a
-// play's and a scan's, never a download's.
+// Idles says whether a playback of purpose ends after its idle limit
+// (IdleLimit) unused: a play's and a scan's, never a download's.
 func Idles(purpose string) bool { return purpose != PurposeDownload }
 
 // Life is how long a playback of purpose lasts at most from its answer,

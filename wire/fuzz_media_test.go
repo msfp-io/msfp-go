@@ -67,7 +67,7 @@ func fuzzAudio(id string) bool { return id == "a1" }
 
 // A rebuilt WebVTT part is rebuilt again as it is, or, when the rules
 // read it differently a second time, once more as that second rebuild
-// (video section 6.3: a "<" before a tag the balancing removes may
+// (MSFP Media video 6.3: a "<" before a tag the balancing removes may
 // meet a letter, and read as a tag once decoded).
 func FuzzRebuildWebVTT(f *testing.F) {
 	f.Add([]byte("WEBVTT\n\n00:01.000 --> 00:02.000\n<b>Hi</b> &lt;i&gt;\n"))
@@ -95,7 +95,7 @@ func stable(t *testing.T, in []byte, rebuild func([]byte) ([]byte, bool)) {
 }
 
 // A rebuilt ASS part is ASS of one form, UTF-8, its lines of the known
-// sections only, and rebuilding it settles (video section 6.4: white
+// sections only, and rebuilding it settles (MSFP Media video 6.4: white
 // space a removed control character uncovers, at a style name's start
 // or an event's end, goes at the second rebuild).
 func FuzzRebuildASS(f *testing.F) {

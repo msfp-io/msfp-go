@@ -11,19 +11,19 @@ import (
 	"unicode/utf8"
 )
 
-// Music titles (MSFP music, sections 2 and 3): their keys, and what a
+// Music titles (MSFP Media music 2 and 3): their keys, and what a
 // server keeps of a music title a peer lists in titles, its copies
-// included (catalog section 3.3, music sections 3.2 and 3.3). The queue
+// included (MSFP Media listing 3.3, MSFP Media music 3.2 and 3.3). The queue
 // of a play is in music_queue.go, the lyrics call in music_lyrics.go.
 
 // mbidRe is a MusicBrainz ID in its one form: lowercase 8-4-4-4-12 hex.
 var mbidRe = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 
-// MBID says whether s is a MusicBrainz ID in the form music section 2.1
+// MBID says whether s is a MusicBrainz ID in the form MSFP Media music 2.1
 // gives: 36 characters, lowercase. An AcoustID has the same form.
 func MBID(s string) bool { return mbidRe.MatchString(s) }
 
-// MusicKey is a music title key, parsed (music section 2): its kind
+// MusicKey is a music title key, parsed (MSFP Media music 2): its kind
 // (artist, album or track), its scheme, and the scheme's part. Under mb,
 // ID is an MBID: an artist's, a release's for an album, a release
 // track's for a track. Under local, it is the owning server's opaque
@@ -62,14 +62,14 @@ func IsMusicKey(s, kind string) bool {
 // String is the key, as ParseMusicKey reads it.
 func (k MusicKey) String() string { return k.Kind + "/" + k.Scheme + "/" + k.ID }
 
-// Playable says whether play takes the title: a track (music section 5).
+// Playable says whether play takes the title: a track (MSFP Media music 5).
 func (k MusicKey) Playable() bool { return k.Kind == "track" }
 
 // Local says whether the key is under the local scheme: a title that
-// never matches another server's (music section 2.2).
+// never matches another server's (MSFP Media music 2.2).
 func (k MusicKey) Local() bool { return k.Scheme == "local" }
 
-// TitleKey names a title of any content part (catalog section 4): its
+// TitleKey names a title of any content part (MSFP Media listing 4): its
 // part (PartVideo or PartMusic), its kind, and whether play takes it.
 type TitleKey struct {
 	Part     string
@@ -89,7 +89,7 @@ func ParseKey(key string) (TitleKey, bool) {
 	return TitleKey{}, false
 }
 
-// The bounds of a music title's description (music section 3), lengths
+// The bounds of a music title's description (MSFP Media music 3), lengths
 // in code points.
 const (
 	MaxMusicName    = 256 // a name
@@ -107,18 +107,18 @@ const (
 // a year is ignored).
 var MusicDescription = DescriptionBounds{NameRequired: true, MaxName: MaxMusicName}
 
-// MaxSecondaryTypes is how many secondaryTypes an album keeps (music
-// section 3.2).
+// MaxSecondaryTypes is how many secondaryTypes an album keeps (MSFP Media music
+// 3.2).
 const MaxSecondaryTypes = 8
 
 // musicTypeRe is the form of an album's primaryType and of each of its
-// secondaryTypes (music section 3): MusicBrainz's release-group types,
+// secondaryTypes (MSFP Media music 3): MusicBrainz's release-group types,
 // lowercased, 1 to 32 characters of a–z 0–9 space . _ - /, with no space
 // at either end.
 var musicTypeRe = regexp.MustCompile(`^[a-z0-9._/-](?:[a-z0-9 ._/-]{0,30}[a-z0-9._/-])?$`)
 
-// MusicType says whether s is of the form of a release-group type (music
-// section 3): kept as it is, known or not; the caller doesn't lowercase.
+// MusicType says whether s is of the form of a release-group type (MSFP Media music
+// 3): kept as it is, known or not; the caller doesn't lowercase.
 func MusicType(s string) bool { return musicTypeRe.MatchString(s) }
 
 // CleanText cleans a peer's text as MSFP core section 9.1 cleans a
@@ -140,7 +140,7 @@ func CleanText(s string, max int) string {
 	return s
 }
 
-// CleanGenres keeps an album's genres as music section 3.2 says: each
+// CleanGenres keeps an album's genres as MSFP Media music 3.2 says: each
 // cleaned, kept when 1 to MaxGenre characters once cleaned (a longer one
 // skipped, not cut) and not a repeat of a kept one compared without
 // case; the first MaxGenres kept.
@@ -162,7 +162,7 @@ func CleanGenres(genres []string) []string {
 // musicDateRe is a music date's form: YYYY, YYYY-MM or YYYY-MM-DD.
 var musicDateRe = regexp.MustCompile(`^([0-9]{4})(?:-([0-9]{2})(?:-([0-9]{2}))?)?$`)
 
-// MusicDate reads an album's date or originalDate (music section 3.2):
+// MusicDate reads an album's date or originalDate (MSFP Media music 3.2):
 // YYYY, YYYY-MM or YYYY-MM-DD, a year from 1000 to 9999, a month from 01
 // to 12, a day that exists in that month. It gives the year; false for
 // anything else, which counts as absent.
@@ -190,7 +190,7 @@ func MusicDate(s string) (year int, ok bool) {
 	return year, true
 }
 
-// Other identifiers of a music title (music section 3.1), by scheme, and
+// Other identifiers of a music title (MSFP Media music 3.1), by scheme, and
 // the kind that carries each.
 var musicIDs = map[string]struct {
 	re   *regexp.Regexp
@@ -201,14 +201,14 @@ var musicIDs = map[string]struct {
 }
 
 // MusicID says whether value is an identifier of a known scheme for a
-// title of kind, in its form (music section 3.1).
+// title of kind, in its form (MSFP Media music 3.1).
 func MusicID(kind, scheme, value string) bool {
 	s, known := musicIDs[scheme]
 	return known && s.kind == kind && s.re.MatchString(value)
 }
 
 // MusicTitle is a music title as sent in titles, and as a peer's is kept
-// (music section 3): its key, kind and library, and its description,
+// (MSFP Media music 3): its key, kind and library, and its description,
 // cleaned. Text and numbers are "" or 0 when absent; Compilation and
 // Image are nil when absent. An album's PrimaryType and SecondaryTypes
 // are MusicBrainz's release-group types, lowercased, open. A track may
@@ -237,7 +237,7 @@ type MusicTitle struct {
 	IDs            map[string]string `json:"ids,omitempty"`
 }
 
-// MusicCopy is a track's copy (music section 3.3). The numbers that are
+// MusicCopy is a track's copy (MSFP Media music 3.3). The numbers that are
 // optional are 0 when absent (none of their ranges holds 0). MediaType
 // is the file's media type and Codec the registry's token, both open;
 // Codecs is the RFC 6381 codecs string (required for aac and dts, as on
@@ -259,7 +259,7 @@ type MusicCopy struct {
 }
 
 // ReplayGain is a copy's loudness values, to the ReplayGain 2.0
-// reference (music section 3.3): gains in dB, peaks linear; nil when
+// reference (MSFP Media music 3.3): gains in dB, peaks linear; nil when
 // absent. The owning server never applies them; the viewer's player
 // does, lowering the gain to keep the peak under full scale.
 type ReplayGain struct {
@@ -269,7 +269,7 @@ type ReplayGain struct {
 	AlbumPeak *float64 `json:"albumPeak,omitempty"`
 }
 
-// The bounds of a track's copy (music section 3.3).
+// The bounds of a track's copy (MSFP Media music 3.3).
 const (
 	MaxMusicDurationMs = 86_400_000
 	// MaxCopySize (wire/copies.go) bounds a track copy's size too.
@@ -278,13 +278,13 @@ const (
 )
 
 // R128Gain converts an EBU R128 gain (Opus's R128_TRACK_GAIN: 1/256 dB,
-// relative to −23 LUFS) to ReplayGain 2.0's reference, which music
-// section 3.3 asks for: the value over 256, plus 5 dB (a helper; the
+// relative to −23 LUFS) to ReplayGain 2.0's reference, which MSFP Media music
+// 3.3 asks for: the value over 256, plus 5 dB (a helper; the
 // implementers' notes give the conversion).
 func R128Gain(q78 int) float64 { return float64(q78)/256 + 5 }
 
-// ReadMusicTitle reads one entry of a titles answer as catalog section
-// 3.3 and music section 3.2 say: false, to skip it, when it isn't an
+// ReadMusicTitle reads one entry of a titles answer as MSFP Media listing
+// 3.3 and MSFP Media music 3.2 say: false, to skip it, when it isn't an
 // object whose key and library are strings, when the key isn't a
 // canonical music key of either scheme, when it has no name once cleaned, and for a track, when it is a
 // track/mb whose album isn't an album/mb key, or has no copy left (a
@@ -396,7 +396,7 @@ func ReadMusicTitle(raw json.RawMessage) (MusicTitle, bool) {
 	return out, true
 }
 
-// ReadMusicCopies reads a track's copies as music section 3.3 says: false
+// ReadMusicCopies reads a track's copies as MSFP Media music 3.3 says: false
 // when copies isn't an array; else the copies kept, in the owner's order, at most
 // MaxMusicCopies, the first. A copy is skipped alone when it isn't an
 // object, misses a required member or breaks its form (id and etag of
@@ -486,7 +486,7 @@ func musicBool(raw json.RawMessage) *bool {
 	return nil
 }
 
-// musicInt reads an MSFP integer (core section 2.3) from lo to hi; false
+// musicInt reads an MSFP integer (MSFP Media base 2.2) from lo to hi; false
 // for any other value.
 func musicInt(raw json.RawMessage, lo, hi int64) (int64, bool) {
 	if !isInteger(string(raw)) {
@@ -517,7 +517,7 @@ func musicNumber(raw json.RawMessage, lo, hi float64, places int) *float64 {
 	return &r
 }
 
-// integerIn reads an MSFP integer (core section 2.3: no fraction, no
+// integerIn reads an MSFP integer (MSFP Media base 2.2: no fraction, no
 // exponent, no minus zero) within lo to hi; 0 otherwise, or -1 when lo
 // is 0 and it isn't one.
 func integerIn(raw json.RawMessage, lo, hi int64) int64 {
@@ -537,7 +537,7 @@ func integerIn(raw json.RawMessage, lo, hi int64) int64 {
 }
 
 // AsCopy is a track's copy as a copy with no video, its one audio track
-// a0: what Serve and the choices of playback section 2.6 read.
+// a0: what Serve and the choices of MSFP Media playing 2.6 read.
 func (m MusicCopy) AsCopy() Copy {
 	return Copy{ID: m.ID, DurationMs: m.DurationMs, MediaType: m.MediaType, Size: m.Size, ETag: m.Etag,
 		AudioTracks: []CopyAudio{{ID: "a0", Codec: m.Codec, Codecs: m.Codecs, Channels: m.Channels,

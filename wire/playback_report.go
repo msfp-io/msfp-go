@@ -5,8 +5,8 @@ import (
 	"time"
 )
 
-// progress and stop (MSFP playback sections 3, 4, 6.1 and 7, music
-// section 5.2): how an owning server reads them, and what they do to the
+// progress and stop (MSFP Media playing 3, 4, 5 and 6, MSFP Media music
+// 5.2): how an owning server reads them, and what they do to the
 // playback they name.
 
 // The calls a report is.
@@ -15,7 +15,7 @@ const (
 	CallStop     = "stop"
 )
 
-// The bounds of a report's at (playback section 3), around the owning
+// The bounds of a report's at (MSFP Media playing 3), around the owning
 // server's clock.
 const (
 	AtBefore = 30 * 24 * time.Hour
@@ -35,20 +35,26 @@ type Report struct {
 	// Title is the track playing, of a music queue, when TitleSaid.
 	Title     string
 	TitleSaid bool
+	// Paused: progress said the viewer has paused (MSFP Media playing
+	// 3); false, playing. Every report counts toward the idle limit,
+	// paused or not.
+	Paused bool
 }
 
 // reportMembers are the members each call knows.
 var reportMembers = map[string][]string{
-	CallProgress: {"id", "positionMs", "at", "title"},
+	CallProgress: {"id", "positionMs", "at", "title", "paused"},
 	CallStop:     {"id", "positionMs", "at", "title"},
 }
 
 // ReadReport reads a progress or a stop (call) at now, refusing (400, a
 // *PlayRefusal) what sections 3 and 4 refuse: a body that isn't an I-JSON
 // object or holds null in a member it knows, an id that isn't a playback
-// ID, positionMs out of 0 to MaxPositionMs, at not an integer from now − AtBefore to now + AtAfter (Unix seconds), a title
-// that isn't a string. Whether title is the playback's is Apply's. Other
-// members are ignored, paused of earlier drafts among them.
+// ID, positionMs out of 0 to MaxPositionMs, at not an integer from now −
+// AtBefore to now + AtAfter (Unix seconds), a title that isn't a string,
+// and on progress a paused that isn't a boolean. Whether title is the
+// playback's is Apply's. Other members are ignored (paused on stop among
+// them).
 func ReadReport(call string, body []byte, now time.Time) (Report, error) {
 	o, err := requestObject(body, reportMembers[call])
 	if err != nil {
@@ -76,10 +82,15 @@ func ReadReport(call string, body []byte, now time.Time) (Report, error) {
 	if r.Title, r.TitleSaid, err = o.text("title"); err != nil {
 		return r, err
 	}
+	if call == CallProgress {
+		if r.Paused, _, err = o.boolean("paused"); err != nil {
+			return r, err
+		}
+	}
 	return r, nil
 }
 
-// The states of a playback on the owning server (playback section 6.1);
+// The states of a playback on the owning server (MSFP Media playing 5);
 // any other is a playback of another pairing, or one never given.
 const (
 	StateStarted = "started"
@@ -118,6 +129,8 @@ type ReportOutcome struct {
 	PositionMs  int64
 	HasPosition bool
 	At          time.Time
+	// Paused: a progress kept said the viewer has paused.
+	Paused bool
 }
 
 // Live says whether the playback's ticket works and it counts against
@@ -125,7 +138,7 @@ type ReportOutcome struct {
 func (s PlaybackState) Live() bool { return s.State == StateStarted || s.State == StateActive }
 
 // Apply is what report r (of call, read by ReadReport) does to s at now
-// (playback sections 3, 4, 6.1 and 7). A playback of another pairing, or
+// (MSFP Media playing 3, 4, 5 and 6). A playback of another pairing, or
 // unknown: 410 playback-stopped to progress, unchanged to stop. A title
 // neither the playback's nor of its queue: 400. An ended playback: 410 to
 // progress, unchanged to stop, except a download's late report with at,
@@ -147,7 +160,7 @@ func (s PlaybackState) Apply(call string, r Report, now time.Time) (ReportOutcom
 	} else if title != s.Title && !slices.Contains(s.Queue, title) {
 		return ReportOutcome{}, badPlay("title is neither the playback's nor of its queue")
 	}
-	kept := ReportOutcome{Title: title, PositionMs: r.PositionMs, HasPosition: r.HasPosition, At: r.At}
+	kept := ReportOutcome{Title: title, PositionMs: r.PositionMs, HasPosition: r.HasPosition, At: r.At, Paused: r.Paused}
 	older := !s.LastAt.IsZero() && r.At.Before(s.LastAt)
 	if !s.Live() {
 		late := s.Purpose == PurposeDownload && r.AtSaid && !now.After(s.PlayedAt.Add(LateReports))

@@ -9,15 +9,15 @@ import (
 	"strings"
 )
 
-// What a viewer's server reads from a stream's codecs string (MSFP video
-// section 3.5): the parts players decide on, the parts it ignores left
+// What a viewer's server reads from a stream's codecs string (MSFP Media video
+// 3.5): the parts players decide on, the parts it ignores left
 // out, and the Dolby Vision string rebuilt from the base 4CC and the dv
 // object. A stream for which ReadCodecs fails is one the viewer's server
 // can't play as it is: it asks for a remux or a transcode, or doesn't
 // offer the copy.
 
 // RequiresCodecs says whether codecs is required for a stream of codec
-// (video section 3.5): h264, hevc, av1 and vp9 (video), aac and dts
+// (MSFP Media video 3.5): h264, hevc, av1 and vp9 (video), aac and dts
 // (audio).
 func RequiresCodecs(codec string) bool {
 	return slices.Contains([]string{"h264", "hevc", "av1", "vp9", "aac", "dts"}, codec)
@@ -47,7 +47,7 @@ type Codecs struct {
 }
 
 // The Dolby Vision entries, by the base 4CC a codecs string starts with
-// (video section 3.5).
+// (MSFP Media video 3.5).
 var dvEntry = map[string]string{"hvc1": "dvh1", "hev1": "dvhe", "av01": "dav1", "avc1": "dva1", "avc3": "dvav"}
 
 var (
@@ -67,8 +67,8 @@ func codecsRefused(format string, a ...any) error {
 	return fmt.Errorf("%w: "+format, append([]any{ErrCodecs}, a...)...)
 }
 
-// ReadCodecs reads a stream's or a track's codecs string as video
-// section 3.5 says, given its codec, its bitDepth (0 when absent) and
+// ReadCodecs reads a stream's or a track's codecs string as MSFP Media video
+// 3.5 says, given its codec, its bitDepth (0 when absent) and
 // its dv object (nil when absent). An error (ErrCodecs) when codecs is
 // missing or malformed where it is required (RequiresCodecs), starts
 // with a Dolby Vision 4CC, or isn't of its codec's form: avc1 or avc3
@@ -179,7 +179,7 @@ func ReadCodecs(codec, codecs string, bitDepth int, dv *VideoDV) (Codecs, error)
 }
 
 // PlayableAsIs says whether a viewer's server may consider playing c as
-// it is, as far as MSFP decides it (core section 8.5, video sections
+// it is, as far as MSFP decides it (MSFP Media base 3, MSFP Media video
 // 3.2 and 3.5): every stream's codecs readable where required
 // (ReadCodecs). Whether its device plays the media type, the codecs, the
 // threeD layout or Dolby Vision without a compatible base

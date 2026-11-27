@@ -8,13 +8,13 @@ import (
 	"strconv"
 )
 
-// The copies of a film, an episode or an extra (MSFP video sections 3.2
+// The copies of a film, an episode or an extra (MSFP Media video 3.2
 // to 3.8): what an owning server sends, and what a viewer's server keeps
 // of them. The types are both: their JSON is the wire's, written with
 // Marshal; a copy read with ReadCopy is in bounds, and written again
 // unchanged.
 
-// Copy is one version of a film, an episode or an extra (video section
+// Copy is one version of a film, an episode or an extra (MSFP Media video
 // 3.2). AudioTracks is required, and may be empty, never nil (Marshal
 // would leave a nil list out). A pointer field, and a zero number where
 // 0 is out of range, is absent. A copy carries no name, no bitrate and
@@ -40,7 +40,7 @@ type Copy struct {
 	ThreeD         string         `json:"threeD,omitempty"`
 }
 
-// VideoStream is a copy's picture (video section 3.3). Codec is the
+// VideoStream is a copy's picture (MSFP Media video 3.3). Codec is the
 // registry's token, open; Codecs the stream's RFC 6381 codecs string
 // (required for h264, hevc, av1 and vp9: RequiresCodecs; ReadCodecs
 // reads it); FPS "<num>/<den>" reduced; SampleAspect "<w>:<h>", absent
@@ -65,8 +65,8 @@ type VideoStream struct {
 	Interlaced   bool         `json:"interlaced,omitempty"`
 }
 
-// VideoDV is a Dolby Vision picture's configuration record (video
-// section 3.6), sent whenever the copy has Dolby Vision: the profile (0
+// VideoDV is a Dolby Vision picture's configuration record (MSFP Media video
+// 3.6), sent whenever the copy has Dolby Vision: the profile (0
 // to 127), the level (0 to 63), the base-layer compatibility ID (0 to
 // 15), and whether an enhancement layer is present (nil: not said).
 type VideoDV struct {
@@ -76,7 +76,7 @@ type VideoDV struct {
 	EL            *bool `json:"el,omitempty"`
 }
 
-// VideoColour is a picture's colour description (video section 3.6):
+// VideoColour is a picture's colour description (MSFP Media video 3.6):
 // ITU-T H.273 code points, each 0 to 255 and never 2 ("unspecified"),
 // nil when absent; FullRange H.273's full-range flag, nil when unknown.
 // Transfer is the preferred transfer (the alternative transfer
@@ -88,15 +88,15 @@ type VideoColour struct {
 	FullRange *bool `json:"fullRange,omitempty"`
 }
 
-// H.273's transfer characteristics that make a picture's range (video
-// section 3.6).
+// H.273's transfer characteristics that make a picture's range (MSFP Media video
+// 3.6).
 const (
 	TransferBT709 = 1
 	TransferPQ    = 16
 	TransferHLG   = 18
 )
 
-// CopyAudio is a copy's audio track (video section 3.3), with the a<n>
+// CopyAudio is a copy's audio track (MSFP Media video 3.3), with the a<n>
 // ID play takes. Codec is the registry's token, Role a value of the DASH
 // role scheme (main, dub, commentary, description…), Objects the
 // object-based format it carries (dolby-atmos, dts-x), all open; Codecs
@@ -116,7 +116,7 @@ type CopyAudio struct {
 	Original   bool   `json:"original,omitempty"`
 }
 
-// CopySubtitle is a copy's subtitle track (video section 3.3), with its
+// CopySubtitle is a copy's subtitle track (MSFP Media video 3.3), with its
 // s<n> ID. Format is the registry's token (subrip, ass,
 // hdmv_pgs_subtitle, dvd_subtitle…), open, "" when not known; Role a
 // value of the DASH role scheme (subtitle, commentary, easyreader…).
@@ -131,13 +131,13 @@ type CopySubtitle struct {
 	External        bool   `json:"external,omitempty"`
 }
 
-// CopyChapter is a chapter of a copy (video section 3.4).
+// CopyChapter is a chapter of a copy (MSFP Media video 3.4).
 type CopyChapter struct {
 	StartMs int64  `json:"startMs"`
 	Name    string `json:"name,omitempty"`
 }
 
-// CopySegment is a skip marker of a copy (video section 3.4): Kind is
+// CopySegment is a skip marker of a copy (MSFP Media video 3.4): Kind is
 // open (intro, outro, recap, preview, commercial…); a viewer's server
 // shows a kind it doesn't know as a plain "Skip". The last outro is the
 // final credits.
@@ -147,7 +147,7 @@ type CopySegment struct {
 	EndMs   int64  `json:"endMs"`
 }
 
-// The bounds of video section 3.8.
+// The bounds of MSFP Media video 3.8.
 const (
 	MaxCopies         = 16
 	MaxCopyDurationMs = 8_640_000_000 // 100 days
@@ -169,14 +169,14 @@ var (
 	copyRatioRe  = regexp.MustCompile(`^([1-9][0-9]{0,6})([:/])([1-9][0-9]{0,6})$`)
 )
 
-// CodecsString says whether s is of a codecs string's form (video
-// section 3.5): 1 to 64 characters of A–Z a–z 0–9 . + -.
+// CodecsString says whether s is of a codecs string's form (MSFP Media video
+// 3.5): 1 to 64 characters of A–Z a–z 0–9 . + -.
 func CodecsString(s string) bool { return copyCodecsRe.MatchString(s) }
 
-// ReadCopy reads one entry of a title's copies as video section 3.8
+// ReadCopy reads one entry of a title's copies as MSFP Media video 3.8
 // says: an error, to skip it, when it isn't an object, when its id or
 // etag isn't of an ID's form, when durationMs or size isn't an integer
-// in range, when mediaType isn't a media type (core section 8.5), or
+// in range, when mediaType isn't a media type (MSFP Media base 3), or
 // when audioTracks isn't an array. Open values (mediaType, the codecs,
 // edition, role, format, objects, segment kinds, hdr, threeD) are kept
 // as they are when well formed, known or not. Its other members, out of
@@ -194,7 +194,7 @@ func ReadCopy(raw json.RawMessage) (Copy, error) {
 }
 
 // readCopies keeps of a title's copies the first MaxCopies good ones,
-// each id once (video section 3.8).
+// each id once (MSFP Media video 3.8).
 func readCopies(list []any) []Copy {
 	var out []Copy
 	for _, e := range list {
@@ -315,7 +315,7 @@ func readVideoStream(v any) *VideoStream {
 }
 
 // h273 is an H.273 code point, 0 to 255, 2 ("unspecified") counting as
-// absent (video section 3.6); nil when absent.
+// absent (MSFP Media video 3.6); nil when absent.
 func h273(v any) *int {
 	n, ok := videoInt(v, 0, 255)
 	if !ok || n == 2 {
@@ -325,7 +325,7 @@ func h273(v any) *int {
 	return &i
 }
 
-// The bounds of a picture's ratios (video section 3.3): each side of a
+// The bounds of a picture's ratios (MSFP Media video 3.3): each side of a
 // sampleAspect, each term of an fps.
 const (
 	MaxSampleAspect = 65_535
@@ -365,7 +365,7 @@ func boolOf(v any) *bool {
 }
 
 // CleanHDR keeps of a stream's hdr entries the tokens, each once, sorted
-// in byte order, the first MaxHDR (video section 3.8); none when nothing
+// in byte order, the first MaxHDR (MSFP Media video 3.8); none when nothing
 // is left.
 func CleanHDR(entries []string) []string {
 	var out []string
@@ -382,7 +382,7 @@ func CleanHDR(entries []string) []string {
 }
 
 // HighDynamicRange says whether a picture is of high dynamic range
-// (video section 3.6): a transfer of 16 (PQ) or 18 (HLG), or Dolby
+// (MSFP Media video 3.6): a transfer of 16 (PQ) or 18 (HLG), or Dolby
 // Vision. A picture with no colour says nothing of its range: false.
 func (v VideoStream) HighDynamicRange() bool {
 	if v.DV != nil {

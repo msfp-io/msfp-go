@@ -5,14 +5,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 )
 
-// The catalog part's own rules (MSFP catalog sections 3 and 4), shared by
+// The catalog part's own rules (MSFP Media listing 3 and 4), shared by
 // the content parts: pages bounded by size, the opaque parts of title
 // keys, the description of a local title, and its image.
 
-// Pages (catalog section 3.1): a page of titles holds at most
+// Pages (MSFP Media listing 3.1): a page of titles holds at most
 // MaxPageTitles keys (titles and gone together in a changes answer) and
 // its answer body at most MaxPageBytes of JSON; after, and so next, is
 // at most MaxAfter bytes.
@@ -30,7 +31,7 @@ const PageReserve = 1024
 
 // PageBudget counts what an owning server puts in a page of titles, so
 // that it ends the page early when the next entry would pass either
-// bound (catalog section 3.1). Its zero value counts no reserve: start
+// bound (MSFP Media listing 3.1). Its zero value counts no reserve: start
 // one with NewPageBudget.
 type PageBudget struct {
 	keys, bytes int
@@ -60,7 +61,7 @@ func (b *PageBudget) Add(size int) bool {
 // Keys is how many entries the page holds.
 func (b *PageBudget) Keys() int { return b.keys }
 
-// AskOn is the caller's stop rule (catalog section 3.1): it asks for the
+// AskOn is the caller's stop rule (MSFP Media listing 3.1): it asks for the
 // next page, with next as after, only when next is set (an absent one
 // is "") and greater than its after in byte order. A short page with a
 // next is no end.
@@ -79,7 +80,7 @@ type Page struct {
 	HasNext bool   // next is present
 }
 
-// CheckPage says whether an owning server may send p (catalog section
+// CheckPage says whether an owning server may send p (MSFP Media listing
 // 3.1): at most MaxPageTitles keys and MaxPageBytes; in a whole-list
 // answer, no gone, keys after after, and next the page's last key
 // exactly when titles remain. In a changes answer, next is the owning
@@ -114,7 +115,7 @@ func CheckPage(p Page) error {
 }
 
 // OpaqueKeyPart says whether s may be an opaque part of a title key: a
-// local title's identifier, an extra's part after x/ (catalog section
+// local title's identifier, an extra's part after x/ (MSFP Media listing
 // 4.2). It has a library ID's form, 1 to 64 characters of
 // A–Z a–z 0–9 _ -, compared byte for byte, and follows a library ID's
 // rule: chosen by the owning server, never computable from a media
@@ -123,20 +124,20 @@ func OpaqueKeyPart(s string) bool { return ID(s) }
 
 // DescriptionBounds are the bounds of a local title's description: the
 // catalog's (LocalDescription), or a content part's own for its titles
-// (catalog section 4.3).
+// (MSFP Media listing 4.3).
 type DescriptionBounds struct {
 	NameRequired     bool // the kind carries a name; without one the title is skipped
 	MaxName          int  // in code points
 	MinYear, MaxYear int  // MinYear at least 1
 }
 
-// LocalDescription are catalog section 4.3's bounds, for a local film or
+// LocalDescription are MSFP Media listing 4.3's bounds, for a local film or
 // series: a name of at most 128 characters, required; a year from 1800
 // to 9999.
 var LocalDescription = DescriptionBounds{NameRequired: true, MaxName: 128, MinYear: 1800, MaxYear: 9999}
 
 // Description is what a caller keeps of a local title's description
-// (catalog section 4.3). It is the owning server's, shown as such, never
+// (MSFP Media listing 4.3). It is the owning server's, shown as such, never
 // sent on to another peer.
 type Description struct {
 	Name  string `json:"name,omitempty"`  // cleaned text, never markup
@@ -173,11 +174,11 @@ func ReadDescription(title json.RawMessage, b DescriptionBounds) (Description, b
 }
 
 // imageKinds are the kinds the image call gives an image of, and the
-// content part of each (catalog section 4.4).
+// content part of each (MSFP Media listing 4.4).
 var imageKinds = map[string]string{"movie": PartVideo, "series": PartVideo, "artist": PartMusic, "album": PartMusic}
 
 // CheckImageRequest is the owning server's answer to an image call
-// (catalog section 4.4), in the spec's order: 404 not-supported when no
+// (MSFP Media listing 4.4), in the spec's order: 404 not-supported when no
 // content part with local titles is on between the two servers (on
 // says, for PartVideo and PartMusic), before the body is read; 400
 // invalid-request when the body isn't I-JSON, an object, or its title
@@ -206,12 +207,12 @@ func CheckImageRequest(on func(part string) bool, body []byte, image func(key st
 }
 
 // ImageURL is the URL a viewer's server builds from an image call's
-// ticket: <stream root><ticket>/image (catalog section 4.4, media
-// section 1). The ticket works for 10
+// ticket: <stream root><ticket>/image (MSFP Media listing 4.4, MSFP Media fetching
+// 1). The ticket works for 10
 // minutes, for that URL only, and is no playback.
 func ImageURL(root, ticket string) string { return root + ticket + "/image" }
 
-// ReadImageAnswer reads an image call's answer (catalog section 4.4):
+// ReadImageAnswer reads an image call's answer (MSFP Media listing 4.4):
 // {"ticket"}, the ticket of ID's form; false drops the answer, and no
 // image is fetched. The image's URL is built from it (ImageURL); a url
 // member of earlier drafts is ignored.
@@ -225,7 +226,7 @@ func ReadImageAnswer(body []byte) (ticket string, ok bool) {
 	return *a.Ticket, true
 }
 
-// A local title's image (catalog section 4.4): at most MaxImageBytes (an
+// A local title's image (MSFP Media listing 4.4): at most MaxImageBytes (an
 // image of exactly that size is accepted), 1 to MaxImageSide pixels wide
 // and tall.
 const (
@@ -242,7 +243,7 @@ const (
 var pngSignature = []byte{0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n'}
 
 // CheckImage checks a local title's image, read whole, before it is
-// decoded (catalog section 4.4): within MaxImageBytes, a JPEG or a PNG
+// decoded (MSFP Media listing 4.4): within MaxImageBytes, a JPEG or a PNG
 // by its content, whatever its Content-Type, whose header (a PNG's IHDR,
 // a JPEG's frame header) gives a width and a height of 1 to
 // MaxImageSide; a JPEG of height 0, left to a DNL marker, is refused. It
@@ -327,4 +328,223 @@ func jpegSize(b []byte) (w, h int, err error) {
 		}
 		i += n
 	}
+}
+
+// TitlesRequest is a titles request (MSFP Media listing 3), as a source
+// reads it (ReadTitlesRequest) and a caller sends it. Libraries nil is
+// every library the caller may see; Filter narrows the listing (listing
+// 3.6).
+type TitlesRequest struct {
+	Libraries []string
+	Filter    TitleFilter
+	After     string
+	Since     int64
+}
+
+// TitleFilter is a titles request's filters (MSFP Media listing 3.6):
+// Kind ("" for none) and Under (when HasUnder: a title key, compared as
+// an exact string). The zero filter lists every title.
+type TitleFilter struct {
+	Kind     string
+	Under    string
+	HasUnder bool
+}
+
+// None says whether the filter lists every title.
+func (f TitleFilter) None() bool { return f.Kind == "" && !f.HasUnder }
+
+// ErrTitlesRequest is a titles request a source refuses as a malformed
+// body (MSFP Media listing 3.3: 404 not-found).
+var ErrTitlesRequest = errors.New("msfp: a malformed titles request")
+
+// ReadTitlesRequest reads a titles request as a source does (MSFP Media
+// listing 3 and 3.6): an I-JSON object, null in none of its members;
+// libraries, when present, an array of strings; kind a token; under a
+// string of at most MaxAfter bytes; after a string of at most MaxAfter
+// bytes; since an integer, a negative one read as 0. Anything else is
+// ErrTitlesRequest. Library IDs the caller may not see, and a kind no
+// content part in use has, aren't refused: they list nothing.
+func ReadTitlesRequest(body []byte) (TitlesRequest, error) {
+	var r TitlesRequest
+	o, err := requestObject(body, []string{"libraries", "kind", "under", "after", "since"})
+	if err != nil {
+		return r, ErrTitlesRequest
+	}
+	if v, there := o["libraries"]; there {
+		list, ok := v.([]any)
+		if !ok {
+			return r, ErrTitlesRequest
+		}
+		r.Libraries = make([]string, 0, len(list))
+		for _, e := range list {
+			s, ok := e.(string)
+			if !ok {
+				return r, ErrTitlesRequest
+			}
+			r.Libraries = append(r.Libraries, s)
+		}
+	}
+	kind, have, err := o.text("kind")
+	if err != nil || have && !Token(kind) {
+		return r, ErrTitlesRequest
+	}
+	r.Filter.Kind = kind
+	if r.Filter.Under, r.Filter.HasUnder, err = o.text("under"); err != nil || len(r.Filter.Under) > MaxAfter {
+		return r, ErrTitlesRequest
+	}
+	if r.After, _, err = o.text("after"); err != nil || len(r.After) > MaxAfter {
+		return r, ErrTitlesRequest
+	}
+	if v, there := o["since"]; there {
+		n, ok := v.(json.Number)
+		if !ok || !isInteger(string(n)) {
+			return r, ErrTitlesRequest
+		}
+		if r.Since, err = n.Int64(); err != nil {
+			return r, ErrTitlesRequest
+		}
+		r.Since = max(r.Since, 0)
+	}
+	return r, nil
+}
+
+// MarshalJSON writes the request as a caller sends it: libraries when
+// not nil, kind and under when given, after always, since when above 0.
+func (r TitlesRequest) MarshalJSON() ([]byte, error) {
+	out := struct {
+		Libraries *[]string `json:"libraries,omitempty"`
+		Kind      string    `json:"kind,omitempty"`
+		Under     *string   `json:"under,omitempty"`
+		After     string    `json:"after"`
+		Since     int64     `json:"since,omitempty"`
+	}{Kind: r.Filter.Kind, After: r.After, Since: r.Since}
+	if r.Libraries != nil {
+		out.Libraries = &r.Libraries
+	}
+	if r.Filter.HasUnder {
+		out.Under = &r.Filter.Under
+	}
+	return json.Marshal(out)
+}
+
+// Changes says whether a source may answer the request with changes
+// only, as far as its filters go (MSFP Media listing 3.2): never with
+// under, whose answer is always the whole list.
+func (f TitleFilter) Changes() bool { return !f.HasUnder }
+
+// SinceAllowed says whether a caller may ask with since the seq of an
+// earlier reading made with prev (MSFP Media listing 3.2): only when
+// libraries is the same set (or absent in both), kind is the same, and
+// neither has under.
+func SinceAllowed(prev, next TitlesRequest) bool {
+	if prev.Filter.Kind != next.Filter.Kind || prev.Filter.HasUnder || next.Filter.HasUnder ||
+		(prev.Libraries == nil) != (next.Libraries == nil) {
+		return false
+	}
+	set := func(l []string) map[string]bool {
+		m := map[string]bool{}
+		for _, s := range l {
+			m[s] = true
+		}
+		return m
+	}
+	a, b := set(prev.Libraries), set(next.Libraries)
+	if len(a) != len(b) {
+		return false
+	}
+	for s := range a {
+		if !b[s] {
+			return false
+		}
+	}
+	return true
+}
+
+// FilterFacts are what a filter reads of a title (MSFP Media listing
+// 3.6): its key; an episode's place.season (HasPlace); a track's album
+// key; an album's artists' keys.
+type FilterFacts struct {
+	Key         string
+	PlaceSeason int
+	HasPlace    bool
+	Album       string
+	Artists     []string
+}
+
+// Passes says whether a title passes the filter (MSFP Media listing
+// 3.6): its key names kind, when given; and, with under, it is directly
+// under that title: a film's extras; a series' seasons, extras and
+// episodes keyed by an absolute number; a season's episodes, those keyed
+// under it and those of the same series keyed by their TMDB episode ID
+// whose place.season is its number, and its extras; an album's tracks
+// (their album); an artist's albums (their artists). Under any other
+// string, nothing. A caller's whole reading made with a filter drops,
+// of the titles it kept, only those Passes and the reading didn't send.
+func (f TitleFilter) Passes(t FilterFacts) bool {
+	k, ok := ParseKey(t.Key)
+	if !ok || f.Kind != "" && k.Kind != f.Kind {
+		return false
+	}
+	if !f.HasUnder {
+		return true
+	}
+	if u, ok := ParseMusicKey(f.Under); ok {
+		switch {
+		case u.Kind == "album" && k.Kind == "track":
+			return t.Album == f.Under
+		case u.Kind == "artist" && k.Kind == "album":
+			return slices.Contains(t.Artists, f.Under)
+		}
+		return false
+	}
+	u, ok := ParseVideoKey(f.Under)
+	if !ok || u.String() != f.Under {
+		return false
+	}
+	v, ok := ParseVideoKey(t.Key)
+	if !ok {
+		return false
+	}
+	if parent, isExtra := v.Parent(); isExtra {
+		return parent.String() == f.Under
+	}
+	if v.Series() != u.Series() {
+		return false
+	}
+	switch u.Kind {
+	case "series":
+		return v.Kind == "season" || v.Kind == "episode" && v.Absolute
+	case "season":
+		if v.Kind != "episode" || v.Absolute {
+			return false
+		}
+		if v.EpisodeID > 0 {
+			return t.HasPlace && t.PlaceSeason == u.Season
+		}
+		return v.Season == u.Season
+	}
+	return false
+}
+
+// UnderPrefix is the prefix every key under a video title starts with
+// (its film's or series' key and a slash), for a source that walks its
+// titles in key order: those under it are among the keys of that
+// prefix, which come together in byte order. "" when under isn't a
+// video key: a source then looks at every title.
+func (f TitleFilter) UnderPrefix() string {
+	if !f.HasUnder {
+		return ""
+	}
+	u, ok := ParseVideoKey(f.Under)
+	if !ok {
+		return ""
+	}
+	return u.Series() + "/"
+}
+
+// KnownKind says whether kind is a kind of title of a content part of
+// version 0: movie, series, season, episode, extra; artist, album,
+// track.
+func KnownKind(kind string) bool {
+	return slices.Contains([]string{"movie", "series", "season", "episode", "extra", "artist", "album", "track"}, kind)
 }

@@ -6,12 +6,12 @@ import (
 	"strconv"
 )
 
-// Fonts (MSFP video, section 6.6): the fonts a copy's ASS tracks use,
+// Fonts (MSFP Media video 6.6): the fonts a copy's ASS tracks use,
 // served apart, at most 64 a copy, 64 MiB in all. Both sides check a font's
 // structure before serving or relaying it; a viewer's server may refuse
 // fonts entirely and never fetch them.
 
-// The bounds of fonts (video section 6.6, media sections 1 and 2.4).
+// The bounds of fonts (MSFP Media video 6.6, MSFP Media fetching 1 and 2.4).
 const (
 	MaxFont       = 10 << 20 // bytes, a font
 	MaxFonts      = 64       // fonts a copy, its URLs fonts/0 to fonts/63
@@ -20,7 +20,7 @@ const (
 )
 
 // CheckFontSet checks the sizes of one copy's fonts, in the order of
-// fonts, against video section 6.6's bounds: at most MaxFonts, each 1 to
+// fonts, against MSFP Media video 6.6's bounds: at most MaxFonts, each 1 to
 // MaxFont bytes, MaxFontsBytes in all. The error names the first font
 // that breaks a bound: one the owning server doesn't list, and a
 // viewer's server refuses (those it relays in a playback adding up).
@@ -43,7 +43,7 @@ func CheckFontSet(sizes []int64) error {
 }
 
 // ReadFontURLs reads the fonts member of play's answer as a viewer's
-// server keeps it (video section 5.3): an array of strings, at most
+// server keeps it (MSFP Media video 5.3): an array of strings, at most
 // MaxFonts, entry n exactly <base>fonts/<n>, base being the stream's base
 // (StreamBase: <stream root><ticket>/), every font under that one
 // ticket. An error drops the member.
@@ -69,7 +69,7 @@ func ReadFontURLs(v any, base string) ([]string, error) {
 	return out, nil
 }
 
-// The media types a font is served as (media section 3.4).
+// The media types a font is served as (MSFP Media fetching 3.4).
 const (
 	FontTTF = "font/ttf"
 	FontOTF = "font/otf"
@@ -83,7 +83,7 @@ func fontStep(step int, format string, a ...any) error {
 	return fmt.Errorf("msfp: a font refused, step %d: %s", step, fmt.Sprintf(format, a...))
 }
 
-// CheckFont checks a font as video section 6.6 says, in its steps: at
+// CheckFont checks a font as MSFP Media video 6.6 says, in its steps: at
 // most MaxFont bytes; TrueType (00 01 00 00, or Apple's "true") or
 // OpenType with CFF ("OTTO"), never a collection, WOFF or another kind;
 // 1 to 64 tables, the directory and every table within the file, each

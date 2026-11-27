@@ -588,7 +588,7 @@ func (e *Engine) SetGroupOffers(ctx context.Context, id string, libraries []stri
 }
 
 // SetGroupLocal chooses whether this server shares its local titles
-// (MSFP catalog section 4.3) with a group, in the libraries it offers it:
+// (MSFP Media listing 4.3) with a group, in the libraries it offers it:
 // off by default. A change forces a whole reading on every link through
 // it. Errors: ErrNotFound, ErrNoGroups.
 func (e *Engine) SetGroupLocal(ctx context.Context, id string, on bool) error {
@@ -622,7 +622,7 @@ func (e *Engine) SetGroupLocal(ctx context.Context, id string, on bool) error {
 }
 
 // endPlaybacksNotOffered ends the playbacks from libraries their link is no
-// longer offered (playback section 6.3).
+// longer offered (MSFP Media playing 5).
 func (e *Engine) endPlaybacksNotOffered(ctx context.Context) {
 	offers := map[string][]string{}
 	_ = e.cfg.Store.Read(ctx, func(tx Tx) error {
@@ -2161,9 +2161,9 @@ func (e *Engine) groupMember(r *http.Request, key []byte) bool {
 
 // poolRoom says whether one of a link's pools has room now for a
 // playback of purpose (room), and whether one allows any at all (open).
-func (e *Engine) poolRoom(p *PeerRecord, purpose string, audio bool) (room, open bool) {
+func (e *Engine) poolRoom(p *PeerRecord, purpose string, audio bool, old *playback) (room, open bool) {
 	for _, pool := range pools(p) {
-		r, o := e.roomIn(poolKey(p, pool), pool.Limits, purpose, audio)
+		r, o := e.roomIn(poolKey(p, pool), pool.Limits, purpose, audio, old)
 		room, open = room || r, open || o
 	}
 	return room, open
@@ -2173,10 +2173,10 @@ func (e *Engine) poolRoom(p *PeerRecord, purpose string, audio bool) (room, open
 // with room (groups section 9, playback section 5): each playback counts
 // against exactly one, and a day's counts are kept in the pool it
 // counted against.
-func (e *Engine) admitPools(p *PeerRecord, purpose string, audio bool, method string) (*countSlot, error) {
+func (e *Engine) admitPools(p *PeerRecord, purpose string, audio bool, method string, old *playback) (*countSlot, error) {
 	err := error(ErrStreamLimitReached)
 	for _, pool := range pools(p) {
-		s, e2 := e.admitIn(poolKey(p, pool), pool.Limits, purpose, audio, method)
+		s, e2 := e.admitIn(poolKey(p, pool), pool.Limits, purpose, audio, method, old)
 		if e2 == nil {
 			return s, nil
 		}

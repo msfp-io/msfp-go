@@ -15,18 +15,18 @@ import (
 	"github.com/msfp-io/msfp-go/wire"
 )
 
-// The catalog, on the reading side (MSFP catalog sections 2.2, 3.2 and
+// The catalog, on the reading side (MSFP Media listing 2.2, 3.2 and
 // 3.3): the libraries a peer offers this server, those wanted, and the
 // readings of their titles, kept in storage for the host's pages.
 
-// The bounds of what is kept of a peer (catalog sections 2.2 and 6).
+// The bounds of what is kept of a peer (MSFP Media listing 2.2, MSFP catalog section 6).
 const (
 	maxLibraries  = 200
 	maxPeerTitles = 1_000_000
 	maxGoneKey    = 128
 )
 
-// readingTime is how long a reading may take (catalog section 3.2: 5
+// readingTime is how long a reading may take (MSFP Media listing 3.2: 5
 // minutes); pageWait the longest a page is waited for when the peer
 // asks to wait (a signed 429 or 503 with retryAfter).
 const (
@@ -170,7 +170,7 @@ func (e *Engine) TheirLibraries(ctx context.Context, peer string) ([]WantedLibra
 }
 
 // theirLibraries calls libraries on p and keeps its answer: the
-// libraries, its name, its limits (MSFP catalog section 2.2). kinds says
+// libraries, its name, its limits (MSFP Media listing 2.2). kinds says
 // each library of the answer carried a kind, as the previous draft's
 // libraries did (olderDraftPage).
 func (e *Engine) theirLibraries(ctx context.Context, p *PeerRecord, background bool) (_ []WantedLibrary, kinds bool, _ error) {
@@ -256,8 +256,8 @@ func (e *Engine) theirLibraries(ctx context.Context, p *PeerRecord, background b
 	return slices.Clone(kept), kinds, nil
 }
 
-// readLimits reads a peer's limits (MSFP playback section 5, music
-// section 5.1): nil when they aren't an object of integers in range.
+// readLimits reads a peer's limits (MSFP playback section 5, MSFP Media music
+// 5.1): nil when they aren't an object of integers in range.
 // ScanBytes is never a peer's limit: each scan's answer states its own
 // (RemotePlayback.ScanBytes).
 func readLimits(raw json.RawMessage, music bool) *Limits {
@@ -360,7 +360,7 @@ func (e *Engine) ReadNow(ctx context.Context, peer string) (int, error) {
 
 // titlesReading is a titles answer as read: each title and each gone key
 // on its own, so that a bad one is skipped alone; the other members of
-// the wrong type fail the answer (MSFP catalog section 3.3).
+// the wrong type fail the answer (MSFP Media listing 3.3).
 type titlesReading struct {
 	Titles  []json.RawMessage `json:"titles"`
 	Next    *string           `json:"next"`
@@ -370,7 +370,7 @@ type titlesReading struct {
 }
 
 // readCatalog reads a peer's titles in the libraries wanted of it, and
-// keeps them (MSFP catalog section 3.2): only what changed since the
+// keeps them (MSFP Media listing 3.2): only what changed since the
 // last reading, when the peer gives changes and the libraries are the
 // same; the whole list otherwise, after which titles not seen are
 // dropped. A reading that fails keeps what was kept before it: a whole
@@ -499,7 +499,7 @@ func (e *Engine) readCatalog(ctx context.Context, id string, background bool) (k
 		if !changes {
 			// A whole list is kept only once read to its end: until then
 			// the previous one stays, and a reading that fails halfway
-			// leaves nothing of its pages (MSFP catalog section 3.2).
+			// leaves nothing of its pages (MSFP Media listing 3.2).
 			whole = append(whole, page...)
 		} else if err := e.cfg.Store.Update(ctx, func(tx Tx) error {
 			if len(page) > 0 {
@@ -560,7 +560,7 @@ func (e *Engine) pageCall(ctx context.Context, p *PeerRecord, in titlesRequest, 
 	}
 }
 
-// readTitle reads a title of a peer's answer as MSFP catalog section 3.3
+// readTitle reads a title of a peer's answer as MSFP Media listing 3.3
 // and its content part say; false to skip it.
 func (e *Engine) readTitle(p *PeerRecord, raw json.RawMessage, libs []string) (Title, bool) {
 	var head struct {

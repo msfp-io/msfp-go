@@ -2,7 +2,7 @@ package wire
 
 import "strings"
 
-// Open values (MSFP core section 8.5). Many fields take a value from a
+// Open values (MSFP Media base 3). Many fields take a value from a
 // list that grows: a codec, a subtitle format, an edition. MSFP keeps no
 // closed list for them: a field it calls open takes a token (or, for a
 // container, a media type), and a receiver keeps a value it doesn't know
@@ -16,7 +16,7 @@ import "strings"
 // MaxToken is a token's greatest length, in bytes.
 const MaxToken = 32
 
-// Token says whether s is a token of core section 8.5: 1 to 32 bytes of
+// Token says whether s is a token of MSFP Media base 3: 1 to 32 bytes of
 // a–z 0–9 . _ -.
 func Token(s string) bool {
 	if len(s) == 0 || len(s) > MaxToken {
@@ -44,7 +44,7 @@ func tokenOf(v any) string {
 // bound).
 const MaxMediaType = 127
 
-// IsMediaType says whether s is a media type of core section 8.5: an
+// IsMediaType says whether s is a media type of MSFP Media base 3: an
 // IANA-form media type, lowercase, exactly one /, no parameters, each
 // half starting with a letter or a digit, at most 127 bytes of a–z 0–9
 // . + - _ /. Fields that take one (a copy's mediaType, a remux's) follow

@@ -67,7 +67,7 @@ func TestLibrariesAndPaging(t *testing.T) {
 }
 
 // A whole reading that fails halfway keeps the previous complete list:
-// nothing of the pages it read (MSFP catalog section 3.2).
+// nothing of the pages it read (MSFP Media listing 3.2).
 func TestWholeReadingFailsHalfway(t *testing.T) {
 	ctx := context.Background()
 	h := newFakeHost()
@@ -161,7 +161,7 @@ func TestCatalogChanges(t *testing.T) {
 	}
 	got := s.peerTitles(t)
 	if !slices.Equal(keysOf(got), []string{"movie/tmdb/2", "movie/tmdb/3", "movie/tmdb/4"}) ||
-		got["movie/tmdb/2"].(*msfp.VideoTitle).IDs != nil { // no ids on a film keyed under tmdb (video section 4.3)
+		got["movie/tmdb/2"].(*msfp.VideoTitle).IDs != nil { // no ids on a film keyed under tmdb (MSFP Media video 4.3)
 		t.Errorf("B keeps %v", got)
 	}
 	// Offers changed: the next reading is a whole one.
@@ -397,7 +397,7 @@ func TestChangeWaitsForRefresh(t *testing.T) {
 }
 
 // A host's copy with more subtitle tracks than MSFP allows leaves with
-// the first 64 (MSFP video section 3.2): the engine sends nothing a
+// the first 64 (MSFP Media video 3.2): the engine sends nothing a
 // receiver would drop.
 func TestOwnSubtitleTracksCapped(t *testing.T) {
 	h := newFakeHost()
@@ -546,7 +546,7 @@ func TestMusicTitles(t *testing.T) {
 	}
 }
 
-// A film's copies (MSFP video section 3.2): sent best first, under
+// A film's copies (MSFP Media video 3.2): sent best first, under
 // version IDs, cleaned as a receiver keeps them; the best picture and the
 // languages are worked out from them; a copy's new etag is a change of
 // the title.
@@ -570,7 +570,7 @@ func TestTitleCopies(t *testing.T) {
 		t.Error("a film with no copy a receiver keeps was sent")
 	}
 	v := got["movie/tmdb/1"].(*msfp.VideoTitle)
-	// The host's order, its preference (MSFP video section 3.7); hdr
+	// The host's order, its preference (MSFP Media video 3.7); hdr
 	// sorted.
 	first, ok := v.BestCopy()
 	if !ok || len(v.Copies) != 2 || first.Video == nil || first.Video.Height != 1080 || v.Copies[1].Video == nil ||
@@ -615,7 +615,7 @@ func TestTitleCopies(t *testing.T) {
 }
 
 // An episode keyed by its TMDB ID carries its place in TMDB's numbering
-// (MSFP video section 4.1): the host's goes with it; one the host can't
+// (MSFP Media video 4.1): the host's goes with it; one the host can't
 // place isn't sent; place on other titles never leaves; and a new place
 // is a change of the title.
 func TestTitlePlaces(t *testing.T) {

@@ -14,7 +14,7 @@ import (
 	"github.com/msfp-io/msfp-go/wire"
 )
 
-// Media, on the owning side (MSFP media sections 1 to 4, video section
+// Media, on the owning side (MSFP Media fetching 1 to 4.2, MSFP Media video
 // 6): the stream routes of peers' tickets. Every request is checked
 // before the host serves a byte: the ticket, live and of a pairing still
 // paired, and of a kind that opens that URL; GET only (HEAD and the
@@ -25,7 +25,7 @@ import (
 // playlists are checked against MSFP's subset, its subtitles and fonts
 // rebuilt or checked, before they leave.
 
-// Bounds of the fetches at once on a peer's tickets (MSFP media section
+// Bounds of the fetches at once on a peer's tickets (MSFP Media fetching
 // 2.4): per ticket and per peer, each with a queue as long, waited in
 // for 10 seconds at most.
 const (
@@ -48,7 +48,7 @@ const streamRoute = "/api/v1/stream/"
 // then (Config.NotFound). The fallback hears GET only on the media URL
 // forms (ParseMediaPath, and <ticket>/image): HEAD and every other
 // method get 405 with Allow: GET from the engine, whatever the ticket
-// (MSFP media section 2.2). A host that answers its own clients' HEAD
+// (MSFP Media fetching 2.2). A host that answers its own clients' HEAD
 // (a copy presented as a file) does so on a route of its own.
 func (e *Engine) StreamHandler(fallback http.Handler) http.Handler {
 	if fallback == nil {
@@ -70,7 +70,7 @@ var partRe = regexp.MustCompile(`^(0|[1-9][0-9]{0,3})$`)
 // "pictures/<track>/<part>", "fonts/<n>", "trickplay/<n>",
 // "queue/<n>/file", "queue/<n>/master.m3u8" or "queue/<n>/<name>", or a
 // bare name, a playlist when it ends in .m3u8 and a segment otherwise.
-// Each part is checked as MSFP media section 1 says, compared as sent:
+// Each part is checked as MSFP Media fetching 1 says, compared as sent:
 // nothing decoded; false for anything else. A host's viewer route serves
 // playlists unchanged this way: their bare names resolve under it.
 func ParseMediaPath(rest string) (MediaPath, bool) {
@@ -121,7 +121,7 @@ func ParseMediaPath(rest string) (MediaPath, bool) {
 }
 
 // mediaPath reads what a request asks of a peer's playback here: false
-// for anything its ticket doesn't open (media section 4: a scan's opens
+// for anything its ticket doesn't open (MSFP Media fetching 4.2, MSFP media section 4: a scan's opens
 // the file only; a download's the stream, its subtitles and fonts) or
 // the playback doesn't serve (another protocol's names, a queue entry
 // it hasn't, a track it doesn't serve apart, a sheet or font past the
@@ -139,7 +139,7 @@ func mediaPath(rest string, pb *playback) (MediaPath, bool) {
 			return MediaPath{}, false
 		}
 		if p.Kind == MediaPlaylist || p.Kind == MediaSegment {
-			// Exactly the names its playlists gave (media section 1).
+			// Exactly the names its playlists gave (MSFP Media fetching 1).
 			return p, ent.protocol == "hls" && pb.names[strconv.Itoa(p.Entry)+"/"+p.Name]
 		}
 		return p, ent.protocol == "file" == (p.Kind == MediaFile)
@@ -158,7 +158,7 @@ func mediaPath(rest string, pb *playback) (MediaPath, bool) {
 	return p, how.Pictures
 }
 
-// ParseRange reads a Range header of MSFP media section 2.1: one range of
+// ParseRange reads a Range header of MSFP Media fetching 2.1: one range of
 // bytes in one of three forms, each number 1 to 15 digits; never several
 // ranges, "bytes=-" or "bytes=-0", nor a first byte past the last.
 func ParseRange(h string) (Range, bool) {
@@ -170,7 +170,7 @@ func ParseRange(h string) (Range, bool) {
 }
 
 // mediaMethod answers a media request of another method than GET with
-// 405 and Allow: GET, HEAD included, never 404 (MSFP media section
+// 405 and Allow: GET, HEAD included, never 404 (MSFP Media fetching
 // 2.2): false when it did.
 func mediaMethod(w http.ResponseWriter, r *http.Request) bool {
 	if r.Method == http.MethodGet {
@@ -182,8 +182,8 @@ func mediaMethod(w http.ResponseWriter, r *http.Request) bool {
 }
 
 // plainMediaRequest says whether a media request is as a viewer's
-// server sends it: no query, none of a browser's headers (MSFP media
-// section 2): a browser must never use a peer's ticket.
+// server sends it: no query, none of a browser's headers (MSFP media section 1,
+// MSFP Media fetching 2): a browser must never use a peer's ticket.
 func plainMediaRequest(r *http.Request) bool {
 	return !strings.Contains(r.RequestURI, "?") && r.URL.RawQuery == "" && r.Header.Get("Origin") == "" &&
 		r.Header.Get("Sec-Fetch-Site") == "" && r.Header.Get("Sec-Fetch-Mode") == ""
@@ -198,7 +198,7 @@ func (e *Engine) serveStream(w http.ResponseWriter, r *http.Request, fallback ht
 		return
 	}
 	// HEAD and the rest get 405 on every media URL, whatever its ticket:
-	// live, ended, or never given (MSFP media section 2.2).
+	// live, ended, or never given (MSFP Media fetching 2.2).
 	if _, media := ParseMediaPath(name); (media || name == "image") && !mediaMethod(w, r) {
 		return
 	}
@@ -287,7 +287,7 @@ func (e *Engine) serveStream(w http.ResponseWriter, r *http.Request, fallback ht
 }
 
 // serveFile serves the file of a playback, or of a queue entry, by byte
-// ranges (MSFP media sections 2.1, 3.2, 4.1 and 4.2): its exact size and
+// ranges (MSFP Media fetching 2.1, 3.2 and 4.3, MSFP media section 4.2): its exact size and
 // etag, 206 for a range it can satisfy, 416 with bytes */<size> for one
 // it can't or a malformed one; under a scan's ticket, a range only, at
 // most 2 at once, cut at the cap; a download's paced.
@@ -466,7 +466,7 @@ func (e *Engine) mediaError(w http.ResponseWriter, r *http.Request, err error) {
 }
 
 // servePlaylist serves a playlist the host made, once checked against
-// MSFP's subset (MSFP media section 3.1): complete, and in a master
+// MSFP's subset (MSFP Media fetching 3.1): complete, and in a master
 // playlist audio renditions named by the copy's audio track IDs only.
 // One the host made outside it is refused, with a warning, rather than
 // refused by every peer.
@@ -592,7 +592,7 @@ func smallRules(p MediaPath) (most int, rebuild func([]byte) ([]byte, string, bo
 
 // serveSmall serves what is read whole: a stretch or a whole text
 // track, rebuilt as WebVTT or ASS; a stretch of a picture track, checked
-// as PGS; a font, checked (MSFP video sections 6.3 to 6.6). What the
+// as PGS; a font, checked (MSFP Media video 6.3 to 6.6). What the
 // host made outside MSFP's rules isn't sent.
 func (e *Engine) serveSmall(w http.ResponseWriter, r *http.Request, pb *playback, path MediaPath) {
 	most, rebuild := smallRules(path)
@@ -628,7 +628,7 @@ func (e *Engine) serveSmall(w http.ResponseWriter, r *http.Request, pb *playback
 
 // fontsWithin notes font n of a copy, of size bytes, among those a
 // playback served or relayed (*sizes, by index), and says whether they
-// stay within 64 MiB in all (MSFP video section 6.6): a font past that
+// stay within 64 MiB in all (MSFP Media video 6.6): a font past that
 // isn't served, and isn't noted.
 func fontsWithin(sizes *map[int]int, n, size int) bool {
 	total := size
@@ -648,7 +648,7 @@ func fontsWithin(sizes *map[int]int, n, size int) bool {
 }
 
 // serveSheet serves a preview sheet the host made, checked (a JPEG
-// within the layout, MSFP video section 6.2) and re-encoded with the
+// within the layout, MSFP Media video 6.2) and re-encoded with the
 // SheetEncoder, so that only its pixels leave: whatever else the host's
 // file holds (metadata, trailing bytes) stays here. One outside the
 // layout isn't sent.

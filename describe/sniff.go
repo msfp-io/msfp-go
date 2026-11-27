@@ -5,7 +5,7 @@ import (
 	"strings"
 )
 
-// Media types (MSFP video section 3.5, the registry's section 4): read
+// Media types (MSFP Media video 3.5, the registry's section 4): read
 // from a file's first bytes where they tell it, else mapped from a
 // container's name. Only the types sniffed here are probed: a file whose
 // first bytes say none (a playlist, a script, a concat list, an SDP file
@@ -172,7 +172,7 @@ func elementaryAudio(b []byte) string {
 var pairedSubtypes = map[string]bool{"mp4": true, "matroska": true, "webm": true, "ogg": true, "3gpp": true,
 	"3gpp2": true, "mp2t": true}
 
-// AudioOrVideo applies the audio-or-video rule (video section 3.5) to a
+// AudioOrVideo applies the audio-or-video rule (MSFP Media video 3.5) to a
 // media type of the pairs the registry lists: audio/<sub> for a file
 // with no picture (no video stream other than attached pictures),
 // video/<sub> for one with a picture. Other types are kept as they are

@@ -65,7 +65,7 @@ func (s *hostile) play(t *testing.T) msfp.RemotePlayback {
 		t.Fatal(err)
 	}
 	// The playlists first: the owning server serves only the names they
-	// give (MSFP media section 1).
+	// give (MSFP Media fetching 1).
 	for _, p := range []msfp.MediaPath{{Kind: msfp.MediaMaster}, {Kind: msfp.MediaPlaylist, Name: "v0.m3u8"}} {
 		if err := s.b.eng.Fetch(context.Background(), pb.ID, p, "", &sink{}); err != nil {
 			t.Fatal(err)
@@ -159,7 +159,7 @@ func TestRelayHostilePeer(t *testing.T) {
 		t.Errorf("a 206 of another range: %v", err)
 	}
 	// For a segment, unlike the file, an unknown total is fine; and a 200
-	// to a range is the whole segment, accepted (media section 2.1).
+	// to a range is the whole segment, accepted (MSFP Media fetching 2.1).
 	s.set("seg0.m4s", func(h http.Header, b []byte) []byte { h.Set("Content-Range", "bytes 2-5/*"); return b })
 	if out, err := fetch(seg, "bytes=2-5"); err != nil || out.status != 206 || string(out.body) != "2345" {
 		t.Errorf("a segment's 206 of unknown total: %v %+v", err, out)

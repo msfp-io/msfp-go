@@ -216,7 +216,7 @@ func main() {
 		case "play":
 			peer, key, _ := strings.Cut(arg, " ")
 			// No delivery: the baseline, H.264 and AAC in HLS, which a
-			// browser plays (MSFP playback section 2.7). A viewer's server
+			// browser plays (MSFP Media playing 2.7). A viewer's server
 			// that knows its device would choose from the copy's facts.
 			pb, err := eng.Play(ctx, peer, msfp.PlayRequest{Title: key})
 			if err == nil {
@@ -317,7 +317,7 @@ func main() {
 }
 
 // previewsOf fetches the seek-bar previews of a peer's title's first
-// copy, sheet by sheet: someone opened it (MSFP video section 5.5).
+// copy, sheet by sheet: someone opened it (MSFP Media video 5.5).
 func previewsOf(ctx context.Context, eng *msfp.Engine, store *jsonfile.Store, peer, key string) (int, error) {
 	var t msfp.Title
 	err := store.Read(ctx, func(tx msfp.Tx) error {
@@ -399,7 +399,7 @@ func selfSigned(address string) tls.Certificate {
 }
 
 // The playbacks of peers' titles open here, each reported to its peer
-// until stopped (MSFP playback section 3): at once, on a pause or a
+// until stopped (MSFP Media playing 3): at once, on a pause or a
 // resume, and every minute (the engine sends one report per 45 seconds
 // at most). A real host reports what its player says; this example has
 // none, so the time played stands for the position.

@@ -6,18 +6,18 @@ import (
 	"strconv"
 )
 
-// play's request (MSFP playback sections 2.1, 2.2 and 2.7, video section
+// play's request (MSFP Media playing 2.1, 2.2 and 2.7, MSFP Media video
 // 5.1): what a viewer's server asks to be served, and how an owning
 // server reads it, refusing what step 1 of section 2.2 refuses.
 
-// The purposes of a playback (playback section 1).
+// The purposes of a playback (MSFP Media playing 1).
 const (
 	PurposePlay     = "play"
 	PurposeDownload = "download"
 	PurposeScan     = "scan"
 )
 
-// The deliveries a play asks for (playback section 2.7); none means the
+// The deliveries a play asks for (MSFP Media playing 2.7); none means the
 // baseline.
 const (
 	DeliveryFile      = "file"
@@ -25,39 +25,39 @@ const (
 	DeliveryTranscode = "transcode"
 )
 
-// The methods of a play answer (playback section 2.3).
+// The methods of a play answer (MSFP Media playing 2.3).
 const (
 	MethodDirect    = "direct"
 	MethodRemux     = "remux"
 	MethodTranscode = "transcode"
 )
 
-// The protocols of a play answer (playback section 2.3).
+// The protocols of a play answer (MSFP Media playing 2.3).
 const (
 	ProtocolHLS  = "hls"
 	ProtocolFile = "file"
 )
 
-// Bounds of play's numbers (playback section 2.1, video section 5.1).
+// Bounds of play's numbers (MSFP Media playing 2.1, MSFP Media video 5.1).
 const (
 	MaxPositionMs = 8_640_000_000 // 100 days
 	MaxKbps       = 10_000_000
 )
 
-// ChannelSteps are the values of a transcode's audioChannels (playback
-// section 2.7).
+// ChannelSteps are the values of a transcode's audioChannels (MSFP Media playing
+// 2.7).
 var ChannelSteps = []int{2, 6, 8}
 
-// The segment formats of HLS (playback section 2.7): a remux names one
+// The segment formats of HLS (MSFP Media playing 2.7): a remux names one
 // as its media type's subtype, video/<sub> or, for a copy with no video,
 // audio/<sub>. Another well-formed media type is refused with 409
-// delivery-refused.
+// target-refused.
 const (
 	SegmentsTS  = "mp2t" // MPEG-TS segments
 	SegmentsMP4 = "mp4"  // fragmented MP4 segments
 )
 
-// The baseline every viewer's server plays (playback section 2.7): what
+// The baseline every viewer's server plays (MSFP Media playing 2.7): what
 // the owning server serves without delivery, and the values of the
 // transcode targets left out. A copy with no video's baseline is
 // BaselineAudio alone.
@@ -68,11 +68,11 @@ const (
 )
 
 // CodecCopy is the value of a transcode's videoCodec or audioCodec that
-// serves that stream unchanged (playback section 2.7): a closed
+// serves that stream unchanged (MSFP Media playing 2.7): a closed
 // mechanic, not a registry token.
 const CodecCopy = "copy"
 
-// The range of a transcode's picture (playback section 2.7): sdr
+// The range of a transcode's picture (MSFP Media playing 2.7): sdr
 // (tone-mapped to SDR, 8-bit, BT.709), the default, or keep (the copy's
 // transfer and primaries kept, 10-bit; HDR10+ kept where the codec
 // carries it).
@@ -95,8 +95,10 @@ func badPlay(why string) *PlayRefusal { return &PlayRefusal{400, ProblemInvalid,
 
 func refusedDelivery(why string) *PlayRefusal { return &PlayRefusal{409, ProblemDeliveryRefused, why} }
 
-// TranscodeTargets are a play's transcode object (playback section 2.7,
-// video section 5.1). The codecs are registry tokens, or CodecCopy for a
+func refusedTarget(why string) *PlayRefusal { return &PlayRefusal{409, ProblemTargetRefused, why} }
+
+// TranscodeTargets are a play's transcode object (MSFP Media playing 2.7,
+// MSFP Media video 5.1). The codecs are registry tokens, or CodecCopy for a
 // stream served unchanged; Range is RangeSDR or RangeKeep. Each target
 // left out takes the baseline's value: Serve gives the targets the
 // owning server makes.
@@ -110,7 +112,7 @@ type TranscodeTargets struct {
 	BurnSubtitle   string `json:"burnSubtitle,omitempty"`
 }
 
-// Sized says whether t names a download's size (playback section 7):
+// Sized says whether t names a download's size (MSFP Media playing 6):
 // maxHeight, maxBitrateKbps or both.
 func (t TranscodeTargets) Sized() bool { return t.MaxHeight != 0 || t.MaxBitrateKbps != 0 }
 
@@ -135,7 +137,15 @@ type PlayRequest struct {
 	MaxBitrateKbps  int               `json:"maxBitrateKbps,omitempty"`
 	AudioTrack      string            `json:"audioTrack,omitempty"`
 	VersionID       string            `json:"versionId,omitempty"`
-	// Queue is music's (music section 5.2), as a viewer's server sends
+	// Replaces is the playback ID of a live playback of this caller that
+	// this one replaces (MSFP Media playing 2.3): on a 200 answer the
+	// source ends it, and the carrier's limits count both as one.
+	Replaces string `json:"replaces,omitempty"`
+	// Capabilities is the device's capability list (MSFP Media playing
+	// 2.8), from a player to its own source only: ReadPlay refuses it, as
+	// MSFP does; a PlayReader with Capabilities reads it.
+	Capabilities *Capabilities `json:"capabilities,omitempty"`
+	// Queue is music's (MSFP Media music 5.2), as a viewer's server sends
 	// it; ReadPlay leaves it to CheckQueue.
 	Queue []QueueAsk `json:"queue,omitempty"`
 
@@ -146,7 +156,7 @@ type PlayRequest struct {
 }
 
 // TrackIDsOK says whether the request's track IDs have their forms, as
-// step 4 of playback section 2.2 checks them once the copy is chosen:
+// step 4 of MSFP Media playing 2.2 checks them once the copy is chosen:
 // audioTrack a<n>, transcode.burnSubtitle s<n>; n from 0 to 999 without
 // leading zeros.
 func (r PlayRequest) TrackIDsOK() bool {
@@ -164,13 +174,13 @@ func (r PlayRequest) TrackIDsOK() bool {
 	return true
 }
 
-// KnownDelivery says whether d is a delivery of playback section 2.7's
+// KnownDelivery says whether d is a delivery of MSFP Media playing 2.7's
 // list: file, remux or transcode.
 func KnownDelivery(d string) bool {
 	return d == DeliveryFile || d == DeliveryRemux || d == DeliveryTranscode
 }
 
-// PurposeAllows is playback section 2.7's table of purpose and delivery:
+// PurposeAllows is MSFP Media playing 2.7's table of purpose and delivery:
 // a play takes any delivery or none; a download file, or a transcode with
 // a size (TranscodeTargets.Sized); a scan file only. A delivery that is a
 // token not of the list is allowed here, whatever the purpose: it is
@@ -190,7 +200,7 @@ func PurposeAllows(purpose, delivery string, t *TranscodeTargets) bool {
 	return false
 }
 
-// BitrateCap is the cap of playback section 2.2, step 6, for a play: the
+// BitrateCap is the cap of MSFP Media playing 2.2, step 6, for a play: the
 // lowest non-zero of the request's maxBitrateKbps and its transcode's,
 // the owning server's own cap and the pairing's bitrateKbps; 0, no cap,
 // without any. A download's and a scan's aren't capped so (sections 7
@@ -209,26 +219,45 @@ func (r PlayRequest) BitrateCap(own, pairing int) int {
 	return out
 }
 
-// playMembers are the members of play's request this part and video
-// know: null in any of them, anywhere, refuses the request (core section
-// 2.3).
+// playMembers are the members of play's request the language and video
+// know: null in any of them, anywhere, refuses the request (MSFP Media
+// base 2.2).
 var playMembers = []string{"title", "purpose", "delivery", "mediaType", "transcode", "audioRenditions",
-	"startPositionMs", "maxBitrateKbps", "audioTrack", "versionId"}
+	"startPositionMs", "maxBitrateKbps", "audioTrack", "versionId", "replaces", "capabilities"}
 
-// ReadPlay reads play's request as step 1 of playback section 2.2 checks
-// it: an I-JSON object; title a key playable says play takes (nil:
-// ParseKey's); purpose of its list; delivery a token and mediaType a
-// media type (core section 8.5), mediaType with delivery remux only, and
-// then required; a transcode object with delivery transcode only, its
-// codecs and range tokens and its numbers of their values; numbers in
-// range; purpose and delivery together as PurposeAllows says. A refusal
-// is a *PlayRefusal (400). Unknown members are ignored, those of earlier
-// drafts among them (capabilities, container, audioLanguage,
-// subtitleLanguage, subtitleTrack). Track IDs are checked later, at step
-// 4 (TrackIDsOK); a delivery, a media type, a codec or a range the
-// owning server doesn't make, at step 7 (Serve). Music's queue is left
-// to CheckQueue.
+// ReadPlay reads play's request as MSFP reads it (MSFP Media playing
+// 2): a PlayReader of the purposes play, download and scan, refusing a
+// capability list (400).
 func ReadPlay(body []byte, playable func(title string) bool) (PlayRequest, error) {
+	return PlayReader{Playable: playable}.Read(body)
+}
+
+// PlayReader reads play's requests for a carrier: the titles play takes
+// (Playable; nil: ParseKey's), the purposes the carrier takes (Purposes;
+// nil: MSFP's, play, download and scan), and whether it takes a
+// capability list (Capabilities: a carrier between a player and its own
+// source may; MSFP refuses it).
+type PlayReader struct {
+	Playable     func(title string) bool
+	Purposes     []string
+	Capabilities bool
+}
+
+// Read reads play's request as step 1 of MSFP Media playing 2.2 checks
+// it: an I-JSON object; title a key Playable says play takes; purpose of
+// the carrier's list; delivery a token and mediaType a media type (base
+// 3), mediaType with delivery remux only, and then required; a transcode
+// object with delivery transcode only, its codecs and range tokens and
+// its numbers of their values; numbers in range; replaces of a playback
+// ID's form; capabilities only when the carrier takes it, of playing
+// 2.8's forms, never with delivery, mediaType or transcode, and with
+// purpose play only; purpose and delivery together as PurposeAllows
+// says. A refusal is a *PlayRefusal (400). Unknown members are ignored,
+// those of earlier drafts among them (container, audioLanguage,
+// subtitleLanguage, subtitleTrack). Track IDs are checked later, at step
+// 4 (TrackIDsOK); a delivery or a target the source doesn't make, at
+// step 7 (Serve). Music's queue is left to CheckQueue.
+func (pr PlayReader) Read(body []byte) (PlayRequest, error) {
 	o, err := requestObject(body, playMembers)
 	if err != nil {
 		return PlayRequest{}, err
@@ -238,6 +267,7 @@ func ReadPlay(body []byte, playable func(title string) bool) (PlayRequest, error
 	if err != nil {
 		return r, err
 	}
+	playable := pr.Playable
 	if playable == nil {
 		playable = func(t string) bool { k, ok := ParseKey(t); return ok && k.Playable }
 	}
@@ -245,13 +275,17 @@ func ReadPlay(body []byte, playable func(title string) bool) (PlayRequest, error
 		return r, badPlay("title isn't the key of a title play takes")
 	}
 	r.Title = title
+	purposes := pr.Purposes
+	if purposes == nil {
+		purposes = []string{PurposePlay, PurposeDownload, PurposeScan}
+	}
 	var have bool
 	if r.Purpose, have, err = o.text("purpose"); err != nil {
 		return r, err
 	} else if !have {
 		r.Purpose = PurposePlay
-	} else if !slices.Contains([]string{PurposePlay, PurposeDownload, PurposeScan}, r.Purpose) {
-		return r, badPlay("purpose isn't play, download or scan")
+	} else if !slices.Contains(purposes, r.Purpose) {
+		return r, badPlay("purpose " + r.Purpose + " isn't one this carrier takes")
 	}
 	if err := o.readDelivery(&r); err != nil {
 		return r, err
@@ -275,6 +309,24 @@ func ReadPlay(body []byte, playable func(title string) bool) (PlayRequest, error
 	} else if have && r.AudioTrack == "" {
 		r.emptyTrack = true
 	}
+	if r.Replaces, have, err = o.text("replaces"); err != nil {
+		return r, err
+	} else if have && !PlayID(r.Replaces) {
+		return r, badPlay("replaces isn't a playback ID")
+	}
+	if v, there := o["capabilities"]; there {
+		switch {
+		case !pr.Capabilities:
+			return r, badPlay("a capability list, which this carrier doesn't take")
+		case r.Delivery != "" || r.MediaType != "" || r.Transcode != nil:
+			return r, badPlay("a capability list with delivery, mediaType or transcode")
+		case r.Purpose != PurposePlay:
+			return r, badPlay("a capability list with purpose " + r.Purpose)
+		}
+		if r.Capabilities, err = readCapabilities(v); err != nil {
+			return r, err
+		}
+	}
 	if !PurposeAllows(r.Purpose, r.Delivery, r.Transcode) {
 		return r, badPlay("purpose " + r.Purpose + " doesn't take that delivery")
 	}
@@ -282,7 +334,7 @@ func ReadPlay(body []byte, playable func(title string) bool) (PlayRequest, error
 }
 
 // readDelivery reads delivery, mediaType and transcode into r: a
-// request's, or a queue entry's own (music section 5.2).
+// request's, or a queue entry's own (MSFP Media music 5.2).
 func (o members) readDelivery(r *PlayRequest) error {
 	var have bool
 	var err error
@@ -315,8 +367,8 @@ func (o members) readDelivery(r *PlayRequest) error {
 	return nil
 }
 
-// readTargets reads a transcode object (playback section 2.7, video
-// section 5.1): the codecs and the range tokens, the numbers of their
+// readTargets reads a transcode object (MSFP Media playing 2.7, MSFP Media video
+// 5.1): the codecs and the range tokens, the numbers of their
 // values, else refused (400); a codec or a range the owning server
 // doesn't make is refused at step 7 (Serve). empty says burnSubtitle
 // was "" or not a string (malformed, refused at step 4 with the track
@@ -372,7 +424,7 @@ func readTargets(v any) (t TranscodeTargets, empty bool, err error) {
 type members map[string]any
 
 // requestObject reads body as a request's object: I-JSON, an object,
-// with no null anywhere in the members known (core section 2.3).
+// with no null anywhere in the members known (MSFP Media base 2.2).
 func requestObject(body []byte, known []string) (members, error) {
 	tree, err := strictTree(body, true)
 	if err != nil {
@@ -430,7 +482,7 @@ func (o members) integer(name string, top int64) (int64, error) {
 	return n, nil
 }
 
-// integerOf reads an MSFP integer (core section 2.3): a JSON number
+// integerOf reads an MSFP integer (MSFP Media base 2.2): a JSON number
 // without fraction or exponent, within ±(2^53 − 1).
 func integerOf(v any) (int64, bool) {
 	n, ok := v.(json.Number)

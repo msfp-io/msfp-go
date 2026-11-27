@@ -19,18 +19,18 @@ import (
 	"github.com/msfp-io/msfp-go/wire"
 )
 
-// The image of a local title (MSFP catalog section 4.4, media sections
-// 3.4 and 4): the image call, served with a ticket of its own that opens
+// The image of a local title (MSFP Media listing 4.4, MSFP Media fetching
+// 3.4 and 4.2): the image call, served with a ticket of its own that opens
 // that image only for 10 minutes, and asked for as a viewer, the image
 // checked and re-encoded before the host gets it.
 //
-// The short tickets of media section 4, of an image call and of a
+// The short tickets of MSFP Media fetching 4.2, of an image call and of a
 // previews call (previews.go), are kept here, apart from playbacks'.
 
 const callImage = "image"
 
-// imageTicketTime is how long an image ticket works (MSFP media section
-// 4).
+// imageTicketTime is how long an image ticket works (MSFP Media fetching
+// 4.2).
 const imageTicketTime = 10 * time.Minute
 
 // imageTicket is what a short ticket opens, for one peer, for 10
@@ -120,9 +120,9 @@ func (e *Engine) sharedImage(ctx context.Context, p *PeerRecord, key string) (Ti
 	return t, nil
 }
 
-// image answers a paired peer's image call (MSFP catalog section 4.4):
+// image answers a paired peer's image call (MSFP Media listing 4.4):
 // a ticket of its own for a local title's image: the caller builds its
-// URL, <stream root><ticket>/image (MSFP catalog section 4.4).
+// URL, <stream root><ticket>/image (MSFP Media listing 4.4).
 func (e *Engine) image(req *request) response {
 	p := req.peer
 	if p == nil || p.State != Paired {
@@ -157,7 +157,7 @@ func (e *Engine) image(req *request) response {
 }
 
 // serveImage serves an image ticket's one URL, <ticket>/image, checked
-// as every media request is (MSFP media section 2), and the host's image
+// as every media request is (MSFP Media fetching 2), and the host's image
 // checked before it leaves: what a peer would refuse isn't sent. false
 // when ticket isn't an image ticket.
 func (e *Engine) serveImage(w http.ResponseWriter, r *http.Request, ticket, name string) bool {
@@ -184,7 +184,7 @@ func (e *Engine) serveImage(w http.ResponseWriter, r *http.Request, ticket, name
 		return true
 	}
 	// The pairing ended, or the title is no longer shared with it: the
-	// ticket works no more (MSFP media section 4).
+	// ticket works no more (MSFP Media fetching 4.2).
 	t, err := e.sharedImage(ctx, p, it.key)
 	if err != nil || t == nil {
 		notFound()
@@ -217,7 +217,7 @@ func (e *Engine) serveImage(w http.ResponseWriter, r *http.Request, ticket, name
 
 // TitleImage asks a peer for the image of one of its local titles kept
 // here (a film, a series, an artist or an album whose description says
-// it has one: MSFP catalog section 4.4), fetches it under the answer's
+// it has one: MSFP Media listing 4.4), fetches it under the answer's
 // ticket, checks it (wire.CheckImage) and re-encodes it, so that only
 // its pixels reach this server's people. It gives the image and its
 // format, wire.ImageJPEG or wire.ImagePNG. The host keeps it, marked as
@@ -334,7 +334,7 @@ func (e *Engine) reencodeImage(img []byte, format string) ([]byte, error) {
 }
 
 // peerStreamRoot is a peer's stream root: its address, its prefix and
-// the stream route (MSFP media section 1).
+// the stream route (MSFP Media fetching 1).
 func (e *Engine) peerStreamRoot(p *PeerRecord) string {
 	prefix := strings.TrimSuffix(cmp.Or(p.Base, defaultBase), "/api/v1/federation/")
 	return p.Address + prefix + streamRoute

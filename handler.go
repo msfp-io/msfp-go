@@ -56,8 +56,8 @@ func refuseAfter(t problemType, retryAfter int) response {
 	return response{status: status, contentType: "application/problem+json", body: b.Bytes(), retryAfter: retryAfter}
 }
 
-// answer is a signed 200 with v as JSON, never with a null in it (MSFP
-// core section 2.3).
+// answer is a signed 200 with v as JSON, never with a null in it (MSFP Media
+// base 2.2).
 func answer(v any) response {
 	body, err := marshal(v)
 	if err != nil {

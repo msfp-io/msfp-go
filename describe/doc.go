@@ -1,6 +1,6 @@
 // Package describe turns a media file into an MSFP copy (wire.Copy), as
-// a Go host needs it to list its files in its catalog (MSFP video
-// sections 3.2 to 3.6; the registry; the implementers' notes, "Facts from
+// a Go host needs it to list its files in its catalog (MSFP Media video
+// 3.2 to 3.6; the registry; the implementers' notes, "Facts from
 // a media server"), with ffprobe:
 //
 //   - Sniff reads the media type from a file's first bytes (ISO BMFF

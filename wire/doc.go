@@ -1,6 +1,9 @@
 // Package wire implements MSFP, the Media Server Federation Protocol
 // (https://github.com/msfp-io/msfp-spec), version 0 as revised by
-// proposals 16 and 17: of its core, each
+// proposals 16, 17 and 19, and the parts of MSFP Media version 0
+// (https://github.com/msfp-io/msfp-media) that MSFP carries between
+// servers: the language's rules are cited as MSFP Media's, the
+// federation's as MSFP's. Of MSFP's core, each
 // server's own key and its fingerprint, the one-time pairing code, signed
 // requests and answers and their nonces, MSFP's strict JSON, addresses
 // (HTTPS only), certificate pins, hello and the versions of the core and
@@ -20,7 +23,11 @@
 // its ticket (no peer-written address is ever fetched), limits, scan
 // caps, previews' layout and answer; of media and video, the checks of
 // the playlists, WebVTT, ASS, PGS pictures and fonts a server relays
-// from another.
+// from another. Of MSFP Media alone, for a host that also serves its own
+// players with it: the capability list's forms (PlayReader with
+// Capabilities; MSFP refuses the list, and its matching is the host's),
+// the titles request with its filters (ReadTitlesRequest, TitleFilter),
+// and the reading of refusals (Meaning, ReadPlayRefusal, ReadInstead).
 //
 // A server proves who it is with its key only, never with a web
 // certificate, a name or an address. Two servers learn each other's keys

@@ -15,7 +15,7 @@ import (
 // 2026-11-18, the spec's api/platforms.md): a copy of several parts,
 // media servers' language codes.
 
-// A copy of several files is never served as file (MSFP media section
+// A copy of several files is never served as file (MSFP Media fetching
 // 1): the host is told its parts, and a file start for it is refused.
 func TestSeveralPartsNeverFile(t *testing.T) {
 	ctx := context.Background()
@@ -51,8 +51,8 @@ func TestSeveralPartsNeverFile(t *testing.T) {
 	}
 }
 
-// A media server's ISO 639-2 codes go out as ISO 639-1 tags (MSFP
-// catalog section 3), in titles, tracks and the choice of the copy.
+// A media server's ISO 639-2 codes go out as ISO 639-1 tags (MSFP Media
+// listing 3), in titles, tracks and the choice of the copy.
 func TestMediaServerLanguageCodes(t *testing.T) {
 	ctx := context.Background()
 	h := filmHost()
@@ -72,7 +72,7 @@ func TestMediaServerLanguageCodes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// The first copy, the track named (MSFP playback section 2.6).
+	// The first copy, the track named (MSFP Media playing 2.6).
 	if h.started[0].Copy != key+"#0" || pb.AudioTrack != "a1" || v.Copies[0].AudioTracks[1].Language != "fr" ||
 		v.Copies[0].SubtitleTracks[0].Language != "de" || v.Copies[0].SubtitleTracks[1].Language != "fr-CA" {
 		t.Errorf("the playback: %+v, started %+v", pb, h.started[0])

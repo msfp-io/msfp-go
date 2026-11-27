@@ -5,11 +5,11 @@ import (
 	"errors"
 )
 
-// The lyrics call (MSFP music section 6): a signed call, with no ticket,
+// The lyrics call (MSFP Media music 6): a signed call, with no ticket,
 // for a copy whose lyrics is plain or synced, answered with lyrics shaped
 // as OpenSubsonic's structuredLyrics, times in milliseconds.
 
-// The bounds of a lyrics answer (music section 6).
+// The bounds of a lyrics answer (MSFP Media music 6).
 const (
 	MaxLyricsBytes = 1 << 20 // an answer of exactly this size is read
 	MaxLyricsSets  = 8
@@ -17,7 +17,7 @@ const (
 	MaxLyricsLine  = 512  // a line's value, in code points
 )
 
-// LyricsKinds are OpenSubsonic's kinds of a lyrics set (music section
+// LyricsKinds are OpenSubsonic's kinds of a lyrics set (MSFP Media music
 // 6): examples, since kind is open. A kind that isn't a token is kept as
 // main; a viewer's server never shows a set of a kind it doesn't know as
 // the main lyrics.
@@ -73,10 +73,10 @@ type LyricsLine struct {
 // ErrLyrics is a failed lyrics fetch: an answer past MaxLyricsBytes, not
 // I-JSON or not an object, whose structuredLyrics isn't an array, or with
 // no set left.
-var ErrLyrics = errors.New("federation: lyrics outside what music section 6 allows")
+var ErrLyrics = errors.New("federation: lyrics outside what MSFP Media music 6 allows")
 
-// ReadLyrics is what the viewer's server keeps of a lyrics answer (music
-// section 6): per set, lang a valid tag, else absent; kind a token, kept
+// ReadLyrics is what the viewer's server keeps of a lyrics answer (MSFP Media music
+// 6): per set, lang a valid tag, else absent; kind a token, kept
 // known or not, else main. Its lines left are the objects whose value is
 // a string: a set is synced when every one carries start, plain when
 // none does, and skipped when they mix. Per line, value cleaned and cut

@@ -10,7 +10,7 @@ import (
 	"github.com/msfp-io/msfp-go/wire"
 )
 
-// External is a subtitle file beside the video (video section 3.3,
+// External is a subtitle file beside the video (MSFP Media video 3.3,
 // external): what the host knows of it. Shape numbers it above the
 // file's streams, in the order given.
 type External struct {
@@ -32,7 +32,7 @@ func (p *Prober) Describe(ctx context.Context, path string, external []External)
 	return Shape(pr, external), pr, nil
 }
 
-// Shape is the copy a probe describes (video sections 3.2 to 3.6), every
+// Shape is the copy a probe describes (MSFP Media video 3.2 to 3.6), every
 // value checked against its field's form and bounds, nothing else from
 // the tags (no title, no file name, no encoder):
 //

@@ -2,8 +2,8 @@ package wire
 
 import "strings"
 
-// Language tags as a server sends them (MSFP catalog section 3, core
-// section 2.5): media servers often give a file's ISO 639-2 code, /B
+// Language tags as a server sends them (MSFP Media listing 3, MSFP Media base
+// 2.3): media servers often give a file's ISO 639-2 code, /B
 // ("fre", "ger", "chi") or /T ("fra", "deu", "zho"); MSFP sends the ISO
 // 639-1 code ("fr", "de", "zh"), with the rest of the tag kept, in BCP
 // 47's case conventions ("fre-ca" is sent "fr-CA"); und, mul, zxx and
@@ -44,7 +44,7 @@ var iso639 = map[string]string{
 	"zul": "zu",
 }
 
-// LanguageTag says whether s is a valid tag (catalog section 3): one
+// LanguageTag says whether s is a valid tag (MSFP Media listing 3): one
 // already in the form a server sends, which SentTag gives back
 // unchanged ("fr", "fr-CA", "yue", "zh-Hant-TW", "es-419"); "fre" (not
 // yet converted), "fr-ca" or "FR" (another case), "e", "und" and "fr_CA"

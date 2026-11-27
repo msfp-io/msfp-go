@@ -90,7 +90,7 @@ func TestPlayAndRelay(t *testing.T) {
 	// Progress and stop.
 	s.b.eng.Progress(pb.ID, 60_000, true)
 	waitAll(s.b)
-	if p := s.a.exchanges("progress"); len(p) != 1 || p[0].status != 200 || strings.Contains(p[0].reqBody, "paused") {
+	if p := s.a.exchanges("progress"); len(p) != 1 || p[0].status != 200 || !strings.Contains(p[0].reqBody, `"paused":true`) {
 		t.Errorf("progress: %+v", p)
 	}
 	if v := s.a.eng.Playbacks(); len(v) != 1 || v[0].State != "active" || v[0].Title != "movie/tmdb/949" || v[0].PeerName == "" {
@@ -175,7 +175,11 @@ func TestPlayRefusalsAndTickets(t *testing.T) {
 		t.Errorf("a title not offered: %d", code)
 	}
 	// Unknown values and members ignored; a track the copy hasn't, as absent.
-	if code := call(`{"title":"movie/tmdb/949","capabilities":{"containers":["MP4","x"]},"audioTrack":"a7","other":1,
+	// A capability list: MSFP refuses it (MSFP playback section 2).
+	if code := call(`{"title":"movie/tmdb/949","capabilities":{}}`); code != 400 {
+		t.Errorf("a capability list: %d", code)
+	}
+	if code := call(`{"title":"movie/tmdb/949","audioTrack":"a7","other":1,
 		"audioLanguage":"fr_CA","subtitleTrack":"s007","container":"x"}`); code != 200 {
 		t.Errorf("unknown values: %d", code)
 	}
@@ -208,7 +212,7 @@ func TestPlayRefusalsAndTickets(t *testing.T) {
 	if code := get(ans.Stream.URL); code != 200 {
 		t.Errorf("master: %d", code)
 	}
-	// A name no playlist gave yet: not served (MSFP media section 1).
+	// A name no playlist gave yet: not served (MSFP Media fetching 1).
 	if code := get(base + "seg0.m4s"); code != 404 {
 		t.Errorf("a segment before its playlist: %d", code)
 	}
@@ -305,7 +309,7 @@ func TestLimitsAtOnce(t *testing.T) {
 	}
 }
 
-// Every ending of MSFP playback section 6.3, each telling both sides.
+// Every ending of MSFP Media playing 5, each telling both sides.
 func TestPlaybackEndings(t *testing.T) {
 	ctx := context.Background()
 	clockA := newClock(time.Now().Unix())
@@ -530,7 +534,7 @@ func TestOwnPlaylistChecked(t *testing.T) {
 }
 
 // Every fetch of a playlist under one ticket gives the same playlist
-// (MSFP media section 3.1): the first served is kept, whatever the host
+// (MSFP Media fetching 3.1): the first served is kept, whatever the host
 // makes after.
 func TestPlaylistSameEachFetch(t *testing.T) {
 	ctx := context.Background()
@@ -634,17 +638,21 @@ func TestStatesAndCuts(t *testing.T) {
 }
 
 // The viewer's side tells the owning server where its viewer is at the
-// first report, at once on a pause or a resume, and every 45 seconds
-// while the host reports, never more often (MSFP playback section 3);
-// nothing once the host stops reporting.
+// first report, at once on a pause or a resume, and every progressSeconds
+// the owning server gave (here 45) while the host reports, never more
+// often (MSFP Media playing 3); nothing once the host stops reporting.
+// The owning server ends a playback at twice its interval unused.
 func TestProgressPace(t *testing.T) {
 	ctx := context.Background()
 	clock := newClock(time.Now().Unix())
 	h := filmHost()
-	s := newSharing(t, h, msfp.Config{Clock: clock}, msfp.Config{Clock: clock})
+	s := newSharing(t, h, msfp.Config{Clock: clock, ProgressSeconds: 45}, msfp.Config{Clock: clock})
 	pb, err := s.b.eng.Play(ctx, s.onB.ID, msfp.PlayRequest{Title: "movie/tmdb/949"})
 	if err != nil {
 		t.Fatal(err)
+	}
+	if p := s.a.exchanges("play"); !strings.Contains(p[len(p)-1].resBody, `"progressSeconds":45`) {
+		t.Errorf("the play answer: %s", p[len(p)-1].resBody)
 	}
 	sent := func() []int64 {
 		t.Helper()
@@ -684,10 +692,20 @@ func TestProgressPace(t *testing.T) {
 	}
 	// The host reports no more (the viewer's browser gone): nothing is
 	// sent for it.
-	clock.Add(2 * time.Minute)
+	clock.Add(80 * time.Second)
 	s.b.eng.RunOnce(ctx)
 	if got := sent(); len(got) != 4 {
 		t.Fatalf("without reports: %v", got)
+	}
+	if len(s.a.eng.Playbacks()) != 1 {
+		t.Fatalf("ended before its idle limit: %+v", s.a.eng.Playbacks())
+	}
+	// 90 seconds unused, twice the interval: the owning server ends it.
+	clock.Add(10 * time.Second)
+	s.a.eng.RunOnce(ctx)
+	waitAll(s.a)
+	if v := s.a.eng.Playbacks(); len(v) != 0 {
+		t.Fatalf("live past its idle limit: %+v", v)
 	}
 }
 
@@ -721,7 +739,7 @@ func TestStopPlaybackReason(t *testing.T) {
 
 // Play's errors: what lasts says itself (here, B's key lost toward A,
 // which never moved to it); only no answer, or none signed, is busy now
-// (MSFP playback section 2.5).
+// (MSFP Media playing 2.5).
 func TestPlayErrorsToldApart(t *testing.T) {
 	ctx := context.Background()
 	clock := newClock(1800000000)
@@ -751,7 +769,7 @@ func TestPlayErrorsToldApart(t *testing.T) {
 }
 
 // The pairing ending while a playback starts ends it as the pairing's
-// end, not as a copy no longer shared (MSFP playback section 6.3).
+// end, not as a copy no longer shared (MSFP Media playing 5).
 func TestPairingEndsWhilePlayStarts(t *testing.T) {
 	ctx := context.Background()
 	h := filmHost()
@@ -791,7 +809,7 @@ func musicTrack(key, copy string) *msfp.MusicTitle {
 // host's failure: without delivery, a copy outside the baseline (here no
 // colour stated, so not known BT.709) must be transcoded; a host that
 // says remux is stopped, and the peer gets a 500, never the method
-// (MSFP playback sections 2.3, 2.7).
+// (MSFP Media playing 2.3, 2.7).
 func TestStartedMethodAsDecided(t *testing.T) {
 	ctx := context.Background()
 	h := filmHost()

@@ -77,7 +77,7 @@ type Engine struct {
 
 	// The catalog, playbacks and media: the own change log, the readings
 	// of peers' catalogs, peers' playbacks here, this server's on peers,
-	// and the bounds of fetches at once (MSFP media section 2.4).
+	// and the bounds of fetches at once (MSFP Media fetching 2.4).
 	own                        ownLog
 	logKept                    bool
 	reading                    readings

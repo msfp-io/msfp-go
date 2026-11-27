@@ -5,11 +5,11 @@ import (
 	"fmt"
 )
 
-// Seek-bar previews (MSFP video sections 5.5 and 5.6): the previews
+// Seek-bar previews (MSFP Media video 5.5 and 5.6): the previews
 // call's request and its answer, a ticket and the copy's etag, as each
 // side checks them. The layout is the catalog's (PreviewLayout).
 
-// PreviewsRequest is the body of a previews call (video section 5.6):
+// PreviewsRequest is the body of a previews call (MSFP Media video 5.6):
 // the key of a film, an episode or an extra, and its copy's ID.
 type PreviewsRequest struct {
 	Title     string `json:"title"`
@@ -17,7 +17,7 @@ type PreviewsRequest struct {
 }
 
 // ReadPreviewsRequest reads a previews request as the owning server
-// does (video section 5.6): an error, answered 400, for a body that
+// does (MSFP Media video 5.6): an error, answered 400, for a body that
 // isn't an I-JSON object (null refused, DecodeJSON), a title that isn't
 // the canonical key of a film, an episode or an extra, or a versionId
 // that isn't of a copy ID's form. Whether the owning server offers the
@@ -54,7 +54,7 @@ func deref(s *string) string {
 	return *s
 }
 
-// PreviewsAnswer is a previews answer as kept (video section 5.6): the
+// PreviewsAnswer is a previews answer as kept (MSFP Media video 5.6): the
 // ticket the copy's sheets are fetched under, and the copy's etag as the
 // owning server holds it now. When the etag isn't the catalog's, the
 // viewer's server reads the title again before fetching sheets.
@@ -63,7 +63,7 @@ type PreviewsAnswer struct {
 	ETag   string `json:"etag"`
 }
 
-// ReadPreviewsAnswer reads a previews answer (video section 5.6): an
+// ReadPreviewsAnswer reads a previews answer (MSFP Media video 5.6): an
 // error refuses it, and no sheet is fetched: not an object, null at its
 // top, or a ticket or an etag missing or not of an ID's form. Other
 // members (a trickplay object of earlier drafts) are ignored.

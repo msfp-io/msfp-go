@@ -351,7 +351,7 @@ func TestSignatureHeadersOnce(t *testing.T) {
 // What a receiver keeps of a hello's versions (vectors/v0/strict.json,
 // helloVersions): a number that isn't an integer ignored as an entry, an
 // unknown member or part ignored whatever its value, null included; the
-// lists of the wrong type a bad body (core sections 2.3 and 10.2).
+// lists of the wrong type a bad body (MSFP Media base 2.2, MSFP core section 10.2).
 func TestHelloVersionVectors(t *testing.T) {
 	var v struct {
 		HelloVersions []struct {
@@ -389,7 +389,7 @@ func TestHelloVersionVectors(t *testing.T) {
 }
 
 // Media servers' language codes and the tags sent for them
-// (vectors/v0/strict.json, languageCodes; MSFP catalog section 3).
+// (vectors/v0/strict.json, languageCodes; MSFP Media listing 3).
 func TestLanguageCodeVectors(t *testing.T) {
 	var v struct {
 		LanguageCodes []struct {

@@ -12,8 +12,8 @@ import (
 	"github.com/msfp-io/msfp-go/wire"
 )
 
-// baseline makes the baseline of a copy outside it (MSFP playback
-// section 2.7), as req.Served says: the picture to H.264 High 4.1, 8-bit
+// baseline makes the baseline of a copy outside it (MSFP Media playing
+// 2.7), as req.Served says: the picture to H.264 High 4.1, 8-bit
 // 4:2:0, tagged BT.709, unless it is copied; the audio track played to
 // AAC-LC stereo at 48 kHz, unless it is copied; as complete HLS with
 // MPEG-TS segments, in a temporary folder the playback's Stop removes.

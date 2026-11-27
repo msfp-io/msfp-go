@@ -6,12 +6,12 @@ import (
 	"strings"
 )
 
-// What an owning server serves for a play (MSFP playback sections 2.2,
+// What an owning server serves for a play (MSFP Media playing 2.2,
 // 2.6 and 2.7): the copy and the audio the request names, else the
 // first copy and the file's default audio, and what it makes of that
 // copy for the delivery asked, or its refusal.
 
-// PickCopy is the copy a play plays (playback section 2.6): the one
+// PickCopy is the copy a play plays (MSFP Media playing 2.6): the one
 // versionID names, else the first, the owning server's preferred; -1
 // when there are none (404).
 func PickCopy(copies []Copy, versionID string) int {
@@ -24,7 +24,7 @@ func PickCopy(copies []Copy, versionID string) int {
 	return 0
 }
 
-// DefaultAudio is the audio a play plays of a copy (playback section
+// DefaultAudio is the audio a play plays of a copy (MSFP Media playing
 // 2.6): the track track names, when the copy has it; else the file's
 // default audio, the track it marks default, else its first. "" for a
 // copy without audio.
@@ -41,13 +41,13 @@ func DefaultAudio(audio []CopyAudio, track string) string {
 	return ""
 }
 
-// Encoders are what an owning server's transcoder makes (playback
-// section 2.7): the codecs it encodes (registry tokens; nil: the
+// Encoders are what an owning server's transcoder makes (MSFP Media playing
+// 2.7): the codecs it encodes (registry tokens; nil: the
 // baseline's only, h264 and aac), the ranges it makes (nil: sdr only),
 // and the codecs each segment format carries, by subtype (mp2t, mp4;
 // nil: DefaultSegments). A transcode codec it doesn't encode, a range it
 // doesn't make, and a remux or a copied stream a segment format can't
-// carry are refused with 409 delivery-refused.
+// carry are refused with 409 target-refused.
 type Encoders struct {
 	Video    []string
 	Audio    []string
@@ -82,23 +82,23 @@ func (e Encoders) Carries(sub string, codecs ...string) bool {
 	return true
 }
 
-// CheckCodecs is the refusal, 409 delivery-refused, of a transcode's
+// CheckCodecs is the refusal, 409 target-refused, of a transcode's
 // codecs the owning server doesn't encode (the video codec only for a
 // copy with video, video): nil when it encodes them, or they are copy.
 // Serve checks it; for a queue entry's own transcode, a codec not made
-// refuses the request as the request's own would (music section 5.2).
+// refuses the request as the request's own would (MSFP Media music 5.2).
 func (e Encoders) CheckCodecs(t TranscodeTargets, video bool) error {
 	switch {
 	case video && t.VideoCodec != CodecCopy && t.VideoCodec != "" && !e.video(t.VideoCodec):
-		return refusedDelivery("a video codec the owning server doesn't encode")
+		return refusedTarget("a video codec the source doesn't encode")
 	case t.AudioCodec != CodecCopy && t.AudioCodec != "" && !e.audio(t.AudioCodec):
-		return refusedDelivery("an audio codec the owning server doesn't encode")
+		return refusedTarget("an audio codec the source doesn't encode")
 	}
 	return nil
 }
 
-// Served is what an owning server makes of a copy for a play (playback
-// section 2.7): the method; what it serves of the video (none for a copy
+// Served is what an owning server makes of a copy for a play (MSFP Media playing
+// 2.7): the method; what it serves of the video (none for a copy
 // with no video) and of the audio, CodecCopy for a stream left
 // unchanged, else the codec it becomes; for a transcode, its targets
 // with the baseline's values for those left out (MaxHeight 0: the copy's
@@ -116,7 +116,7 @@ type Served struct {
 }
 
 // InBaselineVideo says whether a picture is within the baseline
-// (playback section 2.7): H.264 at most High profile and level 4.1
+// (MSFP Media playing 2.7): H.264 at most High profile and level 4.1
 // (codecs avc1 or avc3), 8-bit 4:2:0, progressive, SDR in BT.709 (H.273
 // primaries, transfer and matrix 1). A fact the copy doesn't state isn't
 // known to be within.
@@ -142,29 +142,31 @@ func avcWithin(codecs string) bool {
 	return (profile == 66 || profile == 77 || profile == 100) && level >= 10 && level <= 41
 }
 
-// InBaselineAudio says whether a track is within the baseline (playback
-// section 2.7): AAC-LC (mp4a.40.2), at most 2 channels, at most 48 kHz.
+// InBaselineAudio says whether a track is within the baseline (MSFP Media playing
+// 2.7): AAC-LC (mp4a.40.2), at most 2 channels, at most 48 kHz.
 func InBaselineAudio(a CopyAudio) bool {
 	return a.Codec == BaselineAudio && a.Codecs == "mp4a.40.2" && a.Channels >= 1 && a.Channels <= 2 &&
 		a.SampleRate >= 1 && a.SampleRate <= 48000
 }
 
-// Serve is step 7 of playback section 2.2 for the copy c and its audio
-// track audio (DefaultAudio): what the owning server makes, or the
-// refusals MSFP names, each a 409 delivery-refused: a delivery not of
-// the list; a remux to a media type of another subtype than mp2t or
-// mp4, of another top level than the copy's (video/ with video,
-// audio/ without), or to a segment format that can't carry its streams;
-// a transcode codec enc doesn't encode (the video codec only for a copy
-// with video), a copied stream no segment format carries, burnSubtitle
-// with video copy, a range other than sdr or keep, or one enc doesn't
-// make; file of a copy of several parts (whatever the purpose); file or
-// remux of a play whose overall rate (Size × 8 / DurationMs) is above
-// capKbps (BitrateCap, 0 for none); and a burnSubtitle the copy doesn't
-// have. Without delivery, the baseline: each stream already within it
-// left unchanged, the others converted to its codecs. An owning server
+// Serve is step 7 of MSFP Media playing 2.2 for the copy c and its
+// audio track audio (DefaultAudio): what the source makes, or the
+// refusals the language names. 409 delivery-refused, the delivery as
+// such: a delivery not of the list; file of a copy of several parts
+// (whatever the purpose); file or remux of a play whose overall rate
+// (Size × 8 / DurationMs) is above capKbps (BitrateCap, 0 for none).
+// 409 target-refused, a target it doesn't make: a remux to a media type
+// of another subtype than mp2t or mp4, of another top level than the
+// copy's (video/ with video, audio/ without), or to a segment format
+// that can't carry its streams; a transcode codec enc doesn't encode
+// (the video codec only for a copy with video), a copied stream no
+// segment format carries, burnSubtitle with video copy, a range other
+// than sdr or keep, or one enc doesn't make; and a burnSubtitle the copy
+// doesn't have. Without delivery, the baseline: each stream already
+// within it left unchanged, the others converted to its codecs. A source
 // may still refuse for reasons of its own (its policy, what it can make
-// of the copy).
+// of the copy). A request with a capability list is the host's to serve
+// (playing 2.8): Serve serves it the baseline.
 func Serve(r PlayRequest, c Copy, audio string, capKbps int, enc Encoders) (Served, error) {
 	var track CopyAudio
 	if i := slices.IndexFunc(c.AudioTracks, func(a CopyAudio) bool { return a.ID == audio }); i >= 0 {
@@ -173,7 +175,7 @@ func Serve(r PlayRequest, c Copy, audio string, capKbps int, enc Encoders) (Serv
 	hasVideo := c.Video != nil
 	s := Served{Method: map[string]string{DeliveryFile: MethodDirect, DeliveryRemux: MethodRemux, DeliveryTranscode: MethodTranscode}[r.Delivery]}
 	if r.Delivery != "" && !KnownDelivery(r.Delivery) {
-		return s, refusedDelivery("a delivery the owning server doesn't make")
+		return s, refusedDelivery("a delivery the source doesn't make")
 	}
 	if r.Delivery == DeliveryRemux {
 		top, sub, _ := strings.Cut(r.MediaType, "/")
@@ -187,11 +189,11 @@ func Serve(r PlayRequest, c Copy, audio string, capKbps int, enc Encoders) (Serv
 		}
 		switch {
 		case sub != SegmentsTS && sub != SegmentsMP4:
-			return s, refusedDelivery("a remux to a media type of another subtype than mp2t or mp4")
+			return s, refusedTarget("a remux to a media type of another subtype than mp2t or mp4")
 		case top != want:
-			return s, refusedDelivery("a remux to " + r.MediaType + " of a copy that calls for " + want + "/")
+			return s, refusedTarget("a remux to " + r.MediaType + " of a copy that calls for " + want + "/")
 		case !enc.Carries(sub, streams...):
-			return s, refusedDelivery("a remux to a segment format that can't carry the copy's streams")
+			return s, refusedTarget("a remux to a segment format that can't carry the copy's streams")
 		}
 		s.Segments, s.Video, s.Audio = sub, CodecCopy, CodecCopy
 	}
@@ -213,13 +215,13 @@ func Serve(r PlayRequest, c Copy, audio string, capKbps int, enc Encoders) (Serv
 		}
 		switch {
 		case len(copied) > 0 && !enc.Carries(SegmentsTS, copied...) && !enc.Carries(SegmentsMP4, copied...):
-			return s, refusedDelivery("a copied stream no segment format can carry")
+			return s, refusedTarget("a copied stream no segment format can carry")
 		case videoCopy && t.BurnSubtitle != "":
-			return s, refusedDelivery("burnSubtitle with video copy")
+			return s, refusedTarget("burnSubtitle with video copy")
 		case hasVideo && !videoCopy && t.Range != "" && t.Range != RangeSDR && t.Range != RangeKeep:
-			return s, refusedDelivery("a range other than sdr or keep")
+			return s, refusedTarget("a range other than sdr or keep")
 		case hasVideo && !videoCopy && t.Range != "" && !enc.makes(t.Range):
-			return s, refusedDelivery("a range the owning server can't make")
+			return s, refusedTarget("a range the source can't make")
 		}
 	}
 	switch {
@@ -230,7 +232,7 @@ func Serve(r PlayRequest, c Copy, audio string, capKbps int, enc Encoders) (Serv
 		return s, refusedDelivery("the copy's overall rate is above the cap")
 	case r.Delivery == DeliveryTranscode && t.BurnSubtitle != "" &&
 		!slices.ContainsFunc(c.SubtitleTracks, func(st CopySubtitle) bool { return st.ID == t.BurnSubtitle }):
-		return s, refusedDelivery("burnSubtitle isn't a subtitle track of the copy")
+		return s, refusedTarget("burnSubtitle isn't a subtitle track of the copy")
 	}
 	switch r.Delivery {
 	case DeliveryFile:

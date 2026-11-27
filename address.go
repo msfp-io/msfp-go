@@ -680,7 +680,7 @@ func (e *Engine) confirmMove(ctx context.Context, id string) {
 	again = superseded
 }
 
-// readCatalogSoon reads a peer's catalog at once (MSFP catalog section
+// readCatalogSoon reads a peer's catalog at once (MSFP Media listing
 // 3.2): it can be called again (MSFP core section 7.5).
 func (e *Engine) readCatalogSoon(id string) { e.readSoon(id) }
 

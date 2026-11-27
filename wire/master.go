@@ -3,7 +3,7 @@ package wire
 import "strings"
 
 // What a master playlist says of a copy's streams served as they are
-// (MSFP media section 3.1, playback section 2.7): their codecs strings,
+// (MSFP Media fetching 3.1, MSFP Media playing 2.7): their codecs strings,
 // the picture's range, the copy's bits a second. An owning server writes
 // its own attributes; these are the facts of the copy, the same for any.
 
@@ -21,7 +21,7 @@ func FixedAudioCodecs(codec string) string {
 var dvBrands = map[int]string{1: "db1p", 2: "db2g", 4: "db4h", 6: "db1p"}
 
 // CopiedVideoCodecs are a copied picture's CODECS and SUPPLEMENTAL-CODECS
-// in a master playlist (media section 3.1, playback section 2.7): its
+// in a master playlist (MSFP Media fetching 3.1, MSFP Media playing 2.7): its
 // codecs string with the sample entry of parameter sets out of band
 // (hev1 written hvc1, avc3 avc1), as segments carry it; for Dolby Vision
 // with a base layer of another range (profile 8, compatibility 1, 2, 4

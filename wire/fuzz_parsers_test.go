@@ -23,8 +23,8 @@ type fuzzBody struct {
 
 // What DecodeJSON takes is always JSON encoding/json takes too, valid
 // UTF-8, without a member twice at any depth; and its tree, written out
-// again, reads the same. Its tree is the one with nulls (core section
-// 2.3: null in an unknown member is ignored like any other value; DecodeJSON
+// again, reads the same. Its tree is the one with nulls (MSFP Media base
+// 2.2: null in an unknown member is ignored like any other value; DecodeJSON
 // refuses it in the members it knows).
 func FuzzDecodeJSON(f *testing.F) {
 	for _, s := range []string{`{}`, `{"state":"paired","count":3,"list":["a"]}`, `{"a":1,"a":2}`, `{"a":1,"a":2}`,

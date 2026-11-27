@@ -7,7 +7,7 @@ import (
 	"strconv"
 )
 
-// The file and segments, read by byte ranges (MSFP media, sections 2.1,
+// The file and segments, read by byte ranges (MSFP Media fetching 2.1,
 // 3.2 and 4.2): the Range a request may carry, the answers a viewer's
 // server relays, and the cap of a scan ticket.
 
@@ -21,7 +21,7 @@ type ByteRange struct {
 
 var rangeForm = regexp.MustCompile(`^bytes=(?:(\d{1,15})-(\d{1,15})?|-(\d{1,15}))$`)
 
-// ParseRange reads a Range header in one of media section 2.1's three
+// ParseRange reads a Range header in one of MSFP Media fetching 2.1's three
 // forms, bytes=<first>-<last> (first ≤ last), bytes=<first>- and
 // bytes=-<count> (count ≥ 1): numbers of 1 to 15 digits, leading zeros
 // accepted; false for any other, several ranges and bytes=- included.
@@ -83,7 +83,7 @@ var contentRangeForm = regexp.MustCompile(`^bytes (\d+)-(\d+)/(\d+|\*)$`)
 func fileRefused(why string) error { return errors.New("msfp: the file's answer refused: " + why) }
 
 // CheckFileAnswer is what a viewer's server checks of an answer for the
-// file (media sections 2.1, 2.3 and 3.2), to the Range it sent ("" for
+// file (MSFP Media fetching 2.1, 2.3 and 3.2), to the Range it sent ("" for
 // none, never a malformed one), of a copy of size bytes and the given
 // etag: a 200 only without Range, with Content-Length the size; a 206
 // only to a Range, answering it (checkPartial), its total the size; an
@@ -127,7 +127,7 @@ func CheckFileAnswer(rangeHeader string, size int64, etag string, a MediaAnswer)
 }
 
 // CheckSegmentAnswer is what a viewer's server checks of an answer for a
-// segment (media section 2.1), to the Range it sent ("" for none): a 200
+// segment (MSFP Media fetching 2.1), to the Range it sent ("" for none): a 200
 // is the whole segment, accepted with or without Range; a 206, only to a
 // Range, answers it (checkPartial), its total a number or "*" (unknown;
 // never with a suffix range, whose start can't be checked).

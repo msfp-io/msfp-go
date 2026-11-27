@@ -45,7 +45,7 @@ func (e *Error) with(err error) error {
 }
 
 // A peer's refusals, as the engine reports them for calls it makes (MSFP
-// core section 8.2).
+// Media base 4, MSFP core section 8.2).
 var (
 	// ErrNotFound: no such thing here, or a peer's signed 404 not-found
 	// (no such title, or not paired yet).
@@ -68,9 +68,19 @@ var (
 	// ErrPlaybackStopped: the playback is over.
 	ErrPlaybackStopped = &Error{Code: "PlaybackStopped"}
 	// ErrDeliveryRefused: the owning server won't serve the delivery
-	// asked of that copy (MSFP playback section 2.5): ask again with
-	// another delivery, or without one.
+	// asked of that copy, as such (MSFP Media playing 2.5): ask again with
+	// another delivery (Instead names those it would serve, when it says),
+	// or without one.
 	ErrDeliveryRefused = &Error{Code: "DeliveryRefused"}
+	// ErrTargetRefused: the owning server doesn't make a target the play
+	// names: a remux's media type, a transcode codec, a range, a copy the
+	// segment format can't carry, a subtitle to burn (MSFP Media playing
+	// 2.5): ask again with other targets (Instead), another delivery, or
+	// without one.
+	ErrTargetRefused = &Error{Code: "TargetRefused"}
+	// ErrGone: the peer held the title for this server and no longer
+	// does (MSFP Media base 4): drop it; its titles are read again.
+	ErrGone = &Error{Code: "Gone"}
 	// ErrCopyChanged: a restart's copy isn't the one being read any more
 	// (another etag): its bytes can't follow; read the title again.
 	ErrCopyChanged = &Error{Code: "CopyChanged"}
@@ -130,8 +140,9 @@ var (
 	ErrInternal            = &Error{Code: "Internal"}            // anything else; logged, never shown to a peer
 )
 
-// problemType is a problem document's type, as MSFP core section 8.2
-// lists them (wire.Problem gives their statuses and titles).
+// problemType is a problem document's type, as MSFP Media base 4 and
+// MSFP core section 8.2 list them (wire.Problem gives their statuses and
+// titles).
 type problemType string
 
 const (
@@ -142,6 +153,8 @@ const (
 	probStreamLimit  problemType = wire.ProblemStreamLimit
 	probNotPlayable  problemType = wire.ProblemNotPlayable
 	probDelivery     problemType = wire.ProblemDeliveryRefused
+	probTarget       problemType = wire.ProblemTargetRefused
+	probUnreachable  problemType = wire.ProblemUnreachable
 	probStopped      problemType = wire.ProblemStopped
 	probRateLimited  problemType = wire.ProblemRateLimited
 	probInternal     problemType = wire.ProblemInternal
@@ -155,6 +168,8 @@ func refusalError(status int, typ string) error {
 	switch {
 	case status == http.StatusNotFound && typ == string(probNotSupported):
 		return ErrNotSupported
+	case status == http.StatusNotFound && typ == wire.ProblemGone:
+		return ErrGone
 	case status == http.StatusNotFound:
 		return ErrNotFound
 	case status == http.StatusBadRequest:
@@ -165,6 +180,8 @@ func refusalError(status int, typ string) error {
 		return ErrNotPlayable
 	case status == http.StatusConflict && typ == string(probDelivery):
 		return ErrDeliveryRefused
+	case status == http.StatusConflict && typ == string(probTarget):
+		return ErrTargetRefused
 	case status == http.StatusConflict:
 		return ErrStreamLimitReached
 	case status == http.StatusGone:
@@ -177,4 +194,22 @@ func refusalError(status int, typ string) error {
 		return ErrPeerFailed
 	}
 	return ErrUnreachable.with(errors.New("an unexpected status"))
+}
+
+// insteadErr carries what a refusal's instead names (MSFP Media base 4).
+type insteadErr struct{ list []wire.Instead }
+
+func (e *insteadErr) Error() string { return "the peer names what it would serve instead" }
+
+// Instead is what a peer's delivery-refused or target-refused of a play
+// names that it would serve instead, of the same copy and track for the
+// same purpose (MSFP Media base 4): at most 4, each the delivery with
+// its media type or targets ("" delivery: the baseline). A hint: a play
+// asking for one may still be refused. None for any other error.
+func Instead(err error) []wire.Instead {
+	var ie *insteadErr
+	if errors.As(err, &ie) {
+		return ie.list
+	}
+	return nil
 }

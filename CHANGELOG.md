@@ -1,5 +1,77 @@
 # Changelog
 
+## Unreleased: MSFP Media (proposal 19)
+
+MSFP's media language is now MSFP Media version 0, which MSFP carries
+between servers. Doc comments cite the language's rules as MSFP Media's
+(base, listing, playing, fetching, video, music) and the federation's as
+MSFP's. The wire changes below don't talk with v0.9.0 on every point
+(draft rules: no compatibility between drafts).
+
+### Added
+
+- `progressSeconds` in play's answer: the engine as owning server sends
+  `Config.ProgressSeconds` (45 to 120, 60 by default) and ends a
+  playback idle for twice it; as viewer's server it reports at the
+  interval each answer gave. `wire.PlayAnswer.ProgressSeconds`,
+  `wire.ProgressInterval`, `wire.IdleLimit`, `wire.MinProgressSeconds`,
+  `wire.MaxProgressSeconds`, `wire.DefaultProgressSeconds`.
+- `paused` in progress: sent by the engine (`Progress`'s `paused`), read
+  as a boolean (another type: 400), passed to the host as
+  `Report.Paused`. `wire.Report.Paused`, `wire.ReportOutcome.Paused`.
+- `replaces` in play: `PlayRequest.Replaces` now names the old playback
+  to the peer instead of stopping it first (a playback on another peer
+  is still stopped first); on a 200 the peer ends it, and the engine
+  forgets it. As owning server, the engine counts a play and the one it
+  replaces as one (a play frees its stream and transcode, a download its
+  download but not the day's count, a scan nothing), ends the old one
+  with `EndReplaced`, and tells the host `StartRequest.Replaces`.
+  `Restart` of a live playback replaces it. `wire.PlayRequest.Replaces`
+  (malformed: 400), `wire.LimitUse.Without`.
+- `target-refused` (409): a target the source doesn't make (a remux's
+  media type or a segment format that can't carry the copy, a transcode
+  codec, a range, a copy no segment format carries, a subtitle to burn);
+  `delivery-refused` is now for the delivery as such. `ErrTargetRefused`,
+  `wire.ProblemTargetRefused`; a host's `Start` may return it.
+- The language's other refusals: `wire.ProblemGone` (`ErrGone` on
+  `Play`; the peer's titles are read again), `wire.ProblemUnreachable`
+  (a host's `Start` returning `ErrUnreachable` answers 503 unreachable),
+  `wire.ProblemTicketRefused`; `wire.Temporary`, `wire.LanguageProblem`,
+  `wire.Meaning` (a type read by its status when not known) and
+  `wire.ReadPlayRefusal` (what a caller tells its viewer).
+- `instead` on delivery-refused and target-refused: `Instead(err)` gives
+  what the peer would serve instead; `wire.Instead`, `wire.ReadInstead`,
+  `wire.MaxInstead`.
+- `titles`: `libraries` optional (absent: every library offered), the
+  `kind` and `under` filters, `since` ignored with `under`, a changes
+  answer filtered by kind (its `gone` too). `wire.TitlesRequest`,
+  `wire.ReadTitlesRequest`, `wire.ErrTitlesRequest`, `wire.TitleFilter`
+  (`Passes`, `UnderPrefix`, `Changes`, `None`), `wire.FilterFacts`,
+  `wire.SinceAllowed`, `wire.KnownKind`. The engine as viewer's server
+  still asks for its wanted libraries, unfiltered.
+- `msfpMedia` in the discovery document: `[0]` when a part that carries
+  MSFP Media is listed. `wire.Discovery.MSFPMedia`,
+  `wire.MSFPMediaVersions`.
+- The capability list's types and forms, for a host serving its own
+  players with MSFP Media (MSFP refuses it; the engine never sends one,
+  and matching a copy against it is the host's): `wire.Capabilities`,
+  `wire.VideoCapability`, `wire.AudioCapability`, `wire.PlayReader`
+  (`Read`, with `Capabilities` and `Purposes`),
+  `wire.PlayRequest.Capabilities`, `wire.Asked.Capabilities`.
+
+### Changed
+
+- `wire.ReadPlay` refuses `capabilities` with 400 (it was an unknown
+  member, ignored).
+- `wire.Serve` and `Encoders.CheckCodecs` refuse targets with
+  `target-refused`; hosts matching `ProblemDeliveryRefused` match both.
+- `wire.IdleEnd` is the idle limit at the default interval (still 2
+  minutes); a playback's own is `wire.IdleLimit` of its answer's
+  `progressSeconds`.
+- The title of `delivery-refused` is "This delivery is refused".
+- The vectors are msfp-spec's of proposal 19 (with the `replaces`,
+  `refusals`, `titleOffer` and `titleRequests` groups).
+
 ## v0.9.0 (2026-11-26)
 
 ### Added

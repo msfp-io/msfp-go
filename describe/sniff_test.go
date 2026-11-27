@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-// A file's media type from its first bytes (video section 3.5, the
+// A file's media type from its first bytes (MSFP Media video 3.5, the
 // registry's brand table); nothing for what isn't media.
 func TestSniff(t *testing.T) {
 	ftyp := func(major string, compat ...string) []byte {

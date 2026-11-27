@@ -15,13 +15,13 @@ import (
 	"github.com/msfp-io/msfp-go/wire"
 )
 
-// Media, on the viewer's side (MSFP media sections 2 and 3, video section
+// Media, on the viewer's side (MSFP Media fetching 2 and 3, MSFP Media video
 // 6): the relay. The host's viewer route maps its own URL to a MediaPath
 // and calls Fetch; the engine fetches from the peer's stream root with
 // the playback's ticket, which never leaves the engine, and checks
 // everything before a byte reaches the viewer.
 
-// Bounds of the relay (MSFP media section 2.4).
+// Bounds of the relay (MSFP Media fetching 2.4).
 const (
 	// smallReadTime bounds the reading whole of a playlist, a subtitle
 	// part, a PGS part, a font or a sheet.
@@ -143,7 +143,7 @@ func (e *Engine) Fetch(ctx context.Context, id string, path MediaPath, rng strin
 }
 
 // entryBase is the folder of a stream of a playback on a peer, under its
-// base: its own, or a queue entry's (media section 1).
+// base: its own, or a queue entry's (MSFP Media fetching 1).
 func entryBase(entry int) string {
 	if entry == 0 {
 		return ""
@@ -193,8 +193,8 @@ func (e *Engine) relayName(rm *remote, path MediaPath) (string, bool) {
 
 // relayGet fetches a URL of a peer's stream: a plain GET, nothing but
 // Range, over a connection that needs a trusted or named certificate;
-// refused for its certificate, a hello, then once more (MSFP media
-// section 2). The URL holds the ticket: it is never logged.
+// refused for its certificate, a hello, then once more (MSFP Media fetching
+// 2). The URL holds the ticket: it is never logged.
 func (e *Engine) relayGet(ctx context.Context, p *PeerRecord, url, rng string) (*http.Response, error) {
 	get := func(p *PeerRecord) (*http.Response, error) {
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
@@ -223,8 +223,8 @@ func (e *Engine) relayGet(ctx context.Context, p *PeerRecord, url, rng string) (
 
 var contentRangeRe = regexp.MustCompile(`^bytes ([0-9]{1,15})-([0-9]{1,15})/([0-9]{1,15}|\*)$`)
 
-// partialLength says whether a 206 answers the range asked (MSFP media
-// section 2.1), and gives its length and its Content-Range.
+// partialLength says whether a 206 answers the range asked (MSFP Media fetching
+// 2.1), and gives its length and its Content-Range.
 func partialLength(h http.Header, want Range) (int64, string, bool) {
 	ranges := h.Values("Content-Range")
 	if len(ranges) != 1 {
@@ -269,8 +269,8 @@ func strongETag(h string) string {
 	return inner
 }
 
-// relayFile relays the file of a playback, or of a queue entry (MSFP
-// media section 3.2): its answer checked against the copy's etag and
+// relayFile relays the file of a playback, or of a queue entry (MSFP Media
+// fetching 3.2): its answer checked against the copy's etag and
 // exact size (learnt from the first answer when the catalog didn't give
 // them), a 206 only for the range asked, never more than its length.
 func (e *Engine) relayFile(rm *remote, entry int, res *http.Response, rng string, want Range, out ResponseSink) error {
@@ -321,7 +321,7 @@ func (e *Engine) relayFile(rm *remote, entry int, res *http.Response, rng string
 	if es, ok := out.(ETagSink); ok {
 		es.SetETag(ent.etag)
 	}
-	// The copy's own mediaType, from the catalog (MSFP media section 3).
+	// The copy's own mediaType, from the catalog (MSFP Media fetching 3).
 	out.Start(res.StatusCode, wire.RelayedFileType(ent.mediaType), length, contentRange)
 	_, err := io.Copy(out, io.LimitReader(res.Body, length))
 	if err != nil && rm.ctx.Err() == nil {
@@ -366,7 +366,7 @@ func (e *Engine) relayMedia(rm *remote, res *http.Response, rng string, want Ran
 // relaySmall relays what is read whole: playlists checked and kept to
 // the subset, complete, their renditions the playback's audio tracks;
 // WebVTT and ASS rebuilt; PGS checked; fonts checked; sheets checked and
-// re-encoded (MSFP media section 3.1, video sections 6.2 to 6.6).
+// re-encoded (MSFP Media fetching 3.1, MSFP Media video 6.2 to 6.6).
 func (e *Engine) relaySmall(rm *remote, path MediaPath, res *http.Response, out ResponseSink) error {
 	limit := int64(wire.MaxPlaylist)
 	playlist := path.Kind == MediaMaster || path.Kind == MediaPlaylist

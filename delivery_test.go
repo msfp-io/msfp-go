@@ -74,7 +74,7 @@ func TestDeliveries(t *testing.T) {
 		t.Errorf("the host started %+v", got)
 	}
 	// Audio renditions asked: the answer says whether the host made them,
-	// false when it made none (MSFP playback section 2.3).
+	// false when it made none (MSFP Media playing 2.3).
 	if pb, err := play(msfp.PlayRequest{AudioRenditions: true}); err != nil || !pb.AudioRenditions {
 		t.Errorf("renditions made: %+v %v", pb, err)
 	}
@@ -105,7 +105,7 @@ func TestDeliveries(t *testing.T) {
 		h.started[len(h.started)-1].MediaType != "video/mp4" || h.started[len(h.started)-1].Served.Segments != "mp4" {
 		t.Errorf("remux: %+v %v", pb, err)
 	}
-	if _, err := play(msfp.PlayRequest{Delivery: msfp.DeliveryRemux, MediaType: "video/matroska"}); !errors.Is(err, msfp.ErrDeliveryRefused) {
+	if _, err := play(msfp.PlayRequest{Delivery: msfp.DeliveryRemux, MediaType: "video/matroska"}); !errors.Is(err, msfp.ErrTargetRefused) {
 		t.Errorf("a remux to another media type: %v", err)
 	}
 	// Audio copied, video converted: a transcode the host hears so.
@@ -119,7 +119,7 @@ func TestDeliveries(t *testing.T) {
 		t.Errorf("a subtitle burned in: %v", err)
 	}
 	before := len(h.started)
-	if _, err := play(msfp.PlayRequest{Delivery: msfp.DeliveryTranscode, Transcode: &msfp.TranscodeTargets{BurnSubtitle: "s9"}}); !errors.Is(err, msfp.ErrDeliveryRefused) {
+	if _, err := play(msfp.PlayRequest{Delivery: msfp.DeliveryTranscode, Transcode: &msfp.TranscodeTargets{BurnSubtitle: "s9"}}); !errors.Is(err, msfp.ErrTargetRefused) {
 		t.Errorf("a burnSubtitle the copy hasn't: %v", err)
 	}
 	// The host's own refusal.
@@ -155,8 +155,8 @@ func TestDeliveries(t *testing.T) {
 			t.Errorf("%s: %d", body, code)
 		}
 	}
-	// What it doesn't make, named by a token: 409 delivery-refused (MSFP
-	// core section 8.5), before the host is asked.
+	// What it doesn't make, named by a token: 409 delivery-refused (MSFP Media
+	// base 3), before the host is asked.
 	before = len(h.started)
 	for _, body := range []string{`{"title":"movie/tmdb/949","delivery":"hls"}`,
 		`{"title":"movie/tmdb/949","delivery":"remux","mediaType":"video/matroska"}`,
@@ -170,7 +170,7 @@ func TestDeliveries(t *testing.T) {
 	}
 }
 
-// The file by byte ranges (MSFP media sections 2.1, 2.2 and 3.2), on the
+// The file by byte ranges (MSFP Media fetching 2.1, 2.2 and 3.2), on the
 // owning side and through the relay.
 func TestFileRanges(t *testing.T) {
 	ctx := context.Background()
@@ -228,7 +228,7 @@ func TestFileRanges(t *testing.T) {
 		"another etag": func(h http.Header, b []byte) []byte { h.Set("ETag", `"e9"`); return b },
 		"a weak etag":  func(h http.Header, b []byte) []byte { h.Set("ETag", `W/"e0"`); return b },
 		"another size": func(h http.Header, b []byte) []byte { h.Set("Content-Range", "bytes 2-5/21"); return b },
-		// A 206 that isn't the range asked (media section 2.1, checking a 206).
+		// A 206 that isn't the range asked (MSFP Media fetching 2.1, checking a 206).
 		"another start": func(h http.Header, b []byte) []byte { h.Set("Content-Range", "bytes 3-6/20"); return b },
 		"an end past last": func(h http.Header, b []byte) []byte {
 			h.Set("Content-Range", "bytes 2-9/20")
@@ -250,7 +250,7 @@ func TestFileRanges(t *testing.T) {
 }
 
 // A file being read whose playback ended starts again on the same etag,
-// and only on it (MSFP playback section 2.7).
+// and only on it (MSFP Media playing 2.7).
 func TestRestart(t *testing.T) {
 	ctx := context.Background()
 	h := filmHost()
@@ -281,8 +281,11 @@ func TestRestart(t *testing.T) {
 		t.Errorf("a restart of a changed copy: %v", err)
 	}
 	waitAll(s.a, s.b)
-	if n := len(s.a.exchanges("stop")) - stops; n != 2 {
-		t.Errorf("%d stops: the live playback's and the new one's", n)
+	if n := len(s.a.exchanges("stop")) - stops; n != 1 {
+		t.Errorf("%d stops: the new one's only (the live one is replaced)", n)
+	}
+	if p := s.a.exchanges("play"); !strings.Contains(p[len(p)-1].reqBody, `"replaces":"play_`) {
+		t.Errorf("the restart of a live playback doesn't replace it: %s", p[len(p)-1].reqBody)
 	}
 	if len(s.a.eng.Playbacks()) != 0 {
 		t.Errorf("playbacks left: %+v", s.a.eng.Playbacks())
@@ -294,7 +297,7 @@ func TestRestart(t *testing.T) {
 
 // Downloads: only from a peer that allows them, within its limits at
 // once and a day, their ticket without the idle rule, their late reports
-// after their end (MSFP playback section 7).
+// after their end (MSFP Media playing 6).
 func TestDownloads(t *testing.T) {
 	ctx := context.Background()
 	clock := newClock(time.Now().Unix())
@@ -420,8 +423,8 @@ func TestDownloads(t *testing.T) {
 }
 
 // A download's late reports count after a restart of either side: both
-// keep it in their stores, 30 days after its play (MSFP playback section
-// 7).
+// keep it in their stores, 30 days after its play (MSFP Media playing
+// 6).
 func TestDownloadsAfterRestart(t *testing.T) {
 	ctx := context.Background()
 	clock := newClock(time.Now().Unix())
@@ -682,7 +685,7 @@ func lastStreamOf(t *testing.T, s *sharing, n int) string {
 
 // A music play's queue: its entries prepared under one playback, each at
 // its own URL by its place, a place left empty for a track not offered;
-// the track playing in progress (MSFP music section 5.2).
+// the track playing in progress (MSFP Media music 5.2).
 func TestMusicQueue(t *testing.T) {
 	ctx := context.Background()
 	h := newFakeHost()
@@ -753,8 +756,8 @@ func TestMusicQueue(t *testing.T) {
 }
 
 // previews on demand, under a ticket of their own that is no playback,
-// or under a playback's; lyrics with none (MSFP video sections 5.5 and
-// 5.6, music section 6).
+// or under a playback's; lyrics with none (MSFP Media video 5.5 and
+// 5.6, MSFP Media music 6).
 func TestPreviewsAndLyrics(t *testing.T) {
 	ctx := context.Background()
 	h := filmHost()
@@ -862,7 +865,7 @@ func TestPreviewsAndLyrics(t *testing.T) {
 }
 
 // ASS tracks and their fonts, whole text tracks: served from the host,
-// rebuilt or checked on both sides (MSFP video sections 6.3 to 6.6).
+// rebuilt or checked on both sides (MSFP Media video 6.3 to 6.6).
 func TestASSAndFonts(t *testing.T) {
 	ctx := context.Background()
 	raw, err := os.ReadFile("wire/testdata/v0/media.json")

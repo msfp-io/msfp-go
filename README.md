@@ -18,10 +18,19 @@ storage, catalog, playback and media through a few interfaces; it writes
 none of the protocol itself.
 
 - The protocol: [msfp-io/msfp-spec](https://github.com/msfp-io/msfp-spec),
-  version 0 as revised by proposals 16 and 17, still a draft until version 1
-  ([spec/v0](https://github.com/msfp-io/msfp-spec/tree/main/spec/v0)).
+  version 0 as revised by proposals 16, 17 and 19, still a draft until
+  version 1 ([spec/v0](https://github.com/msfp-io/msfp-spec/tree/main/spec/v0)).
   v0.8.0 and later speak the revised draft; v0.7.1 and before speak the
   draft before it, and servers on the two don't pair.
+- The media language MSFP carries between servers:
+  [MSFP Media](https://github.com/msfp-io/msfp-media) version 0 (titles,
+  copies, listing, playing, fetching), split out of MSFP by proposal 19.
+  The language's rules (`wire`'s keys, copies, `Serve`, play's request
+  and answer, refusals) cite it; the federation's (pairing, limits, what
+  is shared, scans) cite MSFP. A host that serves its own players with
+  MSFP Media may use `wire`'s readers for them too (`wire.PlayReader`
+  with `Capabilities`, `wire.ReadTitlesRequest`); the engine itself only
+  speaks MSFP.
   The [changelog](CHANGELOG.md) says what hosts change.
 - The engine's API in words: [api/](https://github.com/msfp-io/msfp-spec/tree/main/api)
   in the spec's repository, mainly
@@ -192,7 +201,7 @@ tell; this draft's libraries carry none, so it costs them nothing.
 ## Describing files
 
 A host lists each file as a copy: facts in outside vocabularies (MSFP
-video sections 3.2 to 3.6). The `describe` package makes one from a
+Media video 3.2 to 3.6). The `describe` package makes one from a
 local file with ffprobe:
 
 ```go

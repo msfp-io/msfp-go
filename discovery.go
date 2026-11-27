@@ -18,9 +18,10 @@ import (
 
 // discoveryDocument is the document this server serves.
 type discoveryDocument struct {
-	Core  []int            `json:"core"`
-	Parts map[string][]int `json:"parts"`
-	Base  string           `json:"base"`
+	Core      []int            `json:"core"`
+	Parts     map[string][]int `json:"parts"`
+	MSFPMedia []int            `json:"msfpMedia,omitempty"`
+	Base      string           `json:"base"`
 }
 
 // DiscoveryHandler serves this server's discovery document at
@@ -35,7 +36,13 @@ func (e *Engine) DiscoveryHandler() http.Handler {
 			return
 		}
 		v := e.versions()
-		body, err := marshal(discoveryDocument{Core: v.Core, Parts: v.Parts, Base: e.cfg.Prefix + defaultBase})
+		doc := discoveryDocument{Core: v.Core, Parts: v.Parts, Base: e.cfg.Prefix + defaultBase}
+		if carriesMedia(v.Parts) {
+			// The MSFP Media versions the parts listed carry (MSFP core
+			// section 11): version 0 of each carries version 0.
+			doc.MSFPMedia = wire.MSFPMediaVersions
+		}
+		body, err := marshal(doc)
 		if err != nil {
 			e.cfg.NotFound.ServeHTTP(w, r)
 			return
@@ -43,6 +50,17 @@ func (e *Engine) DiscoveryHandler() http.Handler {
 		w.Header().Set("Content-Type", "application/json")
 		w.Write(body)
 	})
+}
+
+// carriesMedia says whether one of the parts listed carries MSFP Media:
+// every part but groups.
+func carriesMedia(parts map[string][]int) bool {
+	for name, versions := range parts {
+		if name != wire.PartGroups && len(versions) > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // SetDiscovery turns the discovery document on or off. sync.

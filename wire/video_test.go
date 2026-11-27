@@ -10,7 +10,7 @@ import (
 	"testing"
 )
 
-// Video title keys in their one canonical form (MSFP video, section 4):
+// Video title keys in their one canonical form (MSFP Media video 4):
 // any other form of the same title is refused.
 func TestParseVideoKey(t *testing.T) {
 	valid := map[string]VideoKey{
@@ -74,7 +74,7 @@ func FuzzParseVideoKey(f *testing.F) {
 	})
 }
 
-// What a receiver keeps of a title (catalog section 3.3, video section
+// What a receiver keeps of a title (MSFP Media listing 3.3, MSFP Media video
 // 3.1): a bad member skipped, or counted as absent, not the whole title.
 func TestReadVideoTitle(t *testing.T) {
 	const copies = `"copies":[{"id":"v1","durationMs":1000,"mediaType":"video/matroska","size":1,"etag":"t","audioTracks":[]}]`

@@ -62,7 +62,7 @@ func TestStrictJSONVectors(t *testing.T) {
 // A number that isn't an integer is refused only where an integer is
 // read: in an integer field, a list or a map of them, or behind a
 // pointer; an unknown member holding one is ignored like any other
-// (core section 2.3).
+// (MSFP Media base 2.2).
 func TestNumbersOutsideIntegers(t *testing.T) {
 	var into struct {
 		N    int             `json:"n"`
@@ -84,7 +84,7 @@ func TestNumbersOutsideIntegers(t *testing.T) {
 	}
 }
 
-// null is never a valid value (core section 2.3): refused anywhere in a
+// null is never a valid value (MSFP Media base 2.2): refused anywhere in a
 // request's known members, at the top of an answer; inside an answer,
 // read as left out. In a request's unknown members, ignored like any
 // other value. Marshal never writes one.

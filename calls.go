@@ -30,7 +30,7 @@ const defaultBase = wire.DefaultBase
 const maxAnswer = 4 << 20
 
 // callTimeout is a call's time in all; mediaHeaderTime a media fetch's
-// time to its answer's headers (MSFP media section 2.4).
+// time to its answer's headers (MSFP Media fetching 2.4).
 const (
 	callTimeout     = 15 * time.Second
 	mediaHeaderTime = 60 * time.Second
@@ -66,11 +66,13 @@ var (
 const restartRetry = time.Second
 
 // reply is a peer's signed answer: its status, and for a refusal the
-// problem type its body gives ("" for none) and its retryAfter.
+// problem type its body gives ("" for none), its retryAfter, and for a
+// 409 its body (what play's refusals name instead: wire.ReadInstead).
 type reply struct {
 	status     int
 	problem    string
 	retryAfter int
+	body       []byte
 }
 
 // call sends p a signed call ("pair", "hello"…) with the body in, and
@@ -212,6 +214,9 @@ func (e *Engine) exchange(ctx context.Context, p *PeerRecord, call string, in, o
 			if r.status == http.StatusTooManyRequests || r.status == http.StatusServiceUnavailable {
 				r.retryAfter = wire.RetryAfter(answer)
 			}
+			if r.status == http.StatusConflict {
+				r.body = answer
+			}
 		}
 		return r, nil
 	}
@@ -274,7 +279,7 @@ func (c *peerClients) client(p *PeerRecord, anyCert bool) *http.Client {
 }
 
 // mediaClient gives the client for media fetches from p: a trusted or
-// named certificate only (MSFP media section 1).
+// named certificate only (MSFP Media fetching 1).
 func (c *peerClients) mediaClient(p *PeerRecord) *http.Client {
 	c.mu.Lock()
 	defer c.mu.Unlock()

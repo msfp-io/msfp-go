@@ -5,7 +5,7 @@ import (
 	"errors"
 )
 
-// Subtitles that are pictures (PGS, from Blu-rays; MSFP video, section
+// Subtitles that are pictures (PGS, from Blu-rays; MSFP Media video
 // 6.4): a track served as it is, only when every part of it is
 // well-formed and within its limits. The player decodes and draws it;
 // nothing in it is run, and a browser never renders it as a page.
@@ -33,7 +33,7 @@ const (
 // the presentations', windows' and palettes' sizes, and every picture's
 // run-length data decoded (counted, not drawn) within the size it says it
 // has. Anything else is ErrPGS. An empty part, of no segments, is valid:
-// it is the answer for a stretch with no subtitles (video section 6.4).
+// it is the answer for a stretch with no subtitles (MSFP Media video 6.4).
 func CheckPGS(raw []byte) error {
 	if len(raw) > MaxPGS {
 		return ErrPGS

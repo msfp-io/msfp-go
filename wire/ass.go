@@ -10,14 +10,14 @@ import (
 	"unicode/utf8"
 )
 
-// Text subtitles as ASS (MSFP video, section 6.4): an ASS or SSA script
+// Text subtitles as ASS (MSFP Media video 6.4): an ASS or SSA script
 // served at a track's assUrl is rebuilt, not filtered: known sections,
 // known lines and known override tags only, anything else dropped, sizes
 // capped, and written back as an ASS (v4.00+) script in one form. The
 // owning server rebuilds what it serves (converting SSA to ASS on the way),
 // the viewer's server again what it relays.
 
-// The bounds of ASS (video section 6.4, media section 2.4); a whole track
+// The bounds of ASS (MSFP Media video 6.4, MSFP Media fetching 2.4); a whole track
 // is at most MaxWholeText bytes.
 const (
 	MaxASS            = 5 << 20 // bytes, a part as read
@@ -32,7 +32,7 @@ const (
 	maxASSName        = 64      // bytes of a style's name or font name
 )
 
-// RebuildASS rebuilds an ASS or SSA part (a stretch) as video section 6.4
+// RebuildASS rebuilds an ASS or SSA part (a stretch) as MSFP Media video 6.4
 // says: false when it is over MaxASS, its first line isn't [Script Info],
 // or it holds more than 50,000 events once rebuilt.
 func RebuildASS(in []byte) ([]byte, bool) { return rebuildASS(in, MaxASS, maxASSEvents) }
@@ -47,7 +47,7 @@ func RebuildWholeASS(in []byte) ([]byte, bool) {
 // ASSPart is part n of a whole ASS or SSA track, for an owning server that
 // holds its subtitles as one file: the track rebuilt as RebuildWholeASS
 // does, its header and the events that show during the part's stretch
-// (media section 3.4, video section 6.4). A part with no event is valid.
+// (MSFP Media fetching 3.4, MSFP Media video 6.4). A part with no event is valid.
 // False when the track is refused, or its part holds more events than a
 // part may.
 func ASSPart(track []byte, n int) ([]byte, bool) {

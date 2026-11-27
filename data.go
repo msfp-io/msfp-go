@@ -46,15 +46,15 @@ type TitleCommon struct {
 	Libraries []string `json:"libraries"`
 }
 
-// VideoTitle is a film, a series, a season, an episode or an extra (MSFP
-// video section 3): the host's own, as its Catalog gives them, or a
-// peer's, as the engine kept it (video section 3.1). The engine cleans
+// VideoTitle is a film, a series, a season, an episode or an extra (MSFP Media
+// video 3): the host's own, as its Catalog gives them, or a
+// peer's, as the engine kept it (MSFP Media video 3.1). The engine cleans
 // the host's before they leave as a receiver would keep them, so that
 // nothing leaves that MSFP doesn't take.
 type VideoTitle struct {
 	TitleCommon
 	// Copies are a film's, an episode's or an extra's copies, in the host's order of preference
-	// (MSFP video sections 3.2 to 3.8): what a viewer's server needs to
+	// (MSFP Media video 3.2 to 3.8): what a viewer's server needs to
 	// list each as a file of its own before anyone plays it (its length,
 	// size, etag, media type, streams and tracks, chapters, skip markers,
 	// the layout of its seek-bar previews…). Required for those kinds:
@@ -65,10 +65,10 @@ type VideoTitle struct {
 	// the one Playback and Media are given: it never leaves; the engine
 	// sends instead the version ID play gives for it, and plays a copy
 	// only as it is described here. The host's order of its copies is its
-	// preference, best first (video section 3.7): the first is the one a
+	// preference, best first (MSFP Media video 3.7): the first is the one a
 	// play naming none plays. Language tags leave as wire.SentTag gives
-	// them. Facts are in outside vocabularies or the MSFP registry (video
-	// section 3.5): the file's media type (read from its first bytes
+	// them. Facts are in outside vocabularies or the MSFP registry (MSFP Media video
+	// 3.5): the file's media type (read from its first bytes
 	// where it can), the registry's codec and subtitle tokens (ffprobe's
 	// codec_name), RFC 6381 codecs strings (required for h264, hevc, av1,
 	// vp9, aac and dts), H.273 colour code points; a host whose media
@@ -82,7 +82,7 @@ type VideoTitle struct {
 	Copies []wire.Copy `json:"copies,omitempty"`
 	// Place is, for an episode keyed by its TMDB episode ID
 	// (series/tmdb/<id>/e<episode id>), its place in TMDB's numbering:
-	// TMDB's current season and episode numbers (MSFP video section 4.1).
+	// TMDB's current season and episode numbers (MSFP Media video 4.1).
 	// The host fills it for each of its own such episodes; one it can't
 	// place (nil, or numbers out of range) isn't sent. A new place is a
 	// change of the title: a changes reading sends it again. A peer's is
@@ -92,7 +92,7 @@ type VideoTitle struct {
 	With  []string          `json:"with,omitempty"`
 	IDs   map[string]string `json:"ids,omitempty"`
 	// ExtraType is an extra's (kind "extra", keyed under its film, series
-	// or season: video section 3.9): open, a token (trailer, featurette,
+	// or season: MSFP Media video 3.9): open, a token (trailer, featurette,
 	// behindthescenes, deletedscene, interview, scene, short, clip,
 	// themesong, themevideo…); an extra without one isn't sent. An extra
 	// carries no name: a viewer's server shows it by its type and a
@@ -101,7 +101,7 @@ type VideoTitle struct {
 	// what the host gives.
 	ExtraType string `json:"extraType,omitempty"`
 	// Name is a local film's or series' name (required, at most 128:
-	// catalog section 4.3, video section 3.10). It is text, never markup;
+	// MSFP Media listing 4.3, MSFP Media video 3.10). It is text, never markup;
 	// on other titles it isn't sent.
 	Name string `json:"name,omitempty"`
 	// Year and Image are a local film's or series' description: its year
@@ -112,7 +112,7 @@ type VideoTitle struct {
 	Image bool `json:"image,omitempty"`
 }
 
-// Place is an episode's place in TMDB's numbering (MSFP video section
+// Place is an episode's place in TMDB's numbering (MSFP Media video
 // 4.1): Season from 0 (specials) to 9,999, Episode from 0 to 99,999, as
 // TMDB numbers them in the series' own season list (not an episode
 // group). A host whose files are numbered another way maps them to TMDB's.
@@ -122,7 +122,7 @@ type Place struct {
 }
 
 // BestCopy is the title's first copy, the owning server's preferred
-// (MSFP video section 3.7); false for a title without one (a series, a
+// (MSFP Media video 3.7); false for a title without one (a series, a
 // season). A viewer's server may show its picture as the title's; which
 // copy it plays is its own choice, from every copy's facts.
 func (t *VideoTitle) BestCopy() (wire.Copy, bool) {
@@ -134,8 +134,8 @@ func (t *VideoTitle) BestCopy() (wire.Copy, bool) {
 
 // AudioLanguages are the languages of the title's audio tracks, over all
 // its copies, each once, in the order of its copies and their tracks:
-// what a viewer's server shows as the title's audio languages (MSFP
-// video section 3.2: a title carries no summary of them).
+// what a viewer's server shows as the title's audio languages (MSFP Media
+// video 3.2: a title carries no summary of them).
 func (t *VideoTitle) AudioLanguages() []string {
 	var out []string
 	for _, c := range t.Copies {
@@ -164,7 +164,7 @@ func (t *VideoTitle) SubtitleLanguages() []string {
 }
 
 // MusicTitle is an artist, an album or a track, with its description
-// (MSFP music section 3): its name; for albums and tracks, the artist
+// (MSFP Media music 3): its name; for albums and tracks, the artist
 // keys credited and their names as written; for albums, the name to sort
 // by, MusicBrainz's primary and secondary types of its release group
 // (lowercased, open), whether it is a compilation; for albums and
@@ -174,8 +174,8 @@ func (t *VideoTitle) SubtitleLanguages() []string {
 // identifiers by scheme, on mb titles only (mbreleasegroup on albums,
 // mbrecording on tracks). There are no sort names. A track's artists,
 // artistNames, dates and genres leave only when they differ from its
-// album's (MSFP music section 3): of a peer's, an absent one is its
-// album's. A peer's are cleaned as music section 3.2 says; the host's
+// album's (MSFP Media music 3): of a peer's, an absent one is its
+// album's. A peer's are cleaned as MSFP Media music 3.2 says; the host's
 // own are cleaned the same way before they leave.
 type MusicTitle struct {
 	TitleCommon
@@ -191,8 +191,8 @@ type MusicTitle struct {
 	Album          string   `json:"album,omitempty"`
 	Disc           int      `json:"disc,omitempty"`
 	Number         int      `json:"number,omitempty"`
-	// Copies are a track's copies, in the owner's order of preference, at least one (music
-	// section 3.3). Of the host's own, each ID is its handle, as for
+	// Copies are a track's copies, in the owner's order of preference, at least one (MSFP Media music
+	// 3.3). Of the host's own, each ID is its handle, as for
 	// VideoTitle.Copies: the engine sends the version ID made of it.
 	Copies []wire.MusicCopy `json:"copies,omitempty"`
 	// Image: a local artist or album whose image the owner shares (the
@@ -263,26 +263,26 @@ type ChangePage struct {
 // title's Copies).
 type CopyInfo struct {
 	// Fonts is how many fonts the copy's ASS tracks use (0 to 64), served
-	// as MediaFont 0 to Fonts-1 (MSFP video section 6.6): each at most 10
+	// as MediaFont 0 to Fonts-1 (MSFP Media video 6.6): each at most 10
 	// MiB, 64 MiB in all; the host lists none past those bounds.
 	Fonts int
 	// NotApart lists the subtitle tracks the host can't serve apart (as
-	// WebVTT for text, as PGS for pictures: MSFP video section 5.4): they
+	// WebVTT for text, as PGS for pictures: MSFP Media video 5.4): they
 	// get no entry in the answer's subtitles. Every other track of a
-	// format video section 5.4's table lists is served apart, in the
+	// format MSFP Media video 5.4's table lists is served apart, in the
 	// table's form: a host must serve them so (an external track it
 	// can't serve apart it doesn't list in the catalog). A track of a
 	// format the table doesn't list is served apart only when the host
 	// says how, in Forms.
 	NotApart []string
 	// Forms are, by track ID, how the host serves apart a track of a
-	// format video section 5.4's table doesn't list ("text", or
+	// format MSFP Media video 5.4's table doesn't list ("text", or
 	// "picture"); ignored for a listed format.
 	Forms map[string]string
 }
 
 // TranscodeTargets are the targets of a play with delivery "transcode"
-// (MSFP playback section 2.7, video section 5.1): codecs as registry
+// (MSFP Media playing 2.7, MSFP Media video 5.1): codecs as registry
 // tokens, or "copy" for a stream served unchanged, and the range (sdr,
 // keep); toward the host, those left out already hold the baseline's
 // values (h264, aac, 2 channels, sdr; maxHeight 0, the copy's own
@@ -299,7 +299,7 @@ type Served = wire.Served
 // Encoders are the codecs a server's Playback converts to (Config.Encoders).
 type Encoders = wire.Encoders
 
-// The purposes of a playback (MSFP playback section 2): to watch it, to
+// The purposes of a playback (MSFP Media playing 2): to watch it, to
 // download it, to let a media server read the start of its file.
 const (
 	PurposePlay     = wire.PurposePlay
@@ -307,7 +307,7 @@ const (
 	PurposeScan     = wire.PurposeScan
 )
 
-// The deliveries a play may ask (MSFP playback section 2.7); "" is the
+// The deliveries a play may ask (MSFP Media playing 2.7); "" is the
 // baseline every viewer's server plays: H.264 and AAC in complete HLS
 // (AAC alone for a track).
 const (
@@ -336,13 +336,13 @@ type PeerRef struct {
 type StartRequest struct {
 	// Copy is the handle of the copy chosen (its ID in the title's
 	// Copies); Title the key played (an episode's, for a copy holding
-	// several); AudioOnly, that it is a track (MSFP music section 5): no
+	// several); AudioOnly, that it is a track (MSFP Media music 5): no
 	// video is served.
 	Copy      string
 	Title     string
 	AudioOnly bool
 	// Purpose is PurposePlay, PurposeDownload or PurposeScan (MSFP
-	// playback sections 7 and 8): a scan is always of delivery file, and
+	// Media playing 6, MSFP playback section 8): a scan is always of delivery file, and
 	// converts nothing.
 	Purpose string
 	// Delivery is what the viewer's server asked: DeliveryFile (the copy
@@ -356,7 +356,7 @@ type StartRequest struct {
 	// within it left unchanged (Served says which), never the file. With
 	// a delivery, the host serves exactly that or refuses with
 	// ErrDeliveryRefused (its bandwidth, its policy, a delivery it can't
-	// make of the copy); it never serves another (MSFP playback section
+	// make of the copy); it never serves another (MSFP Media playing
 	// 2.2, step 7). The engine has already refused a delivery not of the
 	// list, a remux to another media type, or to a segment format that
 	// can't carry the copy's streams (Config.Encoders.Segments), a
@@ -365,8 +365,8 @@ type StartRequest struct {
 	// copy of several parts, file or remux of a play whose overall rate
 	// is above MaxBitrateKbps, and a BurnSubtitle the copy hasn't.
 	//
-	// The host's duties toward what it serves (MSFP playback section 2.7,
-	// media section 3.1): in fragmented MP4 segments, HEVC written hvc1,
+	// The host's duties toward what it serves (MSFP Media playing 2.7,
+	// MSFP Media fetching 3.1): in fragmented MP4 segments, HEVC written hvc1,
 	// Dolby Vision dvh1 (dav1 on AV1), parameter sets out of band, in a
 	// remux and a transcode alike; each #EXT-X-STREAM-INF of its master
 	// playlist with BANDWIDTH, CODECS and, for video, RESOLUTION;
@@ -381,7 +381,7 @@ type StartRequest struct {
 	// Served is what the engine decided the play serves of the copy.
 	Served Served
 	// AudioRenditions asks, for hls, every audio track of the copy as an
-	// #EXT-X-MEDIA rendition named by its ID (MSFP media section 3.1). It
+	// #EXT-X-MEDIA rendition named by its ID (MSFP Media fetching 3.1). It
 	// is never refused: a host that makes none says so in
 	// Started.AudioRenditions.
 	AudioRenditions bool
@@ -401,7 +401,7 @@ type StartRequest struct {
 	// download's speed is the engine's to pace (downloadKbps).
 	MaxBitrateKbps int
 	// Queue are the tracks a music play names after Title, that the host
-	// prepares under the same playback (MSFP music section 5.2), each
+	// prepares under the same playback (MSFP Media music 5.2), each
 	// with the copy its entry named (else its first) and its own
 	// delivery, in the request's order; Place is its place in the
 	// request's queue (0 to 4), which a queued track the engine left out
@@ -411,7 +411,14 @@ type StartRequest struct {
 	// transcodes), or the download, or the scan, in one step: the host
 	// calls it once it knows the method, before starting any work (MSFP
 	// playback section 6.2). Errors: ErrStreamLimitReached, ErrServerBusy.
+	// A play that replaces another counts as it (Replaces).
 	Admit func(method string) (Slot, error)
+	// Replaces is the handle (Started.Handle) of the host's playback this
+	// one replaces, "" for none (MSFP Media playing 2.3): it ends, Stop
+	// with EndReplaced, once this one is answered. Until then the host
+	// counts the two as one against its own transcode budget; when this
+	// one is refused, the old one goes on.
+	Replaces string
 }
 
 // QueuedCopy is a track of a play's queue: its place in the request's
@@ -448,7 +455,7 @@ type Started struct {
 	PositionMs int64
 	// AudioRenditions says the hls playlist carries every audio track as
 	// a rendition, as StartRequest.AudioRenditions asked; false when the
-	// host made none (play's answer says so: MSFP playback section 2.3).
+	// host made none (play's answer says so: MSFP Media playing 2.3).
 	AudioRenditions bool
 	// Queue are the queued tracks the host prepared, of those
 	// StartRequest.Queue named (by Place); one it can't play is left
@@ -466,7 +473,7 @@ type StartedEntry struct {
 }
 
 // Report is a peer's progress or stop of a playback here, passed on to
-// the host (MSFP playback sections 3, 4 and 7).
+// the host (MSFP Media playing 3, 4 and 6).
 type Report struct {
 	// Handle is the playback's (Started.Handle); Title the track playing
 	// of a music queue, else the title played.
@@ -481,9 +488,12 @@ type Report struct {
 	// download's late report, after its playback ended (the viewer
 	// watched offline): the handle no longer plays.
 	Stop, Late bool
+	// Paused: the peer's progress said its viewer has paused (MSFP Media
+	// playing 3).
+	Paused bool
 }
 
-// EndReason is why a playback ended (MSFP playback section 6.3).
+// EndReason is why a playback ended (MSFP Media playing 5).
 type EndReason string
 
 // The reasons a playback ends.
@@ -494,6 +504,9 @@ const (
 	EndPairingEnded EndReason = "pairingEnded"
 	EndNotOffered   EndReason = "notOffered"
 	EndOperator     EndReason = "operator"
+	// EndReplaced: a play that replaces it was answered 200 (MSFP Media
+	// playing 2.3).
+	EndReplaced EndReason = "replaced"
 )
 
 // MediaPath is what a media request asks for: Master, Playlist, Segment,
@@ -512,7 +525,7 @@ type MediaPath struct {
 	// queue entry n (Master, Playlist, Segment, File).
 	Entry int
 	// OfCopy says the handle Media.Serve is given is a copy's, not a
-	// playback's: a Sheet under a previews ticket (MSFP video section
+	// playback's: a Sheet under a previews ticket (MSFP Media video
 	// 5.6), which no playback has.
 	OfCopy bool
 }
@@ -552,7 +565,7 @@ type Range struct {
 // the implementers' notes' suggestion), which no limits object carries:
 // each scan's answer states it (MSFP playback section 8). With
 // Audio, audio playbacks (tracks) are counted apart, within AudioStreams
-// and AudioTranscodes (music section 5.1); without, they count in
+// and AudioTranscodes (MSFP Media music 5.1); without, they count in
 // Streams and Transcodes.
 type Limits struct {
 	Streams         int  `json:"streams"`

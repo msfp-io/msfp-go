@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"net/netip"
 	"time"
+
+	"github.com/msfp-io/msfp-go/wire"
 )
 
 // Config is what the host gives Open. Only Address (but for a server
@@ -114,19 +116,25 @@ type Config struct {
 	// MaxBitrateKbps is this server's own cap on what peers play here; 0,
 	// by default, for none.
 	MaxBitrateKbps int
-	// Encoders are what Playback makes (MSFP playback section 2.7): the
+	// Encoders are what Playback makes (MSFP Media playing 2.7): the
 	// codecs it encodes, registry tokens (h264, hevc, av1; aac, ac3, eac3,
 	// opus…), the ranges it makes (sdr, keep), and the codecs each HLS
 	// segment format carries (mp2t, mp4). A peer's transcode to another
 	// codec or range, and a remux or a copied stream a segment format
-	// can't carry, are refused, 409 delivery-refused. By default, the
+	// can't carry, are refused, 409 target-refused. By default, the
 	// baseline's only: h264 and aac, sdr, and wire.DefaultSegments.
 	Encoders Encoders
 	// LongestPlayback ends a peer's playback here that lasts longer; 24
-	// hours by default (MSFP playback section 6.3).
+	// hours by default (MSFP Media playing 5).
 	LongestPlayback time.Duration
+	// ProgressSeconds is how often peers are asked to report progress of
+	// their playbacks here, in seconds, 45 to 120, sent in play's answer
+	// (MSFP Media playing 2.3 and 3); 60 by default, and for a value out
+	// of range. A playback with neither a progress nor a media request
+	// for twice that long ends (its idle limit; never a download's).
+	ProgressSeconds int
 	// SyncEvery is how often peers' catalogs are read; 30 minutes by
-	// default, the most often MSFP catalog section 3.2 suggests.
+	// default, the most often MSFP Media listing 3.2 suggests.
 	SyncEvery time.Duration
 }
 
@@ -207,6 +215,9 @@ func (c Config) withDefaults() Config {
 	}
 	if c.LongestPlayback <= 0 {
 		c.LongestPlayback = 24 * time.Hour
+	}
+	if c.ProgressSeconds < wire.MinProgressSeconds || c.ProgressSeconds > wire.MaxProgressSeconds {
+		c.ProgressSeconds = wire.DefaultProgressSeconds
 	}
 	if c.SyncEvery <= 0 {
 		c.SyncEvery = 30 * time.Minute

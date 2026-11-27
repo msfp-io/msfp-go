@@ -11,13 +11,13 @@ import (
 	"strings"
 )
 
-// Media (MSFP media, section 3): what a server checks of the parts of a
+// Media (MSFP Media fetching 3): what a server checks of the parts of a
 // stream it fetches from another before relaying them: HLS playlists
 // here; the file's ranges and answers, and the scan cap, in
 // media_file.go; WebVTT, ASS, PGS and fonts in webvtt.go, ass.go, pgs.go
 // and font.go.
 
-// MaxPlaylist bounds a playlist, as read: 2 MiB (MSFP media, section 2.4).
+// MaxPlaylist bounds a playlist, as read: 2 MiB (MSFP Media fetching 2.4).
 const MaxPlaylist = 2 << 20
 
 var fileNameRe = regexp.MustCompile(`^[A-Za-z0-9._-]{1,64}$`)
@@ -29,22 +29,22 @@ func FileName(s string) bool {
 	return s != "." && s != ".." && fileNameRe.MatchString(s)
 }
 
-// QueueStreamBase is the folder of queue entry n's stream (media
-// sections 1 and 3), under a playback's base (<stream root><ticket>/):
+// QueueStreamBase is the folder of queue entry n's stream (MSFP Media fetching
+// 1 and 3), under a playback's base (<stream root><ticket>/):
 // its file and master.m3u8 are there, and the bare names its playlists
 // give resolve there.
 func QueueStreamBase(base string, n int) string {
 	return base + "queue/" + strconv.Itoa(n) + "/"
 }
 
-// The bounds of a playlist (MSFP media, section 3.1).
+// The bounds of a playlist (MSFP Media fetching 3.1).
 const (
 	MaxPlaylistURIs   = 50_000 // URI lines and URI= values together
 	MaxRenditions     = 32     // #EXT-X-MEDIA lines of a master playlist
 	MaxTargetDuration = 60     // seconds
 )
 
-// Tags of the HLS subset (MSFP media, section 3.1), by playlist kind:
+// Tags of the HLS subset (MSFP Media fetching 3.1), by playlist kind:
 // what a relayed playlist keeps; other tags and comments are dropped.
 var (
 	MasterSubset = []string{"#EXTM3U", "#EXT-X-VERSION", "#EXT-X-INDEPENDENT-SEGMENTS", "#EXT-X-STREAM-INF", "#EXT-X-MEDIA"}
@@ -56,15 +56,15 @@ func playlistStep(step int, why string) error {
 	return fmt.Errorf("msfp: a playlist outside what MSFP allows, step %d: %s", step, why)
 }
 
-// CheckPlaylist checks a paired server's playlist as MSFP media
-// section 3.1 says, in its order (FilterPlaylist).
+// CheckPlaylist checks a paired server's playlist as MSFP Media fetching
+// 3.1 says, in its order (FilterPlaylist).
 func CheckPlaylist(body []byte, audio func(id string) bool) error {
 	_, err := FilterPlaylist(body, nil, audio)
 	return err
 }
 
-// FilterPlaylist is a paired server's playlist once checked as media
-// section 3.1 says, in its order, keeping only the tags of subset,
+// FilterPlaylist is a paired server's playlist once checked as MSFP Media fetching
+// 3.1 says, in its order, keeping only the tags of subset,
 // comments dropped, each line ending in a line feed; with a nil subset,
 // every line is kept. The checks: at most 2 MiB (1); lines split at line
 // feeds, one carriage return at a line's end removed, and no character

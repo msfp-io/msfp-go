@@ -240,7 +240,7 @@ func (f *folder) Titles(_ context.Context, _ []string, after string, limit int) 
 	return page, nil
 }
 
-// Image gives a local film's or series' image (MSFP catalog section 4.4).
+// Image gives a local film's or series' image (MSFP Media listing 4.4).
 func (f *folder) Image(_ context.Context, key string) ([]byte, error) {
 	it, ok := f.scan()[key]
 	if !ok || it.image == "" {
@@ -249,8 +249,8 @@ func (f *folder) Image(_ context.Context, key string) ([]byte, error) {
 	return os.ReadFile(it.image)
 }
 
-// copy describes a video file as the catalog lists a copy (MSFP video
-// section 3.2): its exact size, its media type and etag, what ffprobe
+// copy describes a video file as the catalog lists a copy (MSFP Media video
+// 3.2): its exact size, its media type and etag, what ffprobe
 // says of it (probe.go, with the describe package), its .vtt subtitles
 // (numbered after the file's streams; the file's own tracks first, at
 // most 64 in all), its previews' layout. Its ID is its handle: its path in the
@@ -269,7 +269,7 @@ func (f *folder) copy(rel string) (wire.Copy, bool) {
 	c.SubtitleTracks = slices.Clip(c.SubtitleTracks) // the probe's copy is shared: appends copy it
 	for i, s := range subtitles(path) {
 		if len(c.SubtitleTracks) == wire.MaxSubtitleTracks {
-			break // a copy lists at most 64 subtitle tracks (MSFP video section 3.2)
+			break // a copy lists at most 64 subtitle tracks (MSFP Media video 3.2)
 		}
 		c.SubtitleTracks = append(c.SubtitleTracks, wire.CopySubtitle{ID: "s" + strconv.Itoa(streams+i), Language: language(s),
 			Format: "webvtt", External: true})
@@ -309,7 +309,7 @@ func previews(path string) *wire.PreviewLayout {
 func offeredHere(peer msfp.PeerRef) bool { return slices.Contains(peer.Libraries, "folder") }
 
 // Describe tells what the catalog doesn't: no fonts; every .vtt file is
-// served apart (as text: video section 5.4), the subtitle tracks inside
+// served apart (as text: MSFP Media video 5.4), the subtitle tracks inside
 // the file aren't (they play with the file as it is).
 func (f *folder) Describe(_ context.Context, peer msfp.PeerRef, id string) (msfp.CopyInfo, error) {
 	var info msfp.CopyInfo
@@ -335,7 +335,7 @@ func (f *folder) Describe(_ context.Context, peer msfp.PeerRef, id string) (msfp
 // HLS copy then taken to be the same streams); without delivery outside
 // it, a transcode ffmpeg makes (baseline.go). It makes no transcode
 // asked by delivery, and no audio renditions, which the answer then says
-// (Started.AudioRenditions false: MSFP playback section 2.3). The handle
+// (Started.AudioRenditions false: MSFP Media playing 2.3). The handle
 // is the protocol and the file's path.
 func (f *folder) Start(ctx context.Context, req msfp.StartRequest) (msfp.Started, error) {
 	if !filepath.IsLocal(req.Copy) || !offeredHere(req.Peer) {

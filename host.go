@@ -73,7 +73,7 @@ type Tx interface {
 	PutLibraryID(hostID, publicID string) error
 
 	// Sent says which of these title keys the peer was ever sent; a
-	// changes answer names in gone only those (MSFP catalog section 3.2).
+	// changes answer names in gone only those (MSFP Media listing 3.2).
 	Sent(peer string, keys []string) ([]string, error)
 	MarkSent(peer string, keys []string) error
 
@@ -112,7 +112,7 @@ type GroupsTx interface {
 }
 
 // DownloadsTx is what a Tx implements, besides Tx, to keep downloads for
-// their late reports across restarts (MSFP playback section 7): those
+// their late reports across restarts (MSFP Media playing 6): those
 // of peers here, and this server's on peers. The shipped stores
 // implement it; without it, downloads are kept in memory only, and a
 // restart forgets them (a late report then gets 410, or ErrNotFound).
@@ -163,8 +163,8 @@ type OwnChange struct {
 // leaves.
 //
 // A title is a *VideoTitle or a *MusicTitle. Films, episodes, extras and
-// tracks carry their copies, described as their files are (MSFP video
-// section 3.2, music section 3.3), so that a viewer's server lists them
+// tracks carry their copies, described as their files are (MSFP Media video
+// 3.2, MSFP Media music 3.3), so that a viewer's server lists them
 // as files of its own before anyone plays; each copy's ID is the host's
 // handle of it, the one Playback and Media are given. play takes the
 // title's copies as the catalog sends them (in the host's order, its preference; the version IDs
@@ -173,7 +173,7 @@ type OwnChange struct {
 // kind "extra"), listed in its libraries. Titles no public database names
 // are keyed under the local scheme ("movie/local/<opaque>"), with a name
 // (and a year, an image) of the host's; their opaque parts, and extras',
-// are made with Engine.OpaqueKeyPart or as catalog section 4.2 says.
+// are made with Engine.OpaqueKeyPart or as MSFP Media listing 4.2 says.
 type Catalog interface {
 	// Libraries lists the host's libraries; the operator offers some.
 	Libraries(ctx context.Context) ([]Library, error)
@@ -186,7 +186,7 @@ type Catalog interface {
 }
 
 // Images is what a Catalog implements, besides Catalog, when it shares
-// the images of its local titles (MSFP catalog section 4.4): the local
+// the images of its local titles (MSFP Media listing 4.4): the local
 // films, series, artists and albums whose Image it sets. Without it, no
 // image is given, whatever Image says.
 type Images interface {
@@ -225,11 +225,11 @@ type SeqBumper interface {
 var ErrTooOld = &Error{Code: "TooOld"}
 
 // Lyrics is what a Catalog implements, besides Catalog, when it shares
-// the lyrics of its tracks (MSFP music section 6): the copies whose
+// the lyrics of its tracks (MSFP Media music 6): the copies whose
 // Lyrics says "plain" or "synced".
 type Lyrics interface {
 	// Lyrics gives a copy's lyrics (its handle), at most 8 sets, times in
-	// milliseconds (MSFP music section 6). The engine cleans them as a
+	// milliseconds (MSFP Media music 6). The engine cleans them as a
 	// viewer's server keeps them (wire.ReadLyrics) before they leave.
 	// ErrNotFound for none.
 	Lyrics(ctx context.Context, peer PeerRef, copy string) ([]wire.Lyrics, error)
@@ -246,7 +246,7 @@ type Lyrics interface {
 type Playback interface {
 	// Describe gives what the catalog doesn't say of a copy: its fonts,
 	// the subtitle tracks it can't serve apart, the forms of those of
-	// formats video section 5.4 doesn't list. The copy is resolved
+	// formats MSFP Media video 5.4 doesn't list. The copy is resolved
 	// within peer.Libraries, as Start's.
 	Describe(ctx context.Context, peer PeerRef, copy string) (CopyInfo, error)
 	// Start starts serving the copy for its purpose and delivery. Without
@@ -255,7 +255,11 @@ type Playback interface {
 	// unchanged, transcode otherwise; never the file); it serves exactly the
 	// delivery asked otherwise; then it calls
 	// req.Admit before starting any work. Errors: ErrNotPlayable,
-	// ErrDeliveryRefused, ErrServerBusy, ErrStreamLimitReached.
+	// ErrDeliveryRefused (the delivery as such), ErrTargetRefused (a
+	// target it doesn't make), ErrServerBusy (its transcode budget used;
+	// a play that replaces another, StartRequest.Replaces, counts as it),
+	// ErrUnreachable (it can't reach the media now: 503 unreachable),
+	// ErrStreamLimitReached.
 	Start(ctx context.Context, req StartRequest) (Started, error)
 	// Progress passes on a peer's progress or stop, for the host's live
 	// view and its viewers' progress; a Late one is of a download's

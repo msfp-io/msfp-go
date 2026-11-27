@@ -6,7 +6,7 @@ import (
 	"strings"
 )
 
-// The discovery document (core section 11): an unsigned JSON document a
+// The discovery document (MSFP core section 11): an unsigned JSON document a
 // server may serve at GET /.well-known/msfp, saying where its federation
 // calls are (its base path) and, before any pairing, which versions it
 // speaks. It proves nothing: the versions used are always those of the
@@ -67,17 +67,27 @@ type Discovery struct {
 	Versions Versions
 	// Base is its base path, DefaultBase when it gives none.
 	Base string
+	// MSFPMedia are the versions of MSFP Media its part versions carry,
+	// read as a list of hello is (core section 10.2); nil when it gives
+	// none. For information only: the part versions decide (core section
+	// 10.1).
+	MSFPMedia []int
 }
 
+// MSFPMediaVersions are the versions of MSFP Media that version 0 of the
+// parts carries (MSFP core section 10.1): MSFP Media version 0.
+var MSFPMediaVersions = []int{0}
+
 // ReadDiscovery reads a discovery document's body. A body that isn't a
-// JSON object, a core or parts member of the wrong type, and a base that
-// isn't a string of CheckBase's form, make it no document (ErrJSON or
-// ErrBase): its reader then uses DefaultBase.
+// JSON object, a core, parts or msfpMedia member of the wrong type, and
+// a base that isn't a string of CheckBase's form, make it no document
+// (ErrJSON or ErrBase): its reader then uses DefaultBase.
 func ReadDiscovery(body []byte) (Discovery, error) {
 	var m struct {
-		Core  json.RawMessage `json:"core"`
-		Parts json.RawMessage `json:"parts"`
-		Base  json.RawMessage `json:"base"`
+		Core      json.RawMessage `json:"core"`
+		Parts     json.RawMessage `json:"parts"`
+		MSFPMedia json.RawMessage `json:"msfpMedia"`
+		Base      json.RawMessage `json:"base"`
 	}
 	if err := DecodeAnswer(body, &m); err != nil {
 		return Discovery{}, err
@@ -87,6 +97,11 @@ func ReadDiscovery(body []byte) (Discovery, error) {
 		return Discovery{}, err
 	}
 	d := Discovery{Versions: v, Base: DefaultBase}
+	if m.MSFPMedia != nil {
+		if d.MSFPMedia, err = readList(m.MSFPMedia); err != nil {
+			return Discovery{}, err
+		}
+	}
 	if m.Base != nil {
 		if json.Unmarshal(m.Base, &d.Base) != nil {
 			return Discovery{}, ErrJSON

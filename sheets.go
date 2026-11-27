@@ -10,7 +10,7 @@ import (
 // JPEGSheets is the default SheetEncoder: it decodes a sheet with
 // image/jpeg and encodes its pixels again, so that nothing but pixels
 // (no metadata, no trailing bytes, no second image) reaches the viewer
-// (MSFP video section 7). The engine has checked the sheet's size and
+// (MSFP Media video 7). The engine has checked the sheet's size and
 // its header first; Reencode checks the header again, then decodes.
 type JPEGSheets struct{}
 
@@ -37,7 +37,7 @@ func (JPEGSheets) Reencode(sheet []byte, maxWidth, maxHeight int) ([]byte, error
 
 // sheetFits checks a sheet from its header, before anything decodes it:
 // a JPEG (by its content, whatever its Content-Type) no larger than the
-// layout's full sheet (MSFP video section 6.2).
+// layout's full sheet (MSFP Media video 6.2).
 func sheetFits(sheet []byte, maxWidth, maxHeight int) bool {
 	cfg, format, err := image.DecodeConfig(bytes.NewReader(sheet))
 	return err == nil && format == "jpeg" && cfg.Width >= 1 && cfg.Height >= 1 && cfg.Width <= maxWidth && cfg.Height <= maxHeight

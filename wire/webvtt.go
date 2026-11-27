@@ -10,14 +10,14 @@ import (
 	"unicode/utf8"
 )
 
-// Text subtitles as WebVTT (MSFP video, section 6.3): a part is rebuilt,
+// Text subtitles as WebVTT (MSFP Media video 6.3): a part is rebuilt,
 // not filtered. Cue timings survive, the settings that place a cue (line,
 // position, size, align), plain cue text, and the italic, bold and colour
 // tags, balanced; identifiers, styles, regions, notes and every other tag
 // go. The owning server rebuilds what it serves, the viewer's server again
 // what it relays.
 
-// The bounds of WebVTT (video section 6.3, media section 2.4). A whole
+// The bounds of WebVTT (MSFP Media video 6.3, MSFP Media fetching 2.4). A whole
 // track has bounds of its own: MaxWholeText (shared with ASS) and
 // maxWholeCues.
 const (
@@ -39,7 +39,7 @@ var cueTiming = regexp.MustCompile(`^((?:\d{1,3}:)?\d{2}:\d{2}\.\d{3})[ \t\f]+--
 // "&" a character reference.
 var cueEscape = strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;")
 
-// RebuildWebVTT rebuilds a WebVTT part (a stretch) as video section 6.3
+// RebuildWebVTT rebuilds a WebVTT part (a stretch) as MSFP Media video 6.3
 // says: false when it is over MaxWebVTT, doesn't start with WEBVTT, or
 // holds more than 50,000 cues once rebuilt.
 func RebuildWebVTT(in []byte) ([]byte, bool) { return rebuildWebVTT(in, MaxWebVTT, maxCues) }
@@ -98,7 +98,7 @@ func rebuildWebVTT(in []byte, most, mostCues int) ([]byte, bool) {
 	return []byte(out.String()), true
 }
 
-// Cue settings (video section 6.3): each kept in this order, when it is
+// Cue settings (MSFP Media video 6.3): each kept in this order, when it is
 // the first of its name and valid.
 var (
 	cueSettingNames = []string{"line", "position", "size", "align"}
@@ -188,7 +188,7 @@ type cuePiece struct {
 // is its background colour.
 var cueColours = []string{"white", "lime", "cyan", "red", "yellow", "magenta", "blue", "black"}
 
-// keptCueTag says whether a tag is kept (video section 6.3, step 3):
+// keptCueTag says whether a tag is kept (MSFP Media video 6.3, step 3):
 // <i>, <b>, their end tags, </c>, or <c.> with one colour class, or one
 // text colour and one background colour.
 func keptCueTag(t string) bool {
@@ -246,7 +246,7 @@ func untagCue(s string) string {
 	return b.String()
 }
 
-// cleanCueLine cleans a cue text line, in video section 6.3's steps: its
+// cleanCueLine cleans a cue text line, in MSFP Media video 6.3's steps: its
 // kept tags and its text, escaped, or nil when no text is left.
 func cleanCueLine(s string) []cuePiece {
 	s = dropInvisible(s)
@@ -416,7 +416,7 @@ func dropInvisible(s string) string {
 	}, s)
 }
 
-// StretchSeconds is how long a part of subtitles covers (media section
+// StretchSeconds is how long a part of subtitles covers (MSFP Media fetching
 // 3.4): part n covers n × 120 to (n + 1) × 120 seconds, from 10 seconds
 // early.
 const StretchSeconds = 120
@@ -434,7 +434,7 @@ func inStretch(start, end int64, n int) bool {
 // WebVTTPart is part n of a whole WebVTT track, for an owning server
 // that holds its subtitles as one file: the track rebuilt as
 // RebuildWholeWebVTT does, keeping the cues that show during the part's
-// stretch (media section 3.4). A part with no cue is "WEBVTT" and a line
+// stretch (MSFP Media fetching 3.4). A part with no cue is "WEBVTT" and a line
 // feed. False when the track isn't WebVTT within a whole track's bounds,
 // or its part holds more cues than a part may.
 func WebVTTPart(track []byte, n int) ([]byte, bool) {

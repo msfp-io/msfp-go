@@ -357,7 +357,7 @@ type Leftover struct {
 }
 
 // DownloadRecord is a download kept for its late reports, 30 days after
-// it started (MSFP playback section 7), so that a restart keeps them.
+// it started (MSFP Media playing 6), so that a restart keeps them.
 // Of a peer's download here (Viewer false): ID is the playback ID given
 // to the peer, Handle the host's, LastAt the at of the latest report
 // kept. Of this server's download on a peer (Viewer true): ID is the

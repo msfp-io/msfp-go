@@ -12,8 +12,8 @@ import (
 	"github.com/msfp-io/msfp-go/wire"
 )
 
-// Playback, on the viewer's side (MSFP playback sections 2 to 8, video
-// section 5, music section 5): this server's people play, download or
+// Playback, on the viewer's side (MSFP Media playing, MSFP playback sections 2 to 8, MSFP Media video
+// 5, MSFP Media music 5): this server's people play, download or
 // scan a peer's title. The host decides who may, and what to ask (the
 // copy, the delivery: it has every copy's facts and knows its device;
 // the engine says nothing of the device), the engine calls play, checks
@@ -25,27 +25,23 @@ import (
 
 // Times of the viewer's side.
 const (
-	// tellEvery is how often progress is sent while the viewer watches
-	// (MSFP playback section 3): never more often, but on a pause or a
-	// resume, and every tellEvery while the host reports.
-	tellEvery = 45 * time.Second
-	// replaceWait is how long a play waits for the stop of the playback
-	// it replaces (MSFP playback section 2.3).
+	// replaceWait is how long a play waits for the stops on their way to
+	// the same peer, so that they don't count against its streams.
 	replaceWait = 5 * time.Second
 	// stopTries is how often a stop is sent when there's no answer.
 	stopTries = 3
 )
 
 // PlayRequest is what the host asks of a peer's title for one viewer
-// session: one playback serves one viewer session, never two (MSFP
-// playback section 2.7). The host chooses the copy and its tracks: it
+// session: one playback serves one viewer session, never two (MSFP Media
+// playing 2.7). The host chooses the copy and its tracks: it
 // has every copy's facts in the catalog and knows its device.
 type PlayRequest struct {
 	// Title is the key, as the peer listed it.
 	Title string
 	// Purpose is PurposePlay ("" too), PurposeDownload or PurposeScan:
 	// a download only of a peer whose limits allow downloads, of delivery
-	// file or a sized transcode (MSFP playback section 7); a scan only of
+	// file or a sized transcode (MSFP Media playing 6); a scan only of
 	// a peer whose limits allow scans, always of delivery file (section 8),
 	// for the host's media server's reads to list a file, never to watch
 	// it.
@@ -56,13 +52,16 @@ type PlayRequest struct {
 	// served unchanged, the range sdr or keep; those left out take the
 	// baseline's) or "": the peer then serves the baseline, H.264 High
 	// 4.1 8-bit SDR and AAC-LC stereo in complete HLS (AAC alone for a
-	// copy with no video), which every viewer's server must play (MSFP
-	// playback section 2.7). The host chooses it from the copy's facts
+	// copy with no video), which every viewer's server must play (MSFP Media
+	// playing 2.7). The host chooses it from the copy's facts
 	// and what its device plays: a copy whose mediaType, codec or threeD
 	// it doesn't know, or whose codecs it can't read (wire.PlayableAsIs,
-	// wire.ReadCodecs), is one it can't play as it is (core section 8.5).
-	// A delivery refused is ErrDeliveryRefused: ask again with another
-	// one, or none.
+	// wire.ReadCodecs), is one it can't play as it is (MSFP Media base 3).
+	// A delivery refused is ErrDeliveryRefused, a target refused
+	// ErrTargetRefused: ask again with another one (Instead names those
+	// the peer would serve, when it says), or none. The engine never
+	// sends a capability list: between servers the ask is explicit (MSFP Media playing
+	// 2).
 	Delivery  string
 	MediaType string
 	Transcode *TranscodeTargets
@@ -82,17 +81,19 @@ type PlayRequest struct {
 	// (Transcode.BurnSubtitle).
 	VersionID, AudioTrack string
 	// Queue are, for a track, the tracks to play after it, at most 5
-	// (MSFP music section 5.2), each with its copy and its own delivery
+	// (MSFP Media music 5.2), each with its copy and its own delivery
 	// when it names them: prepared under the same playback.
 	Queue []QueueEntry
-	// Replaces is a RemotePlayback of the same viewer to stop first: to
-	// change the audio, the version or the quality, the old playback
-	// stops and a new one starts; its stop is waited for up to 5 seconds,
-	// so that it doesn't count against the pairing's streams.
+	// Replaces is a RemotePlayback of the same viewer that this one
+	// replaces: to change the audio, the version, the delivery or the
+	// quality (MSFP Media playing 2.3). The play names it to the peer,
+	// which counts both as one stream; once the new one is answered, the
+	// old one is over, and forgotten here. When the play is refused, the
+	// old one stays as it was. One on another peer is stopped first.
 	Replaces string
 }
 
-// QueueEntry is an entry of a music play's queue (MSFP music section
+// QueueEntry is an entry of a music play's queue (MSFP Media music
 // 5.2): a track's key, the copy it plays ("": its first), and its own
 // delivery with its own MediaType or Transcode ("": the request's).
 type QueueEntry = wire.QueueAsk
@@ -147,7 +148,7 @@ type RemotePlayback struct {
 	// opens (MediaPath Sheet): the sheet count of the copy's
 	// previewLayout in the catalog, 0 for none or for a download.
 	Sheets int
-	// Queue are the queued tracks the peer prepared (music section 5.2),
+	// Queue are the queued tracks the peer prepared (MSFP Media music 5.2),
 	// each fetched with MediaPath.Entry its Place + 1.
 	Queue []RemoteEntry
 }
@@ -184,6 +185,7 @@ type remote struct {
 	audio     map[string]bool // the playback's audio track IDs
 	subtitles map[string]wire.SubtitleServing
 	layout    *wire.PreviewLayout // the copy's, when its sheets are opened
+	every     time.Duration       // the interval of progress the peer gave (progressSeconds)
 	ctx       context.Context
 	cancel    context.CancelFunc
 
@@ -201,8 +203,8 @@ type remote struct {
 	fontBytes  map[int]int     // the fonts relayed, by index: 64 MiB in all
 }
 
-// pastDownload is a download on a peer, kept for its late reports (MSFP
-// playback section 7) after it stopped here.
+// pastDownload is a download on a peer, kept for its late reports (MSFP Media
+// playing 6) after it stopped here.
 type pastDownload struct {
 	peer, theirID, title string
 	queue                []string
@@ -230,11 +232,12 @@ type playWire struct {
 	MaxBitrateKbps  int               `json:"maxBitrateKbps,omitempty"`
 	AudioTrack      string            `json:"audioTrack,omitempty"`
 	VersionID       string            `json:"versionId,omitempty"`
+	Replaces        string            `json:"replaces,omitempty"`
 	Queue           []QueueEntry      `json:"queue,omitempty"`
 }
 
 // targetsAsSent are a transcode's targets as sent, in the steps MSFP
-// gives them (playback section 2.7): the bitrate a whole 1,000, from
+// gives them (MSFP Media playing 2.7): the bitrate a whole 1,000, from
 // 1,000; the height stepped down to one of wire.Heights (480 below 480);
 // video's targets left out for a track.
 func targetsAsSent(t *TranscodeTargets, video bool) *TranscodeTargets {
@@ -266,12 +269,15 @@ func targetsAsSent(t *TranscodeTargets, video bool) *TranscodeTargets {
 // when the peer can't be used, or its last limits say no stream (no
 // downloads, no scans). StreamLimitReached, ServerBusy (no answer, none
 // signed, or a 503) and BackingOff (a 429, or calls unanswered lately)
-// mean busy now; DeliveryRefused, ask with another delivery; NotPlayable
-// and the others, not playable (MSFP playback section 2.5). Errors:
+// mean busy now; DeliveryRefused and TargetRefused, ask with another
+// delivery or other targets (Instead); Gone, the peer no longer holds the
+// title (its titles are read again); NotPlayable and the others, not
+// playable (MSFP Media playing 2.5). Errors:
 // ErrNotFound, ErrNotPaired, ErrUncallable, ErrSuspended, ErrKeyLost,
 // ErrNotSupported, ErrRefusedDestination, ErrCertificateRefused,
 // ErrStreamLimitReached, ErrServerBusy, ErrBackingOff,
-// ErrDeliveryRefused, ErrNotPlayable, ErrInvalidRequest.
+// ErrDeliveryRefused, ErrTargetRefused, ErrGone, ErrNotPlayable,
+// ErrInvalidRequest.
 func (e *Engine) Play(ctx context.Context, peer string, req PlayRequest) (RemotePlayback, error) {
 	p, err := e.peerRecord(ctx, peer)
 	if err != nil {
@@ -316,9 +322,15 @@ func (e *Engine) Play(ctx context.Context, peer string, req PlayRequest) (Remote
 			return RemotePlayback{}, ErrStreamLimitReached
 		}
 	}
+	// The playback it replaces: named to the peer when it is there (MSFP
+	// Media playing 2.3); one elsewhere is stopped first.
+	var old *remote
 	if req.Replaces != "" {
-		if err := e.Stop(ctx, req.Replaces, -1); err != nil && !errors.Is(err, ErrNotFound) {
-			e.log.Info("msfp: the playback replaced couldn't be stopped", "error", err)
+		if old = e.liveRemote(req.Replaces); old != nil && old.peer != p.ID {
+			if err := e.Stop(ctx, req.Replaces, -1); err != nil && !errors.Is(err, ErrNotFound) {
+				e.log.Info("msfp: the playback replaced couldn't be stopped", "error", err)
+			}
+			old = nil
 		}
 	}
 	e.waitStops(ctx, peer)
@@ -333,6 +345,9 @@ func (e *Engine) Play(ctx context.Context, peer string, req PlayRequest) (Remote
 	}
 	if wire.ID(req.VersionID) {
 		in.VersionID = req.VersionID
+	}
+	if old != nil {
+		in.Replaces = old.theirID
 	}
 	var asked []QueueEntry
 	if audioOnly && len(req.Queue) > 0 {
@@ -352,7 +367,7 @@ func (e *Engine) Play(ctx context.Context, peer string, req PlayRequest) (Remote
 	r, err := e.call(ctx, p, callPlay, in, &raw, false)
 	switch {
 	case errors.Is(err, ErrUnreachable):
-		// No answer, or none signed: busy now (MSFP playback section 2.5).
+		// No answer, or none signed: busy now (MSFP Media playing 2.5).
 		return RemotePlayback{}, ErrServerBusy.with(err)
 	case err != nil:
 		// What lasts says itself (ErrKeyLost, ErrSuspended, ErrUncallable,
@@ -362,7 +377,9 @@ func (e *Engine) Play(ctx context.Context, peer string, req PlayRequest) (Remote
 	case r.status == http.StatusConflict && r.problem == string(probNotPlayable):
 		return RemotePlayback{}, ErrNotPlayable
 	case r.status == http.StatusConflict && r.problem == string(probDelivery):
-		return RemotePlayback{}, ErrDeliveryRefused
+		return RemotePlayback{}, ErrDeliveryRefused.with(&insteadErr{wire.ReadInstead(r.body, purpose)})
+	case r.status == http.StatusConflict && r.problem == string(probTarget):
+		return RemotePlayback{}, ErrTargetRefused.with(&insteadErr{wire.ReadInstead(r.body, purpose)})
 	case r.status == http.StatusConflict:
 		return RemotePlayback{}, ErrStreamLimitReached
 	case r.status == http.StatusServiceUnavailable:
@@ -371,6 +388,11 @@ func (e *Engine) Play(ctx context.Context, peer string, req PlayRequest) (Remote
 		return RemotePlayback{}, ErrBackingOff
 	case r.status == http.StatusNotFound && r.problem == string(probNotSupported):
 		return RemotePlayback{}, ErrNotSupported
+	case r.status == http.StatusNotFound && r.problem == wire.ProblemGone:
+		// Held for this server, and no longer: its titles are read again
+		// (MSFP Media base 4).
+		e.readSoon(p.ID)
+		return RemotePlayback{}, ErrGone
 	case r.status != http.StatusOK:
 		if r.status == http.StatusNotFound {
 			e.helloNow(p.ID)
@@ -396,8 +418,13 @@ func (e *Engine) Play(ctx context.Context, peer string, req PlayRequest) (Remote
 	rm.view.ID = "r" + lowerBase32.EncodeToString(idBytes)
 	rm.ctx, rm.cancel = context.WithCancel(context.Background())
 	rm.position = rm.view.PositionMs
+	if old != nil {
+		// Answered: the peer ended the old one (MSFP Media playing 2.3).
+		e.endRemote(old, EndReplaced, false)
+		e.forgetLeftover(ctx, old)
+	}
 	// Kept until stopped, so that after a restart the peer is told it's
-	// over (MSFP playback section 6.3).
+	// over (MSFP Media playing 5).
 	if err := e.cfg.Store.Update(ctx, func(tx Tx) error {
 		return tx.PutLeftover(Leftover{Peer: p.ID, PlaybackID: rm.theirID})
 	}); err != nil {
@@ -448,8 +475,8 @@ func cmpOr(s, or string) string {
 	return s
 }
 
-// readPlay checks and cleans a peer's play answer (MSFP playback section
-// 2.3, video section 5.3, music section 5.2), its URLs built from the
+// readPlay checks and cleans a peer's play answer (MSFP Media playing
+// 2.3, MSFP Media video 5.3, MSFP Media music 5.2), its URLs built from the
 // peer's stream root and the answer's ticket: nil, and why, when it
 // breaks a "must".
 func (e *Engine) readPlay(ctx context.Context, p *PeerRecord, raw json.RawMessage, req PlayRequest, asked []QueueEntry,
@@ -474,7 +501,7 @@ func (e *Engine) readPlay(ctx context.Context, p *PeerRecord, raw json.RawMessag
 		}
 	}
 	rm := &remote{peer: p.ID, peerName: p.Name, theirID: a.ID, base: a.Base(root), audioOnly: audioOnly, audio: map[string]bool{},
-		subtitles: map[string]wire.SubtitleServing{}, entries: map[int]remoteEntry{}}
+		subtitles: map[string]wire.SubtitleServing{}, entries: map[int]remoteEntry{}, every: wire.ProgressInterval(a.ProgressSeconds)}
 	v := &rm.view
 	v.Peer, v.Title, v.Purpose, v.Delivery = p.ID, req.Title, purpose, req.Delivery
 	v.Method, v.Protocol, v.Etag, v.Size = a.Method, a.Protocol, a.Etag, -1
@@ -531,7 +558,7 @@ func (e *Engine) readPlay(ctx context.Context, p *PeerRecord, raw json.RawMessag
 }
 
 // targetsWellFormed says whether a transcode's targets are of their
-// forms (MSFP playback section 2.7): codecs and the range tokens.
+// forms (MSFP Media playing 2.7): codecs and the range tokens.
 func targetsWellFormed(t TranscodeTargets) bool {
 	for _, s := range []string{t.VideoCodec, t.AudioCodec, t.Range} {
 		if s != "" && !wire.Token(s) {
@@ -566,24 +593,24 @@ func (e *Engine) catalogCopy(ctx context.Context, peer, key, id string) (wire.Co
 }
 
 // Restart starts a new playback of the copy a playback of delivery file
-// was reading, once it ended (a long pause: MSFP playback section 2.7),
+// was reading, once it ended (a long pause: MSFP Media playing 2.7),
 // so that the host goes on reading at the same byte: the same title,
 // copy, purpose and delivery, only if the new answer's etag is the one
 // it was reading; else the new playback is stopped and ErrCopyChanged
-// says the title must be read again. The old one is stopped first if it
-// is still live. Make one only for a read that arrives. Errors: Play's,
-// ErrCopyChanged, ErrInvalidRequest (not a playback of a file).
+// says the title must be read again. The old one, if it is still live,
+// is the one the new play replaces (PlayRequest.Replaces). Make one only
+// for a read that arrives. Errors: Play's, ErrCopyChanged,
+// ErrInvalidRequest (not a playback of a file).
 func (e *Engine) Restart(ctx context.Context, old RemotePlayback) (RemotePlayback, error) {
 	if old.Delivery != wire.DeliveryFile || old.Etag == "" || old.VersionID == "" {
 		return RemotePlayback{}, ErrInvalidRequest.with(errors.New("only a playback of delivery file restarts"))
 	}
+	replaces := ""
 	if e.liveRemote(old.ID) != nil {
-		if err := e.Stop(ctx, old.ID, -1); err != nil && !errors.Is(err, ErrNotFound) {
-			return RemotePlayback{}, err
-		}
+		replaces = old.ID
 	}
 	pb, err := e.Play(ctx, old.Peer, PlayRequest{Title: old.Title, Purpose: old.Purpose, Delivery: wire.DeliveryFile,
-		VersionID: old.VersionID, AudioTrack: old.AudioTrack})
+		VersionID: old.VersionID, AudioTrack: old.AudioTrack, Replaces: replaces})
 	if err != nil {
 		return RemotePlayback{}, err
 	}
@@ -615,17 +642,19 @@ func (e *Engine) liveRemote(id string) *remote {
 	return rs.byID[id]
 }
 
-// Progress notes where a viewer is in a playback on a peer (MSFP
-// playback section 3): the peer is told at the first report, at once on
-// a pause or a resume, and otherwise every 45 seconds at most while the
+// Progress notes where a viewer is in a playback on a peer, and whether
+// it is paused (MSFP Media playing 3): the peer is told at the first
+// report, at once on a pause or a resume, and otherwise about every
+// progressSeconds its answer gave (45 to 120, 60 by default), while the
 // host reports, by Run's work of each second when no report comes at the
 // time. It returns at once. A 410 from the peer ends the playback
 // (RemotePlaybackEnded). A scan sends none.
 //
-// The peer ends a playback it hears nothing of for 2 minutes (playback
-// section 6.3): while a viewer is on it, paused too, call Progress at
-// least every minute, whatever the player reports. Calls cost nothing
-// more: the peer still gets one report per 45 seconds at most.
+// The peer ends a playback it hears nothing of for its idle limit, twice
+// that interval, 90 seconds at the least (MSFP Media playing 5): while a
+// viewer is on it, paused too, call Progress at least every minute,
+// whatever the player reports. Calls cost nothing more: the peer still
+// gets one report per interval.
 func (e *Engine) Progress(id string, positionMs int64, paused bool) {
 	rs := &e.remotes
 	rs.mu.Lock()
@@ -636,7 +665,7 @@ func (e *Engine) Progress(id string, positionMs int64, paused bool) {
 	}
 	now := e.now()
 	rm.position, rm.paused, rm.fresh = min(max(positionMs, 0), wire.MaxPositionMs), paused, true
-	due := rm.told.IsZero() || paused != rm.toldPaused || now.Sub(rm.told) >= tellEvery
+	due := rm.told.IsZero() || paused != rm.toldPaused || now.Sub(rm.told) >= rm.every
 	var in progressCall
 	if due {
 		in = rm.tell(now)
@@ -649,7 +678,7 @@ func (e *Engine) Progress(id string, positionMs int64, paused bool) {
 
 // PlayingTrack says which track of a playback's queue plays now (its
 // key; the playback's own title, or one of its Queue): progress and stop
-// carry it, positions then in that track (MSFP music section 5.2).
+// carry it, positions then in that track (MSFP Media music 5.2).
 // Errors: ErrNotFound, ErrInvalidRequest (a key of neither).
 func (e *Engine) PlayingTrack(id, title string) error {
 	rs := &e.remotes
@@ -674,19 +703,20 @@ type progressCall struct {
 	PositionMs int64  `json:"positionMs"`
 	At         int64  `json:"at,omitempty"`
 	Title      string `json:"title,omitempty"`
+	Paused     bool   `json:"paused,omitempty"`
 }
 
 // tell notes that the peer is told now where the viewer is, and gives
 // what it is sent. Under remotes.mu.
 func (rm *remote) tell(now time.Time) progressCall {
 	rm.told, rm.toldPaused, rm.fresh = now, rm.paused, false
-	return progressCall{ID: rm.theirID, PositionMs: rm.position, Title: rm.track}
+	return progressCall{ID: rm.theirID, PositionMs: rm.position, Title: rm.track, Paused: rm.paused}
 }
 
 // tellWatched sends progress for the playbacks on peers the host
-// reported since they were last sent it, 45 seconds ago or more: a host
+// reported since they were last sent it, an interval ago or more: a host
 // whose reports don't fall on the time still keeps its playbacks there
-// told every 45 seconds.
+// told every interval.
 func (e *Engine) tellWatched() {
 	now := e.now()
 	rs := &e.remotes
@@ -697,7 +727,7 @@ func (e *Engine) tellWatched() {
 	}
 	var send []due
 	for _, rm := range rs.byID {
-		if rm.fresh && now.Sub(rm.told) >= tellEvery {
+		if rm.fresh && now.Sub(rm.told) >= rm.every {
 			send = append(send, due{rm, rm.tell(now)})
 		}
 	}
@@ -729,7 +759,7 @@ func (e *Engine) sendProgress(rm *remote, in progressCall) {
 }
 
 // OfflineReport is what a viewer did with a download away from this
-// server (MSFP playback sections 3, 4 and 7): where it was, when, in
+// server (MSFP Media playing 3, 4 and 6): where it was, when, in
 // which track of a queue (its key; "" for the title), and whether it
 // stopped there.
 type OfflineReport struct {
@@ -741,7 +771,7 @@ type OfflineReport struct {
 
 // ReportOffline sends a download's late report, as progress or stop with
 // at, when the viewer's device syncs: for 30 days after its play, even
-// once it stopped here (MSFP playback section 7). Send them in the order
+// once it stopped here (MSFP Media playing 6). Send them in the order
 // of their At. Errors: ErrNotFound (no download of that ID within 30
 // days), ErrInvalidRequest (an At out of its bounds, a Title not of the
 // download), ErrPlaybackStopped (the peer's 410: too late), and the
@@ -933,7 +963,7 @@ func (e *Engine) forgetLeftover(ctx context.Context, rm *remote) {
 }
 
 // stopLeftovers tells peers the playbacks this server had on them before
-// it started are over (MSFP playback section 6.3): once, at the first
+// it started are over (MSFP Media playing 5): once, at the first
 // run.
 func (e *Engine) stopLeftovers(ctx context.Context) {
 	e.remotes.leftover.Do(func() {

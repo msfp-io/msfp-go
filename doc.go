@@ -1,7 +1,11 @@
 // Package msfp is an engine for MSFP, the Media Server Federation
 // Protocol (https://github.com/msfp-io/msfp-spec), version 0 as revised
-// by proposals 16 and 17: still a draft, and one that doesn't pair with the
-// draft before it (this module's v0.7.1 and before). A media
+// by proposals 16, 17 and 19: still a draft, and one that doesn't pair
+// with the draft before it (this module's v0.7.1 and before). MSFP
+// carries MSFP Media version 0 (https://github.com/msfp-io/msfp-media),
+// the language of titles, copies and playbacks, between servers: the
+// language's rules are cited as MSFP Media's (base, listing, playing,
+// fetching, video, music), the federation's as MSFP's. A media
 // server that uses it, the host, pairs with other servers by hand,
 // shares its titles with them and plays theirs for its own people,
 // without writing any of the protocol itself: the engine signs and
@@ -41,7 +45,7 @@
 // colour, exact values, the layout of its previews), a Playback
 // (starting and stopping a stream) and a Media (serving it): see host.go.
 // The engine maps no names: a value it doesn't know is sent and kept as
-// it is (MSFP core section 8.5). The owning side chooses nothing: a
+// it is (MSFP Media base 3). The owning side chooses nothing: a
 // peer's play plays the copy and the audio it names, else the first copy
 // and the file's default audio, and wire.Serve says what is served for
 // the delivery asked (without one, the defined baseline, each stream

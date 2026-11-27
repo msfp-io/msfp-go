@@ -9,7 +9,7 @@ import (
 	"github.com/msfp-io/msfp-go/wire"
 )
 
-// Codecs strings (MSFP video section 3.5, implementers' notes "Building
+// Codecs strings (MSFP Media video 3.5, implementers' notes "Building
 // codecs"): built from the stream's record where it has one (exact),
 // else from ffprobe's fields under the spec's tolerance: profile, level
 // and bit depth always the stream's own; H.264 constraint flags zero,
@@ -196,7 +196,7 @@ var vp9Levels = []struct {
 	{61, 35651584, 2353004544}, {62, 35651584, 4706009088}}
 
 // vp9Level guesses a VP9 stream's level from its size and frame rate
-// (a consumer ignores VP9's level: video section 3.5).
+// (a consumer ignores VP9's level: MSFP Media video 3.5).
 func vp9Level(s Stream) int {
 	picture := int64(s.Width) * int64(s.Height)
 	rate := 30.0

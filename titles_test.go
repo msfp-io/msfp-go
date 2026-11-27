@@ -23,7 +23,7 @@ import (
 // image of a local title.
 
 // A page ends early at 3 MiB of answer, next set: the reader asks on,
-// and keeps every title (MSFP catalog section 3.1).
+// and keeps every title (MSFP Media listing 3.1).
 func TestPagesBoundedBySize(t *testing.T) {
 	h := newFakeHost()
 	var chapters []wire.CopyChapter
@@ -97,7 +97,7 @@ func localHost(t *testing.T) (*fakeHost, string, []byte) {
 
 // Local titles are shared only once the owner allows it, per pairing
 // (MSFP catalog section 5): the change forces a whole reading. Extras go
-// with their title only, theme songs among them (video section 3.9).
+// with their title only, theme songs among them (MSFP Media video 3.9).
 func TestLocalTitlesAndExtras(t *testing.T) {
 	ctx := context.Background()
 	h, local, _ := localHost(t)
@@ -154,7 +154,7 @@ func TestLocalTitlesAndExtras(t *testing.T) {
 	}
 }
 
-// The image of a local title (MSFP catalog section 4.4): asked for, served
+// The image of a local title (MSFP Media listing 4.4): asked for, served
 // under its ticket only, checked and re-encoded.
 func TestLocalTitleImage(t *testing.T) {
 	ctx := context.Background()
