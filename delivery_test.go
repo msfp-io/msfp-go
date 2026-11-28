@@ -868,7 +868,7 @@ func TestPreviewsAndLyrics(t *testing.T) {
 // rebuilt or checked on both sides (MSFP Media video 6.3 to 6.6).
 func TestASSAndFonts(t *testing.T) {
 	ctx := context.Background()
-	raw, err := os.ReadFile("wire/testdata/v0/media.json")
+	raw, err := os.ReadFile("wire/testdata/media/v0/video.json")
 	if err != nil {
 		t.Fatal(err)
 	}

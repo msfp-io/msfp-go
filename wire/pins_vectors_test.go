@@ -10,14 +10,14 @@ import (
 	"time"
 )
 
-// The certificates of vectors/v1/keys.json (core section 3.2): each
+// The certificates of vectors/v0/keys.json (core section 3.2): each
 // Ed25519 seed gives the SubjectPublicKeyInfo spki, and a certificate
 // for that key has the pin keys.json says.
 func TestVectorCertificatePins(t *testing.T) {
 	var v struct {
 		Certificates map[string]struct{ Seed, Spki, Pin string }
 	}
-	readVectors(t, "keys.json", &v)
+	readVectors(t, "msfp/v0/keys.json", &v)
 	if len(v.Certificates) == 0 {
 		t.Fatal("keys.json: no certificates")
 	}

@@ -19,8 +19,8 @@ import (
 	"github.com/msfp-io/msfp-go/wire"
 )
 
-// The vectors of MSFP core section 17 (vectors/v1/, copied in
-// wire/testdata/v0/), through two engines: their pair exchange byte for
+// The vectors of MSFP core section 17 (msfp-spec's vectors/v0/, copied in
+// wire/testdata/msfp/v0/), through two engines: their pair exchange byte for
 // byte both ways, the hello and play requests a peer receives, and the
 // hello answers a caller reads.
 
@@ -39,7 +39,7 @@ func readVectors(t *testing.T) (map[string]vector, map[string]struct{ Seed, Publ
 	}
 	var code struct{ Code struct{ Secret, Text string } }
 	for name, v := range map[string]any{"exchanges.json": &ex, "keys.json": &keys, "code.json": &code} {
-		b, err := os.ReadFile("wire/testdata/v0/" + name)
+		b, err := os.ReadFile("wire/testdata/msfp/v0/" + name)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -246,7 +246,7 @@ func peerRecord(t *testing.T, st msfp.Store, id string) msfp.PeerRecord {
 func keyVector(t *testing.T, file string) vector {
 	t.Helper()
 	var f struct{ Exchange vector }
-	b, err := os.ReadFile("wire/testdata/v0/" + file)
+	b, err := os.ReadFile("wire/testdata/msfp/v0/" + file)
 	if err != nil {
 		t.Fatal(err)
 	}

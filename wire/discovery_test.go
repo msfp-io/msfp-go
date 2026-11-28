@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-// Base paths (vectors/v1/strict.json, bases): absolute, plain segments,
+// Base paths (msfp-spec's vectors/v0/strict.json, bases): absolute, plain segments,
 // ending in /api/v1/federation/, 256 bytes at most.
 func TestBaseVectors(t *testing.T) {
 	var v struct {
@@ -16,7 +16,7 @@ func TestBaseVectors(t *testing.T) {
 			Reason string
 		}
 	}
-	readVectors(t, "strict.json", &v)
+	readVectors(t, "msfp/v0/strict.json", &v)
 	if len(v.Bases) == 0 {
 		t.Fatal("no cases")
 	}

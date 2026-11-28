@@ -7,11 +7,11 @@ import (
 	"testing"
 )
 
-// The cases of vectors/v1/strict.json's destinations (MSFP core section
-// 3.3): the IP addresses a server connects to for a peer by default, or
+// The cases of strict.json's destinations (msfp-spec's vectors/v0; MSFP
+// core section 3.3): the IP addresses a server connects to for a peer by default, or
 // refuses, through refusedDestination with loopback not allowed.
 func TestDestinationVectors(t *testing.T) {
-	b, err := os.ReadFile("wire/testdata/v0/strict.json")
+	b, err := os.ReadFile("wire/testdata/msfp/v0/strict.json")
 	if err != nil {
 		t.Fatal(err)
 	}

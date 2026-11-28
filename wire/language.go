@@ -67,7 +67,7 @@ func tagForm(s string) bool {
 // SentTag is the tag sent for code, a media server's language code
 // ("fre" and "fra" give "fr", "fre-ca" "fr-CA"); false for one MSFP
 // doesn't send: not of a tag's form, or und, mul, zxx or mis. Test
-// cases: languageCodes in vectors/v0/strict.json.
+// cases: languageCodes in MSFP Media's vectors/v0/base.json.
 func SentTag(code string) (string, bool) {
 	if !tagForm(code) {
 		return "", false

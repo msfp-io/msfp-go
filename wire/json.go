@@ -19,7 +19,7 @@ import (
 // of the same name, replaces invalid UTF-8 and lone surrogates with
 // U+FFFD, accepts any number a field can hold, and matches member names
 // without regard to case. So a body is first read token by token, which
-// refuses the first three, then given to encoding/json with only the
+// refuses the first three, and any number past a double's range, then given to encoding/json with only the
 // members whose names are exactly a field's: "State" is an unknown member,
 // ignored, never "state".
 //
@@ -34,7 +34,8 @@ import (
 // ErrJSON is returned for a body that isn't I-JSON, or doesn't fit.
 var ErrJSON = errors.New("federation: not a valid body")
 
-// maxDepth bounds how deeply a body nests: MSFP's bodies are shallow.
+// maxDepth bounds how deeply a body nests (MSFP Media base 2.2): the
+// body's object at level 0, a value at level 65 refused.
 const maxDepth = 64
 
 // DecodeJSON reads a federation request, a JSON object, into v (a

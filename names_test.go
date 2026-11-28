@@ -10,31 +10,35 @@ import (
 	"github.com/msfp-io/msfp-go/wire"
 )
 
-// The names an owning server serves under a ticket (media.json's names,
-// MSFP Media fetching 1 and 4.2): exactly those its answer opened, 404
-// past the counts.
+// The names an owning server serves under a ticket (MSFP Media's
+// fetching.json names, fetching 1 and 4.2, and MSFP's media.json names,
+// the scan ticket of MSFP media 4.2): exactly those its answer opened,
+// 404 past the counts.
 func TestServedNames(t *testing.T) {
-	raw, err := os.ReadFile("wire/testdata/v0/media.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var v struct {
-		Names []struct {
-			Name   string
-			Text   string
-			Valid  bool
-			Ticket struct {
-				Kind, Protocol string
-				Subtitles      []wire.ServedSubtitle
-				FontCount      int
-				SheetCount     int
-				Queue          []string
-				Names          []string
-			}
+	type nameCase struct {
+		Name   string
+		Text   string
+		Valid  bool
+		Ticket struct {
+			Kind, Protocol string
+			Subtitles      []wire.ServedSubtitle
+			FontCount      int
+			SheetCount     int
+			Queue          []string
+			Names          []string
 		}
 	}
-	if err := json.Unmarshal(raw, &v); err != nil || len(v.Names) == 0 {
-		t.Fatal("no cases", err)
+	var v struct{ Names []nameCase }
+	for _, name := range []string{"media/v0/fetching.json", "msfp/v0/media.json"} {
+		raw, err := os.ReadFile("wire/testdata/" + name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var f struct{ Names []nameCase }
+		if err := json.Unmarshal(raw, &f); err != nil || len(f.Names) == 0 {
+			t.Fatal(name, ": no cases", err)
+		}
+		v.Names = append(v.Names, f.Names...)
 	}
 	for _, c := range v.Names {
 		tk := c.Ticket

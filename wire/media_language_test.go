@@ -296,7 +296,7 @@ func TestDiscoveryMSFPMedia(t *testing.T) {
 	}
 }
 
-// The titles request as the owning server reads it (strict.json,
+// The titles request as the owning server reads it (listing.json,
 // titleOffer and titleRequests): a source of the offer, run with
 // ReadTitlesRequest and TitleFilter.
 func TestTitleRequestVectors(t *testing.T) {
@@ -319,7 +319,7 @@ func TestTitleRequestVectors(t *testing.T) {
 			Output string   `json:"output"`
 		} `json:"titleRequests"`
 	}
-	readVectors(t, "strict.json", &v)
+	readVectors(t, "media/v0/listing.json", &v)
 	if len(v.Requests) != 48 || len(v.Offer.Titles) == 0 {
 		t.Fatal("not every case read")
 	}

@@ -8,13 +8,13 @@ import (
 	"testing"
 )
 
-// musicCase is a case of vectors/v0/music.json.
+// musicCase is a case of MSFP Media's vectors/v0/music.json.
 type musicCase struct {
 	Name, Kind, Text, Request, Output string
 	Valid                             bool
 }
 
-// The cases of vectors/v0/music.json: keys, what a caller keeps of each
+// The cases of MSFP Media's vectors/v0/music.json: keys, what a caller keeps of each
 // title (local ones included), the queue of a play, and the lyrics call.
 func TestMusicVectors(t *testing.T) {
 	var v struct {
@@ -24,7 +24,7 @@ func TestMusicVectors(t *testing.T) {
 		Titles, LocalTitles []musicCase
 		Queue, Lyrics       []musicCase
 	}
-	readVectors(t, "music.json", &v)
+	readVectors(t, "media/v0/music.json", &v)
 	if len(v.Keys) == 0 || len(v.Titles) == 0 || len(v.LocalTitles) == 0 || len(v.Queue) == 0 || len(v.Lyrics) == 0 {
 		t.Fatal("no music cases")
 	}

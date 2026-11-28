@@ -121,7 +121,7 @@ func TestDiscoveryFetched(t *testing.T) {
 			Reason string
 		}
 	}
-	raw, err := os.ReadFile("wire/testdata/v0/strict.json")
+	raw, err := os.ReadFile("wire/testdata/msfp/v0/strict.json")
 	if err != nil {
 		t.Fatal(err)
 	}

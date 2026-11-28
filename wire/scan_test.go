@@ -10,7 +10,8 @@ import (
 )
 
 // The scanner against the reader it replaced (encoding/json's Decoder,
-// token by token): the same tree, or both refusing, for every body.
+// token by token), with the double range of MSFP Media base 2.2 added
+// to it: the same tree, or both refusing, for every body.
 
 // strictTreeDecoder is strictTree as it was before the scanner.
 func strictTreeDecoder(body []byte, nulls bool) (any, error) {
@@ -74,7 +75,11 @@ func readValue(dec *json.Decoder, depth int, nulls bool) (any, error) {
 		// Any I-JSON number: whether it is an integer is the field's
 		// question (keepExact), since a version list ignores entries
 		// that aren't (section 10.2) and unknown members are ignored
-		// whatever they hold.
+		// whatever they hold. One outside a double's range is refused
+		// (MSFP Media base 2.2).
+		if _, err := t.Float64(); err != nil {
+			return nil, ErrJSON
+		}
 		return t, nil
 	case nil:
 		if !nulls {
@@ -112,7 +117,7 @@ var scanSeeds = []string{
 	`{,}`, `{"a"}`, `{"a":}`, `{"a" 1}`, `[1 2]`, `{"a":1}x`, `{"a":1} {}`, `"x"`, `12`, `null`, ``, ` `,
 	`{"a":"\x01"}`, "{\"a\":\"\t\"}", `{"a":"\\ud83d\\ude00"}`, `{"a":"\\ud83d"}`, `{"a":"\\q"}`,
 	`{"a":"\\u12"}`, `{"a":tru}`, `{"a":nul}`, `{"a":[[[[[[[[[[[[[[[[[[[[1]]]]]]]]]]]]]]]]]]]}`,
-	`{"a":"é","b":"\\u00E9"}`, `[1e999]`, `[-0.0e-0]`, `[0e+1]`, `{"":0}`, `{"a":[{}]}`, "\xef\xbb\xbf{}",
+	`{"a":"é","b":"\\u00E9"}`, `[1e999]`, `{"a":-1e400}`, `{"a":1e-400}`, `{"a":1.7976931348623157e308}`, `[-0.0e-0]`, `[0e+1]`, `{"":0}`, `{"a":[{}]}`, "\xef\xbb\xbf{}",
 }
 
 func sameStrict(t *testing.T, body []byte) {

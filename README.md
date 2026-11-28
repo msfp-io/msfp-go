@@ -304,16 +304,18 @@ go test -race -timeout 30m ./...
 ```
 
 The engine's tests run whole servers against each other in one process.
-The protocol's test vectors under [wire/testdata](wire/testdata) come
-from the spec's
-[vectors/](https://github.com/msfp-io/msfp-spec/tree/main/vectors),
-copied as they are: `wire/testdata/v0/` is the spec's `vectors/v0/`, and
-`wire/testdata/test-draft-strict.json` its
-`vectors/history/test-draft-strict.json`. To refresh
-them, copy those files from a checkout of msfp-spec and run the tests:
+The test vectors under [wire/testdata](wire/testdata) come from the
+specs' `vectors/`, copied as they are: `wire/testdata/msfp/v0/` is
+[msfp-spec's](https://github.com/msfp-io/msfp-spec/tree/main/vectors)
+`vectors/v0/` (MSFP's own cases), `wire/testdata/media/v0/` is
+[msfp-media's](https://github.com/msfp-io/msfp-media/tree/main/vectors)
+`vectors/v0/` (MSFP Media's), and `wire/testdata/test-draft-strict.json`
+msfp-spec's `vectors/history/test-draft-strict.json`. To refresh them,
+copy those files from checkouts of both and run the tests:
 
 ```sh
-cp ../msfp-spec/vectors/v0/*.json wire/testdata/v0/
+cp ../msfp-spec/vectors/v0/*.json wire/testdata/msfp/v0/
+cp ../msfp-media/vectors/v0/*.json wire/testdata/media/v0/
 cp ../msfp-spec/vectors/history/test-draft-strict.json wire/testdata/
 go test ./...
 ```

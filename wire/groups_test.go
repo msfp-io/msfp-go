@@ -55,7 +55,7 @@ func TestGroupVectors(t *testing.T) {
 			Value    string `json:"value"`
 		} `json:"joinProof"`
 	}
-	readVectors(t, "groups.json", &v)
+	readVectors(t, "msfp/v0/groups.json", &v)
 	now := time.Unix(v.Now, 0)
 	var envs []Envelope
 	for _, e := range v.Events {
@@ -210,7 +210,7 @@ func TestGroupOrderIndependent(t *testing.T) {
 			Event, Signature, ID string
 		} `json:"events"`
 	}
-	readVectors(t, "groups.json", &v)
+	readVectors(t, "msfp/v0/groups.json", &v)
 	var envs []Envelope
 	for _, e := range v.Events {
 		envs = append(envs, Envelope{Payload: e.Event, Signature: e.Signature})

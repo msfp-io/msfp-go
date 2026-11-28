@@ -183,7 +183,7 @@ func TestCopiesRoundTrip(t *testing.T) {
 	}
 }
 
-// The cases of vectors/v0/video.json.
+// The cases of MSFP Media's vectors/v0/video.json.
 func TestVideoVectors(t *testing.T) {
 	type valued struct {
 		Name, Text, Output, Reason, Kind, Side string
@@ -199,7 +199,7 @@ func TestVideoVectors(t *testing.T) {
 		AnswerCopy                  string
 		Answers, Codecs, FontSets   []valued
 	}
-	readVectors(t, "video.json", &v)
+	readVectors(t, "media/v0/video.json", &v)
 	if len(v.Titles) == 0 || len(v.Copies) == 0 || len(v.Extras) == 0 || len(v.LocalTitles) == 0 ||
 		len(v.LocalKeys) == 0 || len(v.TvdbKeys) == 0 || len(v.Previews) == 0 || len(v.Answers) == 0 ||
 		len(v.Codecs) == 0 || len(v.FontSets) == 0 {

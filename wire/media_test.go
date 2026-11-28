@@ -122,8 +122,10 @@ func TestMediaFilterPlaylistHiddenLines(t *testing.T) {
 	}
 }
 
-// MSFP's media test vectors (https://github.com/msfp-io/msfp-spec,
-// vectors/v0/media.json), copied in testdata/v0/media.json.
+// The media test vectors: MSFP Media's (https://github.com/msfp-io/msfp-media,
+// vectors/v0/video.json and fetching.json), copied in testdata/media/v0/,
+// and MSFP's scans (https://github.com/msfp-io/msfp-spec, vectors/v0/media.json),
+// copied in testdata/msfp/v0/.
 type mediaCase struct {
 	Name   string `json:"name"`
 	Text   string `json:"text"`
@@ -160,7 +162,9 @@ type mediaVectors struct {
 func readMediaVectors(t *testing.T) mediaVectors {
 	t.Helper()
 	var v mediaVectors
-	readVectors(t, "media.json", &v)
+	readVectors(t, "media/v0/video.json", &v)    // webvtt, ass, pgs, fonts
+	readVectors(t, "media/v0/fetching.json", &v) // hls, ranges, fileAnswers
+	readVectors(t, "msfp/v0/media.json", &v)     // scans
 	return v
 }
 
@@ -381,7 +385,7 @@ func TestMediaWholeTrackBounds(t *testing.T) {
 	}
 }
 
-// relayTypes of media.json (MSFP Media fetching 3): the Content-Type a viewer's
+// relayTypes of fetching.json (MSFP Media fetching 3): the Content-Type a viewer's
 // server relays a copy's file and a segment with.
 func TestRelayTypeVectors(t *testing.T) {
 	var v struct {
@@ -389,7 +393,7 @@ func TestRelayTypeVectors(t *testing.T) {
 			Name, What, Value, Output string
 		} `json:"relayTypes"`
 	}
-	readVectors(t, "media.json", &v)
+	readVectors(t, "media/v0/fetching.json", &v)
 	if len(v.RelayTypes) == 0 {
 		t.Fatal("no cases")
 	}

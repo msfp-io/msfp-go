@@ -2,6 +2,7 @@ package wire
 
 import (
 	"encoding/json"
+	"strconv"
 	"unicode/utf16"
 	"unicode/utf8"
 )
@@ -147,7 +148,10 @@ func (s *scanner) list(depth int) (any, bool) {
 }
 
 // number reads a number as JSON writes it: -? (0 | [1-9][0-9]*)
-// (.[0-9]+)? ([eE][+-]?[0-9]+)?, kept as written.
+// (.[0-9]+)? ([eE][+-]?[0-9]+)?, kept as written. One whose magnitude
+// rounds above the largest IEEE 754 double is refused (MSFP Media base
+// 2.2); one too small for a double counts as 0, and precision is no
+// reason to refuse.
 func (s *scanner) number() (any, bool) {
 	start := s.i
 	if s.b[s.i] == '-' {
@@ -176,7 +180,11 @@ func (s *scanner) number() (any, bool) {
 			return nil, false
 		}
 	}
-	return json.Number(s.b[start:s.i]), true
+	text := string(s.b[start:s.i])
+	if _, err := strconv.ParseFloat(text, 64); err != nil {
+		return nil, false // ±Inf: out of a double's range
+	}
+	return json.Number(text), true
 }
 
 // digits reads one digit or more; false when there's none.

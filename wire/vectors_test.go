@@ -16,7 +16,7 @@ import (
 )
 
 // MSFP's version 0 test vectors (https://github.com/msfp-io/msfp-spec,
-// vectors/v0/), copied as they are in testdata/v0/: recomputed here with
+// vectors/v0/), copied as they are in testdata/msfp/v0/: recomputed here with
 // the code, so the code keeps speaking the protocol they describe. The
 // exchanges of a server that can't be called are read in
 // uncallable_test.go.
@@ -58,10 +58,11 @@ func unhex(t *testing.T, s string) []byte {
 	return b
 }
 
-// readVectors reads testdata/v0/name into v.
+// readVectors reads testdata/name into v: msfp/v0/ holds msfp-spec's
+// vectors/v0/, media/v0/ msfp-media's.
 func readVectors(t *testing.T, name string, v any) {
 	t.Helper()
-	raw, err := os.ReadFile("testdata/v0/" + name)
+	raw, err := os.ReadFile("testdata/" + name)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,7 +78,7 @@ func vectorKeys(t *testing.T) map[string]Key {
 	var v struct {
 		Keys map[string]vectorKey `json:"keys"`
 	}
-	readVectors(t, "keys.json", &v)
+	readVectors(t, "msfp/v0/keys.json", &v)
 	if len(v.Keys) == 0 {
 		t.Fatal("no keys")
 	}
@@ -115,7 +116,7 @@ func TestVectorCode(t *testing.T) {
 			Value    string `json:"value"`
 		} `json:"proof"`
 	}
-	readVectors(t, "code.json", &v)
+	readVectors(t, "msfp/v0/code.json", &v)
 	secret := unhex(t, v.Code.Secret)
 	code := Code{Address: v.Code.Address, Key: keys[v.Code.Key].Public(), Secret: secret, Expires: time.Unix(v.Code.Expires, 0)}
 	if code.String() != v.Code.Text {
@@ -141,7 +142,7 @@ func TestVectorExchanges(t *testing.T) {
 	var v struct {
 		Exchanges []vectorExchange `json:"exchanges"`
 	}
-	readVectors(t, "exchanges.json", &v)
+	readVectors(t, "msfp/v0/exchanges.json", &v)
 	if len(v.Exchanges) == 0 {
 		t.Fatal("no exchanges")
 	}
@@ -201,7 +202,7 @@ func TestVectorHello(t *testing.T) {
 	var v struct {
 		Exchanges []vectorExchange `json:"exchanges"`
 	}
-	readVectors(t, "exchanges.json", &v)
+	readVectors(t, "msfp/v0/exchanges.json", &v)
 	i := slices.IndexFunc(v.Exchanges, func(x vectorExchange) bool { return x.Name == "hello" })
 	if i < 0 {
 		t.Fatal("no hello")
@@ -222,8 +223,9 @@ func TestVectorHello(t *testing.T) {
 	}
 }
 
-// Addresses and codes under core 1 (vectors/v0/strict.json): https only,
-// the prefix msfp-pair-1.; and the names of a stream's files.
+// Addresses and codes under core 0 (msfp-spec's strict.json): https
+// only, the prefix msfp-pair-0.; and the names of a stream's files
+// (msfp-media's fetching.json, mediaNames).
 func TestStrictVectors(t *testing.T) {
 	type tc struct {
 		Name, Text string
@@ -232,7 +234,8 @@ func TestStrictVectors(t *testing.T) {
 	var v struct {
 		Addresses, Codes, MediaNames []tc
 	}
-	readVectors(t, "strict.json", &v)
+	readVectors(t, "msfp/v0/strict.json", &v)
+	readVectors(t, "media/v0/fetching.json", &v)
 	if len(v.Addresses) == 0 || len(v.Codes) == 0 || len(v.MediaNames) == 0 {
 		t.Fatal("no cases")
 	}
@@ -263,7 +266,7 @@ func TestStrictVectors(t *testing.T) {
 	}
 }
 
-// The canonical forms of vectors/v0-strict.json that hold for core 1 too
+// The canonical forms of test-draft-strict.json that hold for core 1 too
 // (keys, signatures, base64url, dates; its json and integers are in
 // json_test.go). Its addresses and codes are version 0's: strict.json's
 // replace them.
@@ -348,7 +351,7 @@ func TestSignatureHeadersOnce(t *testing.T) {
 	}
 }
 
-// What a receiver keeps of a hello's versions (vectors/v0/strict.json,
+// What a receiver keeps of a hello's versions (msfp-spec's strict.json,
 // helloVersions): a number that isn't an integer ignored as an entry, an
 // unknown member or part ignored whatever its value, null included; the
 // lists of the wrong type a bad body (MSFP Media base 2.2, MSFP core section 10.2).
@@ -359,7 +362,7 @@ func TestHelloVersionVectors(t *testing.T) {
 			Valid              bool
 		} `json:"helloVersions"`
 	}
-	readVectors(t, "strict.json", &v)
+	readVectors(t, "msfp/v0/strict.json", &v)
 	if len(v.HelloVersions) == 0 {
 		t.Fatal("no cases")
 	}
@@ -389,7 +392,7 @@ func TestHelloVersionVectors(t *testing.T) {
 }
 
 // Media servers' language codes and the tags sent for them
-// (vectors/v0/strict.json, languageCodes; MSFP Media listing 3).
+// (msfp-media's base.json, languageCodes; MSFP Media base 3).
 func TestLanguageCodeVectors(t *testing.T) {
 	var v struct {
 		LanguageCodes []struct {
@@ -397,7 +400,7 @@ func TestLanguageCodeVectors(t *testing.T) {
 			Valid        bool
 		} `json:"languageCodes"`
 	}
-	readVectors(t, "strict.json", &v)
+	readVectors(t, "media/v0/base.json", &v)
 	if len(v.LanguageCodes) == 0 {
 		t.Fatal("no cases")
 	}

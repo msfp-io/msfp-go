@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+- A body holding a number past the range of an IEEE 754 double (1e400,
+  -1e400) is refused, request or answer (MSFP Media base 2.2); a number
+  too small for one still reads as 0.
+- The test vectors follow the split of MSFP Media's: wire/testdata/msfp/v0
+  is msfp-spec's vectors/v0, wire/testdata/media/v0 msfp-media's
+  vectors/v0. Tests run base.json's json, integers and base64url cases,
+  and listing.json's answerBound.
+
 ## v0.10.0 (2026-11-27): MSFP Media (proposal 19)
 
 MSFP's media language is now MSFP Media version 0, which MSFP carries

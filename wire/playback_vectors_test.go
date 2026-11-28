@@ -11,8 +11,12 @@ import (
 	"time"
 )
 
-// The playback vectors (vectors/v0/playback.json): every array, run
-// against this package's rules.
+// The playback vectors, every array run against this package's rules:
+// MSFP Media's playing.json (msfp-media's vectors/v0, testdata/media/v0),
+// the language's cases under any carrier, and MSFP's playback.json
+// (msfp-spec's vectors/v0, testdata/msfp/v0), what MSFP decides as its
+// carrier (the purpose scan, the refusal of a capability list, limits).
+// Each file has its own context.
 
 type pbVectors struct {
 	Context  pbContext       `json:"context"`
@@ -30,6 +34,12 @@ type pbVectors struct {
 	Limits   []pbLimitsCase  `json:"limits"`
 }
 
+// pbRefusal is a refusal's status and problem type.
+type pbRefusal struct {
+	Status int    `json:"status"`
+	Type   string `json:"type"`
+}
+
 type pbContext struct {
 	Copies        map[string][]pbCopy `json:"copies"`
 	VideoEncoders []string            `json:"videoEncoders"`
@@ -43,6 +53,7 @@ type pbContext struct {
 	Unreachable   []string            `json:"unreachable"`
 	Limits        Limits              `json:"limits"`
 	InUse         pbUse               `json:"inUse"`
+	LimitRefusal  *pbRefusal          `json:"limitRefusal"`
 	StreamRoot    string              `json:"streamRoot"`
 	Now           int64               `json:"now"`
 }
@@ -232,27 +243,49 @@ func pbTree(t *testing.T, b []byte) any {
 	return drop(v)
 }
 
-func TestPlaybackVectors(t *testing.T) {
-	var v pbVectors
-	readVectors(t, "playback.json", &v)
-	if len(v.Requests) != 108 || len(v.Replaces) != 20 || len(v.Delivers) != 107 || len(v.Baseline) != 21 || len(v.Downs) != 36 ||
-		len(v.Scans) != 19 || len(v.Reports) != 61 || len(v.Queue) != 21 || len(v.Answers) != 86 || len(v.Restarts) != 19 ||
-		len(v.Limits) != 21 || len(v.Refusals) != 35 {
-		t.Fatal("not every case read")
+// readPlaybackVectors reads MSFP Media's playing.json and MSFP's
+// playback.json, each checked whole.
+func readPlaybackVectors(t *testing.T) (media, carrier pbVectors) {
+	t.Helper()
+	readVectors(t, "media/v0/playing.json", &media)
+	readVectors(t, "msfp/v0/playback.json", &carrier)
+	v := media
+	if len(v.Requests) != 98 || len(v.Replaces) != 20 || len(v.Delivers) != 106 || len(v.Baseline) != 21 || len(v.Downs) != 36 ||
+		len(v.Reports) != 61 || len(v.Queue) != 21 || len(v.Answers) != 78 || len(v.Restarts) != 19 || len(v.Refusals) != 35 ||
+		len(v.Scans) != 0 || len(v.Limits) != 0 {
+		t.Fatal("playing.json: not every case read")
 	}
-	now := time.Unix(v.Context.Now, 0)
-	for _, list := range [][]pbCase{v.Requests, v.Replaces, v.Delivers, v.Baseline, v.Downs, v.Scans, v.Reports} {
-		for _, c := range list {
-			switch {
-			case c.Call == "play":
-				out, err := pbPlay(v.Context, c, []byte(c.Text), nil)
-				pbCheck(t, c, out, err)
-			default:
-				out, err := pbReport(c, now)
-				pbCheck(t, c, out, err)
+	v = carrier
+	if len(v.Requests) != 10 || len(v.Delivers) != 1 || len(v.Answers) != 8 || len(v.Scans) != 19 || len(v.Limits) != 21 ||
+		len(v.Replaces)+len(v.Baseline)+len(v.Downs)+len(v.Reports)+len(v.Queue)+len(v.Restarts)+len(v.Refusals) != 0 {
+		t.Fatal("playback.json: not every case read")
+	}
+	return media, carrier
+}
+
+func TestPlaybackVectors(t *testing.T) {
+	media, carrier := readPlaybackVectors(t)
+	// MSFP Media leaves the refusal over a carrier's limits to the
+	// carrier: the cases name it, and it is MSFP's.
+	if lr := media.Context.LimitRefusal; lr == nil || lr.Status != 409 || lr.Type != ProblemStreamLimit {
+		t.Fatalf("playing.json's limitRefusal %+v, not MSFP's 409 %s", lr, ProblemStreamLimit)
+	}
+	for _, v := range []pbVectors{media, carrier} {
+		now := time.Unix(v.Context.Now, 0)
+		for _, list := range [][]pbCase{v.Requests, v.Replaces, v.Delivers, v.Baseline, v.Downs, v.Scans, v.Reports} {
+			for _, c := range list {
+				switch {
+				case c.Call == "play":
+					out, err := pbPlay(v.Context, c, []byte(c.Text), nil)
+					pbCheck(t, c, out, err)
+				default:
+					out, err := pbReport(c, now)
+					pbCheck(t, c, out, err)
+				}
 			}
 		}
 	}
+	v := media
 	for _, q := range v.Queue {
 		c := pbCase{Name: q.Name, Valid: q.Valid, Status: q.Status, Type: q.Type, Output: q.Output}
 		var req struct {
@@ -379,9 +412,11 @@ func pbPlay(ctx pbContext, c pbCase, body []byte, entry *PlayRequest) (any, erro
 		if err := lim.TranscodeRoom(r.Purpose, u); err != nil {
 			return nil, err
 		}
-		transcodes = "pairing and server"
+		// MSFP Media's words (playing.json): the carrier's transcodes
+		// and the source's budget, the budget alone for a download.
+		transcodes = "carrier and source"
 		if r.Purpose == PurposeDownload {
-			transcodes = "server"
+			transcodes = "source"
 		}
 	}
 	if slices.Contains(ctx.Unreachable, r.Title) {
@@ -452,32 +487,32 @@ func pbReport(c pbCase, now time.Time) (any, error) {
 }
 
 func TestPlaybackAnswerVectors(t *testing.T) {
-	var v pbVectors
-	readVectors(t, "playback.json", &v)
-	for _, c := range v.Answers {
-		ask := Asked{Purpose: c.Asked.Purpose, Delivery: c.Asked.Delivery, Part: c.Asked.Part, CatalogEtag: c.Asked.CatalogEtag}
-		for _, s := range c.Asked.CatalogSubtitles {
-			ask.Subtitles = append(ask.Subtitles, CopySubtitle{ID: s})
-		}
-		a, err := ReadPlayAnswer([]byte(c.Text), ask)
-		switch {
-		case !c.Valid && err == nil:
-			t.Errorf("%s: kept %+v", c.Name, a)
-		case c.Valid && err != nil:
-			t.Errorf("%s: refused", c.Name)
-		case c.Valid:
-			out := struct {
-				PlayAnswer
-				URLs []string `json:"urls"`
-			}{a, a.URLs(v.Context.StreamRoot, 0)}
-			pbSame(t, c.Name, out, c.Output)
+	media, carrier := readPlaybackVectors(t)
+	for _, v := range []pbVectors{media, carrier} {
+		for _, c := range v.Answers {
+			ask := Asked{Purpose: c.Asked.Purpose, Delivery: c.Asked.Delivery, Part: c.Asked.Part, CatalogEtag: c.Asked.CatalogEtag}
+			for _, s := range c.Asked.CatalogSubtitles {
+				ask.Subtitles = append(ask.Subtitles, CopySubtitle{ID: s})
+			}
+			a, err := ReadPlayAnswer([]byte(c.Text), ask)
+			switch {
+			case !c.Valid && err == nil:
+				t.Errorf("%s: kept %+v", c.Name, a)
+			case c.Valid && err != nil:
+				t.Errorf("%s: refused", c.Name)
+			case c.Valid:
+				out := struct {
+					PlayAnswer
+					URLs []string `json:"urls"`
+				}{a, a.URLs(v.Context.StreamRoot, 0)}
+				pbSame(t, c.Name, out, c.Output)
+			}
 		}
 	}
 }
 
 func TestPlaybackRestartVectors(t *testing.T) {
-	var v pbVectors
-	readVectors(t, "playback.json", &v)
+	v, _ := readPlaybackVectors(t)
 	for _, c := range v.Restarts {
 		var req PlayRequest
 		if err := json.Unmarshal([]byte(c.Request), &req); err != nil {
@@ -492,8 +527,7 @@ func TestPlaybackRestartVectors(t *testing.T) {
 }
 
 func TestLimitsVectors(t *testing.T) {
-	var v pbVectors
-	readVectors(t, "playback.json", &v)
+	_, v := readPlaybackVectors(t)
 	for _, c := range v.Limits {
 		k, ok := ReadLimits([]byte(c.Text))
 		if ok != c.Valid {
@@ -574,8 +608,7 @@ func TestLimitsCheck(t *testing.T) {
 
 // The caller's reading of a play refusal (playing 2.5, base 4).
 func TestPlayRefusalVectors(t *testing.T) {
-	var v pbVectors
-	readVectors(t, "playback.json", &v)
+	v, _ := readPlaybackVectors(t)
 	for _, c := range v.Refusals {
 		r := ReadPlayRefusal(c.Status, c.Signed, []byte(c.Body), c.Purpose)
 		pbSame(t, c.Name, r, c.Output)

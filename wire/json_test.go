@@ -14,8 +14,8 @@ type hello struct {
 	Certificates []string `json:"certificates,omitempty"`
 }
 
-// The json and integers cases of MSFP's strict vectors
-// (testdata/v0-strict.json), through DecodeJSON: valid ones decode,
+// The json and integers cases of the test draft's strict vectors
+// (testdata/test-draft-strict.json), through DecodeJSON: valid ones decode,
 // invalid ones are refused.
 func TestStrictJSONVectors(t *testing.T) {
 	b, err := os.ReadFile("testdata/test-draft-strict.json")
@@ -55,6 +55,61 @@ func TestStrictJSONVectors(t *testing.T) {
 		}
 		if err := DecodeJSON([]byte(`{"n":`+c.Text+`}`), &n); (err == nil) != c.Valid {
 			t.Errorf("integer %s: %v", c.Text, err)
+		}
+	}
+}
+
+// The cases of MSFP Media base 2.1 and 2.2 (msfp-media's base.json):
+// json through DecodeJSON, as a request whose members are all unknown,
+// and DecodeEntry, which reads every member, null as left out;
+// integers in an integer field; base64url through Decode64. The engine
+// reads no hex nor decimal text of MSFP Media's, so hex and decimals
+// have no reader here.
+func TestMediaBaseVectors(t *testing.T) {
+	var v struct {
+		JSON []struct {
+			Name, Text, Hex string
+			Valid           bool
+		} `json:"json"`
+		Integers []struct {
+			Name, Text string
+			Valid      bool
+		} `json:"integers"`
+		Base64url []struct {
+			Name, Text string
+			Bytes      int
+			Valid      bool
+		} `json:"base64url"`
+	}
+	readVectors(t, "media/v0/base.json", &v)
+	if len(v.JSON) == 0 || len(v.Integers) == 0 || len(v.Base64url) == 0 {
+		t.Fatal("no cases")
+	}
+	for _, c := range v.JSON {
+		body := []byte(c.Text)
+		if c.Hex != "" {
+			body, _ = hex.DecodeString(c.Hex)
+		}
+		var msg hello
+		if err := DecodeJSON(body, &msg); (err == nil) != c.Valid {
+			t.Errorf("json %s: %v", c.Name, err)
+		}
+		var all map[string]any
+		if err := DecodeEntry(body, &all); (err == nil) != c.Valid {
+			t.Errorf("json %s, as an entry: %v", c.Name, err)
+		}
+	}
+	for _, c := range v.Integers {
+		var n struct {
+			N int64 `json:"n"`
+		}
+		if err := DecodeJSON([]byte(`{"n":`+c.Text+`}`), &n); (err == nil) != c.Valid {
+			t.Errorf("integer %s: %v", c.Name, err)
+		}
+	}
+	for _, c := range v.Base64url {
+		if _, ok := Decode64(c.Text, c.Bytes); ok != c.Valid {
+			t.Errorf("base64url %s: %v", c.Name, ok)
 		}
 	}
 }

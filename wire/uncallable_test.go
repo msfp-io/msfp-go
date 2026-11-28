@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-// The addresses of servers that can't be called (vectors/v1/strict.json,
+// The addresses of servers that can't be called (msfp-spec's vectors/v0/strict.json,
 // uncallableAddresses): https://msfp-<26 characters>.invalid, those
 // characters exact base32 of 16 bytes.
 func TestUncallableAddressVectors(t *testing.T) {
@@ -21,7 +21,7 @@ func TestUncallableAddressVectors(t *testing.T) {
 			Reason string
 		}
 	}
-	readVectors(t, "strict.json", &v)
+	readVectors(t, "msfp/v0/strict.json", &v)
 	if len(v.UncallableAddresses) == 0 {
 		t.Fatal("no cases")
 	}
@@ -168,7 +168,7 @@ func TestHelloOneWay(t *testing.T) {
 	}
 }
 
-// The last three exchanges of vectors/v1/exchanges.json: B can't be
+// The last three exchanges of vectors/v0/exchanges.json: B can't be
 // called; its hello carries inbound false, its address of that form and
 // knownKey a; A, having revoked a and rotated to a2 (committing to a3) in
 // one action, answers signed with a, with both statements; B makes a2
@@ -178,7 +178,7 @@ func TestVectorUncallableExchanges(t *testing.T) {
 	var v struct {
 		Exchanges []vectorExchange `json:"exchanges"`
 	}
-	readVectors(t, "exchanges.json", &v)
+	readVectors(t, "msfp/v0/exchanges.json", &v)
 	find := func(name string) vectorExchange {
 		t.Helper()
 		i := slices.IndexFunc(v.Exchanges, func(x vectorExchange) bool { return x.Name == name })

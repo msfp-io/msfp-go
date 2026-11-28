@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-// The rotation of core section 17.2 (vectors/v1/rotation.json): A moves
+// The rotation of core section 17.2 (vectors/v0/rotation.json): A moves
 // from "a" to "a2", committing to "a3". The statement and both signatures
 // are rebuilt, the rotate body reads back and checks, and a2 matches the
 // commitment A gave in its pair answer.
@@ -25,7 +25,7 @@ func TestVectorRotation(t *testing.T) {
 		}
 		Exchange vectorExchange
 	}
-	readVectors(t, "rotation.json", &v)
+	readVectors(t, "msfp/v0/rotation.json", &v)
 	r := v.Rotation
 	old, new, next := keys[r.From], keys[r.To], keys[r.Next]
 	if got := Encode64(Commitment(next.Public())); got != r.NextCommitment {
@@ -52,7 +52,7 @@ func TestVectorRotation(t *testing.T) {
 	var k struct {
 		Keys map[string]struct{ Commitment string }
 	}
-	readVectors(t, "keys.json", &k)
+	readVectors(t, "msfp/v0/keys.json", &k)
 	if Encode64(Commitment(got.New)) != k.Keys[r.To].Commitment {
 		t.Error("a2 doesn't match its commitment")
 	}
@@ -65,7 +65,7 @@ func TestVectorRotation(t *testing.T) {
 	checkExchange(t, keys, v.Exchange)
 }
 
-// The revocation of core section 17.3 (vectors/v1/revocation.json).
+// The revocation of core section 17.3 (vectors/v0/revocation.json).
 func TestVectorRevocation(t *testing.T) {
 	keys := vectorKeys(t)
 	var v struct {
@@ -76,7 +76,7 @@ func TestVectorRevocation(t *testing.T) {
 		}
 		Exchange vectorExchange
 	}
-	readVectors(t, "revocation.json", &v)
+	readVectors(t, "msfp/v0/revocation.json", &v)
 	r := v.Revocation
 	k := keys[r.Key]
 	if got := string(revocationStatement(k.Public(), r.Date)); got != r.Statement {
@@ -100,14 +100,14 @@ func TestVectorRevocation(t *testing.T) {
 	checkExchange(t, keys, v.Exchange)
 }
 
-// The rotation member of the pulled exchange (vectors/v1/exchanges.json,
+// The rotation member of the pulled exchange (vectors/v0/exchanges.json,
 // A revokes a and rotates to a2 in one answer) checks as a rotate body.
 func TestVectorPulledRotation(t *testing.T) {
 	keys := vectorKeys(t)
 	var v struct {
 		Exchanges []vectorExchange `json:"exchanges"`
 	}
-	readVectors(t, "exchanges.json", &v)
+	readVectors(t, "msfp/v0/exchanges.json", &v)
 	i := slices.IndexFunc(v.Exchanges, func(x vectorExchange) bool { return strings.Contains(x.Name, "rotation and a revocation") })
 	if i < 0 {
 		t.Fatal("no such exchange")

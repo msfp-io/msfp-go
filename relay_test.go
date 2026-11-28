@@ -262,14 +262,11 @@ func TestHostilePlayAnswers(t *testing.T) {
 	}
 }
 
-// The cases of vectors/v1/media.json, through a relay: what a peer's
-// playlists, WebVTT and PGS parts become on the way to the viewer.
+// The cases of MSFP Media's vectors (fetching.json's hls, video.json's
+// webvtt and pgs), through a relay: what a peer's playlists, WebVTT and
+// PGS parts become on the way to the viewer.
 func TestMediaVectorsThroughRelay(t *testing.T) {
 	ctx := context.Background()
-	raw, err := os.ReadFile("wire/testdata/v0/media.json")
-	if err != nil {
-		t.Fatal(err)
-	}
 	var v struct {
 		WebVTT []struct {
 			Name, Text, Hex, Output string
@@ -284,8 +281,17 @@ func TestMediaVectorsThroughRelay(t *testing.T) {
 			Valid     bool
 		}
 	}
-	if err := json.Unmarshal(raw, &v); err != nil {
-		t.Fatal(err)
+	for _, name := range []string{"fetching.json", "video.json"} {
+		raw, err := os.ReadFile("wire/testdata/media/v0/" + name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := json.Unmarshal(raw, &v); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(v.HLS) == 0 || len(v.WebVTT) == 0 || len(v.PGS) == 0 {
+		t.Fatal("no cases")
 	}
 	h := filmHost()
 	h.files["pictures/s1/0"] = nil

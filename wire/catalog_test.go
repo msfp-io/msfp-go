@@ -7,12 +7,13 @@ import (
 	"testing"
 )
 
-// The catalog's cases of vectors/v0/strict.json: titlePages,
-// opaqueKeyParts and localImages.
+// The catalog's cases of MSFP Media's listing.json (msfp-media's
+// vectors/v0): titlePages, opaqueKeyParts and localImages.
 
 func TestCatalogPages(t *testing.T) {
 	var v struct {
-		TitlePages []struct {
+		AnswerBound int `json:"answerBound"`
+		TitlePages  []struct {
 			Name    string  `json:"name"`
 			Changes bool    `json:"changes"`
 			Titles  int     `json:"titles"`
@@ -27,11 +28,15 @@ func TestCatalogPages(t *testing.T) {
 			Caller  string  `json:"caller"`
 		} `json:"titlePages"`
 	}
-	readVectors(t, "strict.json", &v)
+	readVectors(t, "media/v0/listing.json", &v)
 	if len(v.TitlePages) == 0 {
 		t.Fatal("no titlePages")
 	}
-	const coreAnswer = 4 << 20 // the core's bound of an answer (core section 3)
+	// The carrier's bound for an answer, an input of the cases: MSFP's
+	// (core section 3), the one the engine reads answers with.
+	if v.AnswerBound != 4<<20 {
+		t.Fatalf("answerBound %d, not MSFP's 4 MiB", v.AnswerBound)
+	}
 	for _, c := range v.TitlePages {
 		p := Page{Changes: c.Changes, Titles: c.Titles, Gone: c.Gone, Bytes: c.Bytes, Remain: c.Remain,
 			After: c.After, LastKey: c.LastKey, HasNext: c.Next != nil}
@@ -44,7 +49,7 @@ func TestCatalogPages(t *testing.T) {
 		}
 		caller := "stop"
 		switch {
-		case c.Bytes > coreAnswer:
+		case c.Bytes > v.AnswerBound:
 			caller = "fail"
 		case AskOn(c.After, p.Next):
 			caller = "ask on"
@@ -93,7 +98,7 @@ func TestCatalogOpaqueKeyParts(t *testing.T) {
 			Reason string `json:"reason"`
 		} `json:"opaqueKeyParts"`
 	}
-	readVectors(t, "strict.json", &v)
+	readVectors(t, "media/v0/listing.json", &v)
 	if len(v.OpaqueKeyParts) == 0 {
 		t.Fatal("no opaqueKeyParts")
 	}
@@ -128,7 +133,7 @@ func TestCatalogLocalImages(t *testing.T) {
 			Reason     string    `json:"reason"`
 		} `json:"localImages"`
 	}
-	readVectors(t, "strict.json", &v)
+	readVectors(t, "media/v0/listing.json", &v)
 	sides := map[string]int{}
 	for _, c := range v.LocalImages {
 		sides[c.Side]++
@@ -218,7 +223,10 @@ func TestLanguageValidTag(t *testing.T) {
 			Valid  bool   `json:"valid"`
 		} `json:"languageCodes"`
 	}
-	readVectors(t, "strict.json", &v)
+	readVectors(t, "media/v0/base.json", &v)
+	if len(v.LanguageCodes) == 0 {
+		t.Fatal("no languageCodes")
+	}
 	for _, c := range v.LanguageCodes {
 		if c.Valid && !LanguageTag(c.Output) {
 			t.Errorf("LanguageTag(%q) = false, the tag sent for %q", c.Output, c.Text)
@@ -229,7 +237,7 @@ func TestLanguageValidTag(t *testing.T) {
 	}
 }
 
-// openTokens and openMediaTypes of strict.json (MSFP Media base 3).
+// openTokens and openMediaTypes of base.json (MSFP Media base 3).
 func TestOpenTokens(t *testing.T) {
 	type valued struct {
 		Text  string `json:"text"`
@@ -239,7 +247,7 @@ func TestOpenTokens(t *testing.T) {
 		OpenTokens     []valued `json:"openTokens"`
 		OpenMediaTypes []valued `json:"openMediaTypes"`
 	}
-	readVectors(t, "strict.json", &v)
+	readVectors(t, "media/v0/base.json", &v)
 	if len(v.OpenTokens) == 0 || len(v.OpenMediaTypes) == 0 {
 		t.Fatal("no cases")
 	}
